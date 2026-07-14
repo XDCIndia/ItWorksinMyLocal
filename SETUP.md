@@ -18,15 +18,23 @@ Nothing here touches the real XDC network or real money.
 
 ## Before you start
 
-You need:
+Works on **Mac** and **Linux / Ubuntu**.
 
-1. A **Mac** (Apple Silicon / M-series). *(For Windows/Linux, see the note at
-   the end.)*
-2. The **Terminal** app (already on every Mac — find it with Spotlight: press
-   `Cmd + Space`, type "Terminal", press Enter).
+**On a Mac (Apple Silicon):**
+1. The **Terminal** app (find it with Spotlight: `Cmd + Space`, type "Terminal").
 
-That's it. All the required programs come bundled in this folder — you don't
-install anything.
+That's it — all the required programs are bundled, nothing to install.
+
+**On Linux / Ubuntu:** the programs are built for you the first time, so you
+also need a few developer tools installed once:
+
+```
+sudo apt update && sudo apt install -y build-essential git golang
+git clone https://github.com/XinFinOrg/XDPoSChain ../XDPoSChain
+```
+
+(Place the `XDPoSChain` folder next to this one.) After that, the steps below
+are identical.
 
 ---
 
@@ -129,7 +137,7 @@ Want another machine on your network to join? On the computer that's already
 running, get the "join address" (the *bootnode endpoint*):
 
 ```
-echo "enode://$(./bin/bootnode -nodekey ./bootnode.key -writeaddress)@$(ipconfig getifaddr en0):30301"
+echo "enode://$(./bin/*/bootnode -nodekey ./bootnode.key -writeaddress)@$(ipconfig getifaddr en0):30301"
 ```
 
 Copy the line it prints and give it to whoever runs the second machine — the
@@ -163,8 +171,15 @@ full instructions for the second machine are in `README.md` under
 
 ---
 
-## Windows / Linux note
+## Note on the "join address" command
 
-The bundled programs are built for Mac (Apple Silicon). On Windows or Linux
-you'll need the XDPoSChain source to rebuild them — run `REBUILD=1 ./run.sh`
-(this requires developer setup and is best done by a technical person).
+The command above uses `ipconfig getifaddr en0`, which is for Mac. On Linux use:
+
+```
+echo "enode://$(./bin/*/bootnode -nodekey ./bootnode.key -writeaddress)@$(hostname -I | awk '{print $1}'):30301"
+```
+
+## Windows note
+
+Windows isn't directly supported. Use **WSL2** (Ubuntu inside Windows) and then
+follow the Linux instructions above.

@@ -7,33 +7,24 @@ _interupt() {
 
 trap _interupt INT TERM
 
+cd "$(dirname "$0")"
+source ./lib.sh
+
 touch .pwd
 export $(cat .env | xargs)
 
 Bin_NAME=XDC
-WORK_DIR=$PWD
-PROJECT_DIR="/Users/anilchinchawale/workspace/XDCNetwork/XDPoSChain"
-BIN_DIR="$WORK_DIR/bin"
 NUM_NODES=4
 
-# Use the binaries shipped in ./bin so we don't depend on the XDPoSChain source
-# tree. Rebuild only when a binary is missing or REBUILD=1 is set.
-if [ ! -x "$BIN_DIR/$Bin_NAME" ] || [ ! -x "$BIN_DIR/bootnode" ] || [ "$REBUILD" = "1" ]; then
-  echo "Building $Bin_NAME and bootnode from $PROJECT_DIR ..."
-  cd "$PROJECT_DIR" && make XDC && make bootnode
-  cd "$WORK_DIR"
-  mkdir -p "$BIN_DIR"
-  cp "$PROJECT_DIR/build/bin/$Bin_NAME" "$PROJECT_DIR/build/bin/bootnode" "$BIN_DIR/"
-fi
-XDC="$BIN_DIR/$Bin_NAME"
-BOOTNODE_BIN="$BIN_DIR/bootnode"
+# Ensure platform-native binaries exist (builds from XDPoSChain if needed).
+ensure_bins
+XDC="$XDC_BIN"
 
 # Machine identity: hostname + LAN IP (advertised to peers so this works across
 # machines on the same network, not just localhost).
 HOST=$(hostname -s)
-IP=$(ipconfig getifaddr en0 2>/dev/null || ipconfig getifaddr en1 2>/dev/null || hostname -I 2>/dev/null | awk '{print $1}')
-[ -z "$IP" ] && IP="127.0.0.1"
-echo "Machine: host=$HOST ip=$IP"
+IP=$(detect_ip)
+echo "Machine: host=$HOST ip=$IP platform=$PLATFORM"
 
 # Import keys + init on first run, otherwise read the existing accounts.
 declare -a WALLETS

@@ -65,8 +65,10 @@ done
 norm() { echo "$1" | sed -E 's/^0[xX]//; s/^xdc//'; }
 emit_list() { local IFS=,; for a in $1; do norm "$a"; done; echo; }  # addresses + blank terminator
 
-PUPPETH="$PWD/bin/puppeth"
-[ -x "$PUPPETH" ] || { echo "missing $PUPPETH" >&2; exit 1; }
+cd "$(dirname "$0")"
+source ./lib.sh
+ensure_bins
+PUPPETH="$PUPPETH_BIN"
 rm -rf "$HOME/.puppeth/$NETWORK" "$NETWORK.json"
 
 {

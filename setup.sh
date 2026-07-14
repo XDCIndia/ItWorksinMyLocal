@@ -12,8 +12,10 @@
 # accounts, and the miners always match -- no hardcoded addresses.
 
 set -e
-WORK_DIR=$PWD
-XDC="$WORK_DIR/bin/XDC"
+cd "$(dirname "$0")"
+source ./lib.sh
+ensure_bins
+XDC="$XDC_BIN"
 
 NEW=0; N=4
 while [ $# -gt 0 ]; do

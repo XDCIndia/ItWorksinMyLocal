@@ -5,8 +5,10 @@
 #
 # Usage: ./network-info.sh [path/to/genesis.json]
 
+cd "$(dirname "$0")"
+source ./lib.sh
 GENESIS="${1:-genesis/genesis.json}"
-XDC="$PWD/bin/XDC"
+XDC="$XDC_BIN"
 [ -f "$GENESIS" ] || { echo "genesis not found: $GENESIS" >&2; exit 1; }
 
 # Derive the addresses of the private keys held in .env (accounts you control).

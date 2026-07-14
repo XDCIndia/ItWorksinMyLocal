@@ -22,8 +22,10 @@ for a in "$@"; do
   esac
 done
 
-XDC="$PWD/bin/XDC"
-[ -x "$XDC" ] || { echo "missing $XDC" >&2; exit 1; }
+cd "$(dirname "$0")"
+source ./lib.sh
+ensure_bins
+XDC="$XDC_BIN"
 command -v openssl >/dev/null 2>&1 || { echo "openssl is required" >&2; exit 1; }
 
 TMP=$(mktemp -d); PW="$TMP/pw"; : > "$PW"

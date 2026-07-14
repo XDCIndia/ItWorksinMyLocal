@@ -11,9 +11,9 @@ so you don't need the XDPoSChain source tree to run it.
 ## What's included
 
 ```
-bin/XDC          node binary (v2.7.1-stable, darwin-arm64)
-bin/bootnode     discovery bootnode
-bin/puppeth      genesis wizard (patched — see "The puppeth fix" below)
+bin/<os>-<arch>/ platform-specific binaries: XDC, bootnode, puppeth
+                 (Darwin-arm64 bundled; other platforms auto-built on first run)
+lib.sh           shared helper: platform detection, IP, build-on-demand
 setup.sh         one-command end-to-end: keys -> genesis -> reset -> run
 run.sh           build-if-needed, import keys, init, start bootnode + 4 nodes
 gen-address.sh   generate fresh keypairs (private key + address)
@@ -25,8 +25,24 @@ bootnode.key     fixed bootnode private key
 .env.sample      template for the 4 masternode private keys
 ```
 
-> The bundled binaries are macOS/arm64. On another platform, run
-> `REBUILD=1 ./run.sh` (needs the XDPoSChain source at the path in `run.sh`).
+### Platforms
+
+Works on **macOS and Linux/Ubuntu**. Binaries are resolved per platform from
+`bin/<os>-<arch>/`:
+
+- **macOS (Apple Silicon):** binaries are bundled — nothing to build.
+- **Linux / other:** on first run the scripts **build the binaries natively**
+  from the XDPoSChain source. Requirements: Go, a C compiler
+  (`sudo apt install build-essential`), and the XDPoSChain source cloned next to
+  this repo (or point `XDPOS_DIR` at it):
+
+  ```bash
+  git clone https://github.com/XinFinOrg/XDPoSChain ../XDPoSChain
+  ./setup.sh --new            # builds Linux binaries, then runs
+  # or: XDPOS_DIR=/path/to/XDPoSChain ./setup.sh --new
+  ```
+
+  Force a rebuild anytime with `REBUILD=1 ./setup.sh`.
 
 ## Quick start — one command
 
@@ -110,7 +126,7 @@ fixed (built from `bootnode.key`); only the host IP changes. Print the exact
 endpoint to hand to another machine:
 
 ```bash
-echo "enode://$(./bin/bootnode -nodekey ./bootnode.key -writeaddress)@$(ipconfig getifaddr en0):30301"
+echo "enode://$(./bin/*/bootnode -nodekey ./bootnode.key -writeaddress)@$(ipconfig getifaddr en0):30301"
 # Linux: replace $(ipconfig getifaddr en0) with $(hostname -I | awk '{print $1}')
 ```
 
@@ -124,8 +140,8 @@ On the **other machine** (needs `bin/XDC` and the same `genesis/genesis.json`):
 
 ```bash
 BOOTNODE="enode://ec569f5d...a0451@<HOST_IP>:30301"   # from the command above
-./bin/XDC --datadir ./peer init ./genesis/genesis.json
-./bin/XDC --datadir ./peer --networkid 20118 --syncmode full \
+./bin/*/XDC --datadir ./peer init ./genesis/genesis.json
+./bin/*/XDC --datadir ./peer --networkid 20118 --syncmode full \
   --bootnodes "$BOOTNODE" --port 30303 \
   --rpc --rpcaddr 0.0.0.0 --rpcport 8545 --rpcapi eth,net,web3,XDPoS
 ```
