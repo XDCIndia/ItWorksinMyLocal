@@ -9,6 +9,7 @@ build a genesis, run 4 mining nodes + a bootnode, and let other machines join.
 
 ## Contents
 - [Requirements](#requirements)
+- [Choosing a client](#choosing-a-client)
 - [Quick start](#quick-start)
 - [Everyday commands](#everyday-commands)
 - [Generating a genesis](#generating-a-genesis)
@@ -22,11 +23,11 @@ build a genesis, run 4 mining nodes + a bootnode, and let other machines join.
 
 ## Requirements
 
-Works on **macOS** and **Linux / Ubuntu**. The node binaries
-(`XDC`, `bootnode`, `puppeth`) are **built from source on first run** and cached
-in `bin/<os>-<arch>/` — the source is our pre-fixed fork
-[`XDCIndia/OLDXDC`](https://github.com/XDCIndia/OLDXDC), cloned automatically if
-it isn't already beside this repo.
+Works on **macOS** and **Linux / Ubuntu**. Node binaries are **built from source
+on first run** and cached under `bin/<client>/<os>-<arch>/` — the source repo
+depends on the selected [client](#choosing-a-client) and is cloned automatically
+if it isn't already beside this repo (default: the pre-fixed
+[`XDCIndia/OLDXDC`](https://github.com/XDCIndia/OLDXDC)).
 
 Install the build toolchain once:
 
@@ -42,8 +43,8 @@ Then just run `./setup.sh --new` — it clones the source (if needed) and builds
 `openssl`, `python3`, `curl`, and `bash` are also required (present by default
 on both). Force a rebuild anytime with `REBUILD=1`.
 
-**Source options** (override the auto-clone with `XDPOS_REPO=` or point
-`XDPOS_DIR=` at an existing checkout):
+**Source options** for the default `oldxdc` client (override the auto-clone with
+`XDPOS_REPO=`, or point `XDPOS_DIR=` at an existing checkout):
 
 - **Default — `XDCIndia/OLDXDC`**: already carries the `puppeth` genesis fix and
   matches the version the scripts expect.
