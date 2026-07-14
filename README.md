@@ -182,14 +182,9 @@ needs the network's **`genesis.json`** and the host's **IP**:
 Useful flags: `--networkid` (defaults to the genesis chainId), `--datadir`
 (default `./peer`), `--port` / `--rpcport` / `--wsport`, `--name`,
 `--mine ADDR` (only if that address is a validator in the genesis and its key is
-in `.env`), and `--ethstats SECRET@HOST:PORT` (report to an ethstats dashboard;
-the node name is prepended automatically). By default it joins as a **read/sync**
-node.
-
-```bash
-./join.sh --genesis genesis/genesis.json \
-  --ethstats xdc_openscan_stats_2026@stats.xdcindia.com:443
-```
+in `.env`). By default it joins as a **read/sync** node and **reports to the same
+ethstats dashboard as `run.sh`**; override with `--ethstats SECRET@HOST:PORT`
+(node name auto-prepended) or turn it off with `--no-ethstats`.
 
 **Requirements to connect:**
 - The **same `genesis.json`** as the target network (a different one → the peer

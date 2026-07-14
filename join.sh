@@ -21,9 +21,10 @@
 #   --wsport N           WebSocket port (default 8546)
 #   --mine KEY           also mine, unlocking this address (only if it's a
 #                        validator in that genesis; needs the key in .env)
-#   --ethstats SPEC      report to an ethstats server. SPEC is SECRET@HOST:PORT
-#                        (the node name is prepended), or a full
-#                        NAME:SECRET@HOST:PORT to use verbatim.
+#   --ethstats SPEC      ethstats target (ON by default, same as run.sh). SPEC
+#                        is SECRET@HOST:PORT (node name prepended) or a full
+#                        NAME:SECRET@HOST:PORT used verbatim.
+#   --no-ethstats        disable ethstats reporting
 #
 # This joins as a read/sync node by default (no mining). It does NOT touch your
 # local 4-node network in ./nodes.
@@ -38,22 +39,26 @@ ensure_bins
 XDC="$XDC_BIN"
 
 GENESIS=""; BOOTNODES=""; NETWORKID=""; DATADIR="./peer"; NAME=""; HOST_IP=""
-PORT=30303; RPCPORT=8545; WSPORT=8546; MINEADDR=""; ETHSTATS=""
+PORT=30303; RPCPORT=8545; WSPORT=8546; MINEADDR=""
+# ethstats reporting is ON by default (same endpoint as run.sh); --no-ethstats
+# disables it, --ethstats SPEC overrides the target.
+ETHSTATS="xdc_openscan_stats_2026@stats.xdcindia.com:443"
 while [ $# -gt 0 ]; do
   case "$1" in
-    --genesis)   GENESIS=$2; shift 2;;
-    --bootnodes) BOOTNODES=$2; shift 2;;
-    --ip)        HOST_IP=$2; shift 2;;
-    --host)      HOST_IP=$2; shift 2;;
-    --networkid) NETWORKID=$2; shift 2;;
-    --datadir)   DATADIR=$2; shift 2;;
-    --name)      NAME=$2; shift 2;;
-    --port)      PORT=$2; shift 2;;
-    --rpcport)   RPCPORT=$2; shift 2;;
-    --wsport)    WSPORT=$2; shift 2;;
-    --mine)      MINEADDR=$2; shift 2;;
-    --ethstats)  ETHSTATS=$2; shift 2;;
-    -h|--help)   sed -n '2,28p' "$0" | sed 's/^# \{0,1\}//'; exit 0;;
+    --genesis)     GENESIS=$2; shift 2;;
+    --bootnodes)   BOOTNODES=$2; shift 2;;
+    --ip)          HOST_IP=$2; shift 2;;
+    --host)        HOST_IP=$2; shift 2;;
+    --networkid)   NETWORKID=$2; shift 2;;
+    --datadir)     DATADIR=$2; shift 2;;
+    --name)        NAME=$2; shift 2;;
+    --port)        PORT=$2; shift 2;;
+    --rpcport)     RPCPORT=$2; shift 2;;
+    --wsport)      WSPORT=$2; shift 2;;
+    --mine)        MINEADDR=$2; shift 2;;
+    --ethstats)    ETHSTATS=$2; shift 2;;
+    --no-ethstats) ETHSTATS=""; shift;;
+    -h|--help)     sed -n '2,29p' "$0" | sed 's/^# \{0,1\}//'; exit 0;;
     *) echo "unknown flag: $1" >&2; exit 1;;
   esac
 done
