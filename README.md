@@ -125,12 +125,17 @@ that network's `genesis.json`; the bootnode enode defaults to one derived from
 # join the local network on THIS machine (default key-based enode):
 ./join.sh --genesis genesis/genesis.json
 
-# join a network running on another host (its genesis + that host's IP):
-./join.sh --genesis their-genesis.json --host 10.0.0.5
+# join a network on another host -- JUST PASS ITS IP (enode is built for you):
+./join.sh --genesis their-genesis.json --ip 10.0.0.5
+# (or 10.0.0.5:30301 to set the bootnode port)
 
-# or point at explicit bootnodes:
+# or point at an explicit enode if you have one:
 ./join.sh --genesis g.json --bootnodes "enode://KEY@HOST:30301"
 ```
+
+`--ip` builds the bootnode enode from the shared `bootnode.key` at that host, so
+you don't need the enode string — it only works when the target runs the same
+`bootnode.key` (true for any node started from this repo).
 
 Key flags: `--networkid` (defaults to the genesis chainId), `--datadir`
 (default `./peer`), `--port/--rpcport/--wsport`, `--name`, and `--mine ADDR`

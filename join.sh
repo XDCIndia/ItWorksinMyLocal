@@ -7,10 +7,12 @@
 #
 # Flags:
 #   --genesis FILE       the target network's genesis.json            (required)
-#   --bootnodes LIST     comma-separated enode URLs to dial
-#                        (default: derived from ./bootnode.key -- see --host)
-#   --host IP            host of the default key-based bootnode (default: this
-#                        machine's IP). Use the remote host's IP to join it.
+#   --ip IP[:PORT]       just give the target machine's IP -- connects to its
+#                        bootnode (shared bootnode.key) at PORT (default 30301).
+#                        Simplest way to join a network on another host.
+#   --bootnodes LIST     full enode URL(s) to dial, if you have them
+#                        (overrides --ip; default: derived from ./bootnode.key)
+#   --host IP[:PORT]     alias of --ip
 #   --networkid N        network id (default: chainId from the genesis)
 #   --datadir DIR        where to store this peer's data (default ./peer)
 #   --name NAME          node identity shown to peers/ethstats (default <host>-sync)
@@ -37,6 +39,7 @@ while [ $# -gt 0 ]; do
   case "$1" in
     --genesis)   GENESIS=$2; shift 2;;
     --bootnodes) BOOTNODES=$2; shift 2;;
+    --ip)        HOST_IP=$2; shift 2;;
     --host)      HOST_IP=$2; shift 2;;
     --networkid) NETWORKID=$2; shift 2;;
     --datadir)   DATADIR=$2; shift 2;;
@@ -52,12 +55,17 @@ done
 
 [ -f "$GENESIS" ] || { echo "need --genesis <file> (got '$GENESIS')" >&2; exit 1; }
 
-# If no bootnodes given, derive the default enode from ./bootnode.key.
+# If no explicit --bootnodes, derive the enode from ./bootnode.key at the given
+# IP (--ip/--host, may include :PORT; defaults to this machine's IP:30301).
 if [ -z "$BOOTNODES" ]; then
-  [ -f ./bootnode.key ] || { echo "need --bootnodes, or a ./bootnode.key to derive one" >&2; exit 1; }
-  bh="${HOST_IP:-$(detect_ip)}"
-  BOOTNODES="enode://$("$BOOTNODE_BIN" -nodekey ./bootnode.key -writeaddress)@${bh}:30301"
-  echo "Using default key-based bootnode: $BOOTNODES"
+  [ -f ./bootnode.key ] || { echo "need --bootnodes or --ip, or a ./bootnode.key to derive one" >&2; exit 1; }
+  target="${HOST_IP:-$(detect_ip)}"
+  case "$target" in
+    *:*) bhost="${target%:*}"; bport="${target##*:}";;
+    *)   bhost="$target";      bport=30301;;
+  esac
+  BOOTNODES="enode://$("$BOOTNODE_BIN" -nodekey ./bootnode.key -writeaddress)@${bhost}:${bport}"
+  echo "Using key-based bootnode: $BOOTNODES"
 fi
 
 # Default the network id to the genesis chainId.

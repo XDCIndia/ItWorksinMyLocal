@@ -54,8 +54,8 @@ Runs a node that **joins another network** (instead of starting your own) and
 syncs its blocks. You give it that network's genesis; the bootnode address
 defaults to one built from `bootnode.key`.
 - `./join.sh --genesis genesis/genesis.json` — join the local network here
-- `./join.sh --genesis their.json --host 10.0.0.5` — join a network on host `10.0.0.5`
-- `./join.sh --genesis their.json --bootnodes "enode://KEY@HOST:30301"` — explicit
+- `./join.sh --genesis their.json --ip 10.0.0.5` — **just pass the host's IP**
+- `./join.sh --genesis their.json --bootnodes "enode://KEY@HOST:30301"` — explicit enode
 - Joins as read-only/sync by default; add `--mine ADDR` only if that address is
   a validator in the genesis and its key is in `.env`.
 - The genesis must exactly match the target network's.
