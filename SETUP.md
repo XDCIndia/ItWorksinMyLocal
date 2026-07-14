@@ -1,0 +1,157 @@
+# Setup Guide (for everyone)
+
+This guide helps you run a small **XDC blockchain on your own computer** — even
+if you've never touched blockchain or coding before. Just follow the steps.
+
+---
+
+## What is this, in plain words?
+
+Think of it as a **tiny private version of the XDC network running only on your
+machine**. It starts **4 "computers" (called nodes)** that talk to each other
+and agree on a shared record of blocks — exactly like the real network, but
+private, free, and fully under your control. Great for learning and testing.
+
+Nothing here touches the real XDC network or real money.
+
+---
+
+## Before you start
+
+You need:
+
+1. A **Mac** (Apple Silicon / M-series). *(For Windows/Linux, see the note at
+   the end.)*
+2. The **Terminal** app (already on every Mac — find it with Spotlight: press
+   `Cmd + Space`, type "Terminal", press Enter).
+
+That's it. All the required programs come bundled in this folder — you don't
+install anything.
+
+---
+
+## Start it — one command
+
+1. Open **Terminal**.
+2. Go into this project folder. Type `cd ` (with a space), then drag the folder
+   onto the Terminal window and press **Enter**. For example:
+
+   ```
+   cd /Users/you/XDCNetwork/Local_DPoS_Setup
+   ```
+
+3. Run this single command and press **Enter**:
+
+   ```
+   ./setup.sh --new
+   ```
+
+That's it. In about **20–30 seconds** you'll have a running 4-node blockchain.
+
+### What that one command does (so it's not a mystery)
+
+1. **Creates 4 new keys** — like 4 unique ID cards for the 4 nodes.
+2. **Builds the rulebook** (the "genesis") that says who's allowed to create blocks.
+3. **Clears any old data** so you start clean.
+4. **Starts everything** — the 4 nodes plus a small "phone book" service
+   (the *bootnode*) that helps them find each other.
+
+---
+
+## How do I know it's working?
+
+Once it's running, the Terminal will keep printing status lines — that's normal,
+it means the nodes are alive and creating blocks. Leave that window open.
+
+To check the current block count, open a **second** Terminal window, `cd` into
+the folder again, and run:
+
+```
+curl -s -X POST -H 'Content-Type: application/json' \
+  --data '{"jsonrpc":"2.0","method":"eth_blockNumber","params":[],"id":1}' \
+  http://localhost:8545
+```
+
+You'll see something like `{"...":"0x1f"}`. The number after `0x` grows over
+time — that means new blocks keep being added. **A rising number = it's healthy.**
+(A new block appears roughly every 2 seconds.)
+
+---
+
+## How do I stop it?
+
+Click the Terminal window that's printing all the status lines and press:
+
+```
+Ctrl + C
+```
+
+Everything shuts down cleanly.
+
+---
+
+## How do I start over from scratch?
+
+Run these two lines:
+
+```
+./reset.sh
+./setup.sh --new
+```
+
+`reset.sh` erases the old blockchain data, and `setup.sh --new` builds a fresh
+one with brand-new keys.
+
+To restart with the **same** keys you already have (not new ones), just run:
+
+```
+./setup.sh
+```
+
+---
+
+## Connecting a second computer (optional)
+
+Want another machine on your network to join? On the computer that's already
+running, get the "join address" (the *bootnode endpoint*):
+
+```
+echo "enode://$(./bin/bootnode -nodekey ./bootnode.key -writeaddress)@$(ipconfig getifaddr en0):30301"
+```
+
+Copy the line it prints and give it to whoever runs the second machine — the
+full instructions for the second machine are in `README.md` under
+"Connecting from another machine". Both computers must be on the same network.
+
+---
+
+## Tiny glossary
+
+| Word | Plain meaning |
+|------|---------------|
+| **Node** | One computer/program participating in the blockchain. We run 4. |
+| **Bootnode** | A "phone book" that helps nodes find each other. |
+| **Block** | One page in the shared record book; a new one is added every ~2s. |
+| **Genesis** | The very first page + the rules of the network. |
+| **Key / address** | A node's private password and its public ID. |
+| **Masternode** | A node allowed to create new blocks. |
+
+---
+
+## If something goes wrong
+
+- **"Permission denied"** → run `chmod +x *.sh` once, then try again.
+- **"address already in use"** → an old copy is still running. Close it with
+  `Ctrl + C`, or run: `pkill -f bin/XDC` then start again.
+- **The block number isn't growing** → stop (`Ctrl + C`), then
+  `./reset.sh` and `./setup.sh --new`.
+- **Still stuck?** Share the last ~20 lines from the Terminal with whoever set
+  this up for you.
+
+---
+
+## Windows / Linux note
+
+The bundled programs are built for Mac (Apple Silicon). On Windows or Linux
+you'll need the XDPoSChain source to rebuild them — run `REBUILD=1 ./run.sh`
+(this requires developer setup and is best done by a technical person).

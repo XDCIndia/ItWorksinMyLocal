@@ -4,6 +4,9 @@ A self-contained 4-node local [XDPoS](https://github.com/XinFinOrg/XDPoSChain)
 delegated-proof-of-stake network. The required binaries are bundled in `bin/`,
 so you don't need the XDPoSChain source tree to run it.
 
+> **New to this / non-technical?** Read [SETUP.md](SETUP.md) — a plain-language,
+> step-by-step guide that gets you running with a single command.
+
 ## What's included
 
 ```
