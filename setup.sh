@@ -24,7 +24,7 @@ while [ $# -gt 0 ]; do
   esac
 done
 
-[ "$NEW" = 1 ] && ./gen-address.sh "$N" --env
+[ "$NEW" = 1 ] && bash ./gen-address.sh "$N" --env
 [ -f .env ] || { echo ".env not found -- run: ./setup.sh --new" >&2; exit 1; }
 
 # Derive signer addresses from the .env private keys (dynamic).
@@ -42,6 +42,6 @@ done
 [ -n "$SIGNERS" ] || { echo "no PRIVATE_KEY_* found in .env" >&2; exit 1; }
 echo "Signers from .env: $SIGNERS"
 
-./gen-genesis.sh --signers "$SIGNERS"
-./reset.sh
-./run.sh
+bash ./gen-genesis.sh --signers "$SIGNERS"
+bash ./reset.sh
+bash ./run.sh
