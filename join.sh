@@ -21,6 +21,9 @@
 #   --wsport N           WebSocket port (default 8546)
 #   --mine KEY           also mine, unlocking this address (only if it's a
 #                        validator in that genesis; needs the key in .env)
+#   --ethstats SPEC      report to an ethstats server. SPEC is SECRET@HOST:PORT
+#                        (the node name is prepended), or a full
+#                        NAME:SECRET@HOST:PORT to use verbatim.
 #
 # This joins as a read/sync node by default (no mining). It does NOT touch your
 # local 4-node network in ./nodes.
@@ -35,7 +38,7 @@ ensure_bins
 XDC="$XDC_BIN"
 
 GENESIS=""; BOOTNODES=""; NETWORKID=""; DATADIR="./peer"; NAME=""; HOST_IP=""
-PORT=30303; RPCPORT=8545; WSPORT=8546; MINEADDR=""
+PORT=30303; RPCPORT=8545; WSPORT=8546; MINEADDR=""; ETHSTATS=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --genesis)   GENESIS=$2; shift 2;;
@@ -49,7 +52,8 @@ while [ $# -gt 0 ]; do
     --rpcport)   RPCPORT=$2; shift 2;;
     --wsport)    WSPORT=$2; shift 2;;
     --mine)      MINEADDR=$2; shift 2;;
-    -h|--help)   sed -n '2,25p' "$0" | sed 's/^# \{0,1\}//'; exit 0;;
+    --ethstats)  ETHSTATS=$2; shift 2;;
+    -h|--help)   sed -n '2,28p' "$0" | sed 's/^# \{0,1\}//'; exit 0;;
     *) echo "unknown flag: $1" >&2; exit 1;;
   esac
 done
@@ -90,6 +94,17 @@ if [ -n "$MINEADDR" ]; then
   MINE_FLAGS="--unlock $MINEADDR --password ./.pwd --mine --gasprice 1"
 fi
 
+# ethstats: prepend the node name unless SPEC already includes one (name:secret@…)
+ETHSTATS_FLAGS=""
+if [ -n "$ETHSTATS" ]; then
+  case "${ETHSTATS%%@*}" in
+    *:*) full="$ETHSTATS";;            # already NAME:SECRET
+    *)   full="${NAME}:${ETHSTATS}";;  # just SECRET -> prepend node name
+  esac
+  ETHSTATS_FLAGS="--ethstats $full"
+  echo "  ethstats: $full"
+fi
+
 echo "Joining network id=$NETWORKID  bootnodes=$BOOTNODES"
 echo "  datadir=$DATADIR  identity=$NAME  ip=$IP  ports p2p:$PORT rpc:$RPCPORT ws:$WSPORT"
 "$XDC" --datadir "$DATADIR" --networkid "$NETWORKID" --syncmode full \
@@ -97,6 +112,6 @@ echo "  datadir=$DATADIR  identity=$NAME  ip=$IP  ports p2p:$PORT rpc:$RPCPORT w
   --rpc --rpccorsdomain "*" --rpcaddr 0.0.0.0 --rpcport "$RPCPORT" --rpcvhosts "*" \
   --ws --wsaddr 0.0.0.0 --wsorigins "*" --wsport "$WSPORT" \
   --rpcapi admin,db,eth,debug,miner,net,shh,txpool,personal,web3,XDPoS \
-  $MINE_FLAGS &
+  $MINE_FLAGS $ETHSTATS_FLAGS &
 child_proc=$!
 wait
