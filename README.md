@@ -19,6 +19,7 @@ run.sh           build-if-needed, import keys, init, start bootnode + 4 nodes
 gen-address.sh   generate fresh keypairs (private key + address)
 gen-genesis.sh   generate genesis.json via puppeth using flags
 network-info.sh  plain-language summary of the current network (roles, balances)
+join.sh          connect & sync an existing network (given its genesis)
 reset.sh         wipe node data (for a clean re-init)
 genesis/         genesis.json (chainId 20118, 4 masternodes seeded)
 bootnode.key     fixed bootnode private key
@@ -114,6 +115,28 @@ Prints a plain-language summary of the current network read live from
 params, the masternodes (marked if you hold the key), key roles (owner,
 foundation, swap), genesis balances, and total supply. Regenerate a network and
 re-run it — the output always reflects the current files.
+
+### `join.sh [flags]`
+Connect to and **sync an existing network** as a non-mining peer. You supply
+that network's `genesis.json`; the bootnode enode defaults to one derived from
+`./bootnode.key` (override with `--bootnodes`, or set the host with `--host`).
+
+```bash
+# join the local network on THIS machine (default key-based enode):
+./join.sh --genesis genesis/genesis.json
+
+# join a network running on another host (its genesis + that host's IP):
+./join.sh --genesis their-genesis.json --host 10.0.0.5
+
+# or point at explicit bootnodes:
+./join.sh --genesis g.json --bootnodes "enode://KEY@HOST:30301"
+```
+
+Key flags: `--networkid` (defaults to the genesis chainId), `--datadir`
+(default `./peer`), `--port/--rpcport/--wsport`, `--name`, and `--mine ADDR`
+(only if that address is a validator in the genesis and its key is in `.env`).
+It **must be the exact same genesis** as the target network, or peers reject
+the handshake.
 
 ### `reset.sh`
 Wipes `nodes/*/XDC`, `nodes/*/XDCx`, `nodes/*/keystore`. Run after changing

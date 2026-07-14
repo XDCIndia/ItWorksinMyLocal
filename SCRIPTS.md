@@ -9,6 +9,7 @@ A quick, plain-English cheat-sheet. All are run from this folder, e.g. `./setup.
 | `gen-genesis.sh` | Builds the network's rulebook (`genesis.json`). | When you want to change chain settings/validators. |
 | `run.sh` | Starts the bootnode + 4 nodes (assumes keys/genesis exist). | To launch without regenerating anything. |
 | `network-info.sh` | Prints a plain summary of the current network. | To review who owns what and the balances. |
+| `join.sh` | Connects & syncs an **existing** network (given its genesis). | To add a syncing peer, or join a network on another machine. |
 | `reset.sh` | Deletes all node data. | Before starting over with a new genesis or keys. |
 
 ---
@@ -47,6 +48,17 @@ Reads the current files and prints a friendly report: chain id, block time, the
 validators (marked if **you** hold the key), key roles (owner/foundation/swap),
 starting balances, and total supply.
 - `./network-info.sh`
+
+### `join.sh` — sync an existing network
+Runs a node that **joins another network** (instead of starting your own) and
+syncs its blocks. You give it that network's genesis; the bootnode address
+defaults to one built from `bootnode.key`.
+- `./join.sh --genesis genesis/genesis.json` — join the local network here
+- `./join.sh --genesis their.json --host 10.0.0.5` — join a network on host `10.0.0.5`
+- `./join.sh --genesis their.json --bootnodes "enode://KEY@HOST:30301"` — explicit
+- Joins as read-only/sync by default; add `--mine ADDR` only if that address is
+  a validator in the genesis and its key is in `.env`.
+- The genesis must exactly match the target network's.
 
 ### `reset.sh` — start clean
 Erases each node's chain data so the next `run.sh`/`setup.sh` starts from block
