@@ -79,11 +79,30 @@ sys.stderr.write("Applied puppeth genesis-storage fix to wizard_genesis.go\n")
 PY
 }
 
+# Verify the build toolchain is present before attempting a source build.
+check_toolchain() {
+  local missing=""
+  command -v git >/dev/null 2>&1 || missing="$missing git"
+  command -v make >/dev/null 2>&1 || missing="$missing make"
+  command -v go >/dev/null 2>&1 || missing="$missing go(golang)"
+  { command -v gcc >/dev/null 2>&1 || command -v cc >/dev/null 2>&1; } || missing="$missing gcc"
+  [ -z "$missing" ] && return 0
+  echo "Missing build tools:$missing" >&2
+  echo "Install them once, then re-run:" >&2
+  echo "  Ubuntu/Debian: sudo apt update && sudo apt install -y build-essential golang git" >&2
+  echo "  Fedora/RHEL:   sudo dnf install -y @development-tools golang git" >&2
+  echo "  macOS:         xcode-select --install && brew install go" >&2
+  echo "(If your distro's Go is too old to build, install a current Go from https://go.dev/dl)" >&2
+  exit 1
+}
+
 # Ensure this client's binaries exist for this platform; build from source if not.
 ensure_bins() {
   local t ready=1
   for t in $CLIENT_TARGETS; do [ -x "$BIN_DIR/$t" ] || ready=0; done
   [ "$ready" = 1 ] && [ "$REBUILD" != "1" ] && return 0
+
+  check_toolchain   # need git + make + go + gcc to build from source
 
   if [ ! -d "$XDPOS_DIR" ]; then
     echo "No $CLIENT binaries for $PLATFORM yet; cloning source from $XDPOS_REPO ..."
