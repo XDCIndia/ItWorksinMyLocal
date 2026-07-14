@@ -6,6 +6,7 @@ so you don't need the XDPoSChain source tree to run it.
 
 > **New to this / non-technical?** Read [SETUP.md](SETUP.md) — a plain-language,
 > step-by-step guide that gets you running with a single command.
+> For a quick "what does each script do" cheat-sheet, see [SCRIPTS.md](SCRIPTS.md).
 
 ## What's included
 
