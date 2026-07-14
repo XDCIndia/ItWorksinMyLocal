@@ -131,7 +131,13 @@ ensure_bins() {
 
   [ "$CLIENT" = oldxdc ] && patch_puppeth   # fix the genesis-storage bug first
 
-  echo "Building [$CLIENT_TARGETS] for $CLIENT/$PLATFORM from $XDPOS_DIR ..."
+  # build/ci.go reads the GOPATH env var directly and fails if it's unset,
+  # even though modern Go defaults it. Set it for the build.
+  [ -z "$GOPATH" ] && export GOPATH="$(go env GOPATH 2>/dev/null)"
+  [ -z "$GOPATH" ] && export GOPATH="$HOME/go"
+  mkdir -p "$GOPATH"
+
+  echo "Building [$CLIENT_TARGETS] for $CLIENT/$PLATFORM from $XDPOS_DIR (GOPATH=$GOPATH) ..."
   ( cd "$XDPOS_DIR" && for t in $CLIENT_TARGETS; do make "$t" || exit 1; done ) || {
     echo "Build failed. Ensure Go and a C compiler (build-essential) are installed." >&2
     exit 1
