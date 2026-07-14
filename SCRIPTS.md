@@ -22,6 +22,8 @@ build the genesis with them → wipe old data → launch the network.
 - `./setup.sh` — reuse the keys already in `.env`
 - `./setup.sh --new` — generate brand-new keys first
 - `./setup.sh --new 4` — generate N new keys
+- `./setup.sh --client geth` — build the modern go-ethereum client (`oldxdc` is
+  the default; `geth` is build-only for now — its run profile is TODO)
 
 ### `gen-address.sh` — make new accounts
 Prints, for each account, a **private key** (its secret password) and an

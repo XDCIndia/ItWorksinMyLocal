@@ -4,27 +4,39 @@
 #   generate genesis seeded with them -> wipe node data -> launch the network.
 #
 # Usage:
-#   ./setup.sh            # use the keys already in .env
-#   ./setup.sh --new      # generate 4 fresh keys into .env first
-#   ./setup.sh --new 4    # generate N fresh keys into .env first
+#   ./setup.sh                    # use the keys already in .env
+#   ./setup.sh --new              # generate 4 fresh keys into .env first
+#   ./setup.sh --new 4            # generate N fresh keys into .env first
+#   ./setup.sh --client geth      # build the modern go-ethereum client
 #
+# --client oldxdc (default) runs the full XDPoSChain network. --client geth
+# builds the modern go-ethereum fork (its run profile is still TODO).
 # The signer set is derived dynamically from .env, so genesis, the imported
 # accounts, and the miners always match -- no hardcoded addresses.
 
 set -e
 cd "$(dirname "$0")"
-source ./lib.sh
-ensure_bins
-XDC="$XDC_BIN"
 
 NEW=0; N=4
 while [ $# -gt 0 ]; do
   case "$1" in
     --new) NEW=1; shift; case "$1" in [0-9]*) N=$1; shift;; esac;;
-    -h|--help) sed -n '2,13p' "$0" | sed 's/^# \{0,1\}//'; exit 0;;
-    *) echo "usage: ./setup.sh [--new [N]]" >&2; exit 1;;
+    --client) export CLIENT=$2; shift 2;;
+    -h|--help) sed -n '2,15p' "$0" | sed 's/^# \{0,1\}//'; exit 0;;
+    *) echo "usage: ./setup.sh [--new [N]] [--client oldxdc|geth]" >&2; exit 1;;
   esac
 done
+
+source ./lib.sh
+ensure_bins
+XDC="$XDC_BIN"
+
+if [ "$CLIENT" != oldxdc ]; then
+  echo "Built the '$CLIENT' client: $NODE_BIN"
+  echo "Launching a local network with '$CLIENT' isn't wired yet — use the"
+  echo "default (oldxdc) to run one:  ./setup.sh --new"
+  exit 0
+fi
 
 [ "$NEW" = 1 ] && bash ./gen-address.sh "$N" --env
 [ -f .env ] || { echo ".env not found -- run: ./setup.sh --new" >&2; exit 1; }

@@ -30,6 +30,7 @@ trap _interupt INT TERM
 
 cd "$(dirname "$0")"
 source ./lib.sh
+require_oldxdc
 ensure_bins
 XDC="$XDC_BIN"
 

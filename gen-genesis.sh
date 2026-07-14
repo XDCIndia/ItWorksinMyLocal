@@ -67,6 +67,7 @@ emit_list() { local IFS=,; for a in $1; do norm "$a"; done; echo; }  # addresses
 
 cd "$(dirname "$0")"
 source ./lib.sh
+require_oldxdc
 ensure_bins
 PUPPETH="$PUPPETH_BIN"
 rm -rf "$HOME/.puppeth/$NETWORK" "$NETWORK.json"

@@ -57,9 +57,29 @@ on both). Force a rebuild anytime with `REBUILD=1`.
 
 ---
 
+## Choosing a client
+
+Two node clients are selectable with `--client` (or `CLIENT=`):
+
+| Client | Source repo | Binaries | Status |
+|--------|-------------|----------|--------|
+| `oldxdc` (default) | [`XDCIndia/OLDXDC`](https://github.com/XDCIndia/OLDXDC) (XDPoSChain) | `XDC`, `bootnode`, `puppeth` | full network (run + genesis + join) |
+| `geth` | [`XDCIndia/go-ethereum`](https://github.com/XDCIndia/go-ethereum) (GP5) | `geth` | **build only** — run/genesis profile is TODO |
+
+```bash
+./setup.sh --new                 # default oldxdc — runs the 4-node network
+./setup.sh --client geth         # builds the modern geth client
+CLIENT=geth ./gen-address.sh 2   # any script honors CLIENT=…
+```
+
+Binaries are kept separate per client under `bin/<client>/<os>-<arch>/`, so the
+two never clash. The modern `geth` fork uses a different run model (no separate
+bootnode, `--http.*` flags, its own genesis flow); building works today, but
+launching a local net with it isn't wired yet.
+
 ## Quick start
 
-From this folder, one command brings up a brand-new network:
+From this folder, one command brings up a brand-new network (default `oldxdc`):
 
 ```bash
 ./setup.sh --new
@@ -177,8 +197,8 @@ echo "enode://$(./bin/*/bootnode -nodekey ./bootnode.key -writeaddress)@$(hostna
 ## What's in this repo
 
 ```
-bin/<os>-<arch>/ platform binaries: XDC, bootnode, puppeth
-                 (built from source on first run; git-ignored, not committed)
+bin/<client>/<os>-<arch>/  per-client, per-platform binaries, built on first
+                 run (git-ignored): oldxdc -> XDC+bootnode+puppeth, geth -> geth
 setup.sh         one-command end-to-end: keys -> genesis -> reset -> run
 run.sh           import keys, init, start bootnode + 4 mining nodes
 gen-address.sh   generate fresh keypairs (private key + address)

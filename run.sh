@@ -9,6 +9,7 @@ trap _interupt INT TERM
 
 cd "$(dirname "$0")"
 source ./lib.sh
+require_oldxdc
 
 touch .pwd
 export $(cat .env | xargs)
