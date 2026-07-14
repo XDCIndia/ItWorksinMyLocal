@@ -13,7 +13,7 @@ Bin_NAME=XDC
 
 WORK_DIR=$PWD
 PROJECT_DIR="/Users/anilchinchawale/workspace/XDCNetwork/XDPoSChain"
-cd $PROJECT_DIR && make XDC
+cd $PROJECT_DIR && make XDC && make bootnode
 cd $WORK_DIR
 
 if [ ! -d ./nodes/1/$Bin_NAME/chaindata ]
