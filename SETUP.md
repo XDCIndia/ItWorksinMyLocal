@@ -32,7 +32,11 @@ brew install go             # the Go language (or download from https://go.dev/d
 **Linux / Ubuntu:**
 
 ```
-sudo apt update && sudo apt install -y build-essential git golang
+sudo apt update && sudo apt install -y build-essential git
+# Go 1.23+ is required; Ubuntu's 'golang' package is usually too old, so:
+wget https://go.dev/dl/go1.23.4.linux-amd64.tar.gz
+sudo rm -rf /usr/local/go && sudo tar -C /usr/local -xzf go1.23.4.linux-amd64.tar.gz
+export PATH=$PATH:/usr/local/go/bin   # add this line to ~/.profile to persist
 ```
 
 The first run downloads the node software from the pre-fixed

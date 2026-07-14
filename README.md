@@ -32,11 +32,14 @@ if it isn't already beside this repo (default: the pre-fixed
 Install the build toolchain once:
 
 ```bash
-# Linux / Ubuntu
-sudo apt update && sudo apt install -y build-essential git golang
+# Linux / Ubuntu  (Go 1.23+ required — apt's 'golang' is usually too old)
+sudo apt update && sudo apt install -y build-essential git
+wget https://go.dev/dl/go1.23.4.linux-amd64.tar.gz
+sudo rm -rf /usr/local/go && sudo tar -C /usr/local -xzf go1.23.4.linux-amd64.tar.gz
+export PATH=$PATH:/usr/local/go/bin        # add to ~/.profile to persist
 
 # macOS
-xcode-select --install     # C toolchain; install Go from https://go.dev/dl or `brew install go`
+xcode-select --install     # C toolchain; install Go 1.23+ from https://go.dev/dl or `brew install go`
 ```
 
 Then just run `./setup.sh --new` — it clones the source (if needed) and builds.

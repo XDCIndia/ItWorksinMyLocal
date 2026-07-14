@@ -86,13 +86,27 @@ check_toolchain() {
   command -v make >/dev/null 2>&1 || missing="$missing make"
   command -v go >/dev/null 2>&1 || missing="$missing go(golang)"
   { command -v gcc >/dev/null 2>&1 || command -v cc >/dev/null 2>&1; } || missing="$missing gcc"
-  [ -z "$missing" ] && return 0
+  if [ -z "$missing" ]; then
+    # Go must be >= 1.23 (go.mod). Distro packages are often older.
+    local gv maj min
+    gv=$(go version 2>/dev/null | grep -oE 'go[0-9]+\.[0-9]+' | head -1 | sed 's/go//')
+    maj=${gv%%.*}; min=${gv#*.}
+    if [ -n "$gv" ] && { [ "${maj:-0}" -lt 1 ] || { [ "$maj" -eq 1 ] && [ "${min:-0}" -lt 23 ]; }; }; then
+      echo "Go $gv is too old to build (need >= 1.23)." >&2
+      echo "Ubuntu's 'golang' package is often too old -- install a current Go:" >&2
+      echo "  wget https://go.dev/dl/go1.23.4.linux-amd64.tar.gz" >&2
+      echo "  sudo rm -rf /usr/local/go && sudo tar -C /usr/local -xzf go1.23.4.linux-amd64.tar.gz" >&2
+      echo "  export PATH=\$PATH:/usr/local/go/bin   # add to ~/.profile" >&2
+      exit 1
+    fi
+    return 0
+  fi
   echo "Missing build tools:$missing" >&2
   echo "Install them once, then re-run:" >&2
-  echo "  Ubuntu/Debian: sudo apt update && sudo apt install -y build-essential golang git" >&2
-  echo "  Fedora/RHEL:   sudo dnf install -y @development-tools golang git" >&2
+  echo "  Ubuntu/Debian: sudo apt update && sudo apt install -y build-essential git   (+ Go >=1.23, see below)" >&2
+  echo "  Fedora/RHEL:   sudo dnf install -y @development-tools git" >&2
   echo "  macOS:         xcode-select --install && brew install go" >&2
-  echo "(If your distro's Go is too old to build, install a current Go from https://go.dev/dl)" >&2
+  echo "  Go >= 1.23:    https://go.dev/dl  (distro 'golang' packages are often too old)" >&2
   exit 1
 }
 
