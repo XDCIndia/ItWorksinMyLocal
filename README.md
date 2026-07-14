@@ -1,77 +1,61 @@
 # Local XDPoS (DPoS) Network — "It Works in My Local"
 
-A self-contained 4-node local [XDPoS](https://github.com/XinFinOrg/XDPoSChain)
-delegated-proof-of-stake network. The required binaries are bundled in `bin/`,
-so you don't need the XDPoSChain source tree to run it.
+A self-contained **4-node local [XDPoS](https://github.com/XinFinOrg/XDPoSChain)**
+delegated-proof-of-stake network you can spin up in seconds — generate keys,
+build a genesis, run 4 mining nodes + a bootnode, and let other machines join.
 
-> **New to this / non-technical?** Read [SETUP.md](SETUP.md) — a plain-language,
-> step-by-step guide that gets you running with a single command.
-> For a quick "what does each script do" cheat-sheet, see [SCRIPTS.md](SCRIPTS.md).
+> **Non-technical?** Start with **[SETUP.md](SETUP.md)** (plain-language guide).
+> **Want a script cheat-sheet?** See **[SCRIPTS.md](SCRIPTS.md)**.
 
-## What's included
+## Contents
+- [Requirements](#requirements)
+- [Quick start](#quick-start)
+- [Everyday commands](#everyday-commands)
+- [Generating a genesis](#generating-a-genesis)
+- [Joining from another machine](#joining-from-another-machine)
+- [What's in this repo](#whats-in-this-repo)
+- [Network details](#network-details)
+- [Troubleshooting](#troubleshooting)
+- [The puppeth fix](#the-puppeth-fix)
 
+---
+
+## Requirements
+
+Works on **macOS** and **Linux / Ubuntu**. Binaries live in `bin/<os>-<arch>/`
+and are resolved automatically per platform.
+
+**macOS (Apple Silicon):** binaries are bundled — nothing to install.
+
+**Linux / Ubuntu (or any platform without bundled binaries):** they're built
+from source on first run. Install the toolchain and clone XDPoSChain next to
+this repo:
+
+```bash
+sudo apt update && sudo apt install -y build-essential git golang
+git clone https://github.com/XinFinOrg/XDPoSChain ../XDPoSChain
+# (or point XDPOS_DIR=/path/to/XDPoSChain at your checkout)
 ```
-bin/<os>-<arch>/ platform-specific binaries: XDC, bootnode, puppeth
-                 (Darwin-arm64 bundled; other platforms auto-built on first run)
-lib.sh           shared helper: platform detection, IP, build-on-demand
-setup.sh         one-command end-to-end: keys -> genesis -> reset -> run
-run.sh           build-if-needed, import keys, init, start bootnode + 4 nodes
-gen-address.sh   generate fresh keypairs (private key + address)
-gen-genesis.sh   generate genesis.json via puppeth using flags
-network-info.sh  plain-language summary of the current network (roles, balances)
-join.sh          connect & sync an existing network (given its genesis)
-reset.sh         wipe node data (for a clean re-init)
-genesis/         genesis.json (chainId 20118, 4 masternodes seeded)
-bootnode.key     fixed bootnode private key
-.env.sample      template for the 4 masternode private keys
-```
 
-### Platforms
+`openssl`, `python3`, `curl`, and `bash` are also needed (present by default on
+macOS and Ubuntu). Force a rebuild anytime with `REBUILD=1`.
 
-Works on **macOS and Linux/Ubuntu**. Binaries are resolved per platform from
-`bin/<os>-<arch>/`:
+---
 
-- **macOS (Apple Silicon):** binaries are bundled — nothing to build.
-- **Linux / other:** on first run the scripts **build the binaries natively**
-  from the XDPoSChain source. Requirements: Go, a C compiler
-  (`sudo apt install build-essential`), and the XDPoSChain source cloned next to
-  this repo (or point `XDPOS_DIR` at it):
+## Quick start
 
-  ```bash
-  git clone https://github.com/XinFinOrg/XDPoSChain ../XDPoSChain
-  ./setup.sh --new            # builds Linux binaries, then runs
-  # or: XDPOS_DIR=/path/to/XDPoSChain ./setup.sh --new
-  ```
-
-  Force a rebuild anytime with `REBUILD=1 ./setup.sh`.
-
-## Quick start — one command
-
-Bring up the whole network from scratch (fresh keys → genesis → reset → run):
+From this folder, one command brings up a brand-new network:
 
 ```bash
 ./setup.sh --new
 ```
 
-`setup.sh` generates fresh keys into `.env`, **derives the signer set from those
-keys dynamically** (no hardcoded addresses), seeds the genesis with them, wipes
-old data, and launches the bootnode + 4 mining nodes. Drop `--new` to reuse the
-keys already in `.env`:
+This: generates 4 fresh keys into `.env` → derives the validator set from them →
+builds a matching genesis → wipes old data → starts the bootnode + 4 mining
+nodes. Leave the window open (it keeps printing block logs). **Stop with
+`Ctrl + C`.**
 
-```bash
-./setup.sh
-```
-
-### Or step by step
-
-```bash
-./gen-address.sh 4 --env                                   # 1. keys -> .env
-./gen-genesis.sh --signers <addr1>,<addr2>,<addr3>,<addr4> # 2. genesis (use printed --signers line)
-./reset.sh                                                 # 3. wipe old data
-./run.sh                                                   # 4. launch
-```
-
-Confirm it's producing blocks (and crossing the epoch boundary at 900):
+Check it's producing blocks (in another terminal):
 
 ```bash
 curl -s -X POST -H 'Content-Type: application/json' \
@@ -79,110 +63,127 @@ curl -s -X POST -H 'Content-Type: application/json' \
   http://localhost:8545
 ```
 
-## Scripts
+The number after `0x` should climb (a block every ~2s).
 
-### `gen-address.sh [N] [--env]`
-Generates `N` random keypairs (default 4). Prints each private key + address,
-plus copy-paste blocks for `.env` and for `gen-genesis.sh --signers`.
-`--env` writes the keys straight to `./.env`.
+Review what you built (validators, roles, balances):
 
-### `gen-genesis.sh [flags]`
-Drives `bin/puppeth` non-interactively to produce `genesis/genesis.json`.
-All flags optional (defaults match the local setup). Addresses accept
-`0x` / `xdc` / bare-hex.
+```bash
+./network-info.sh
+```
+
+---
+
+## Everyday commands
+
+| Goal | Command |
+|------|---------|
+| Start fresh (new keys) | `./setup.sh --new` |
+| Start reusing current `.env` keys | `./setup.sh` |
+| Just launch (keys + genesis already exist) | `./run.sh` |
+| See the network summary | `./network-info.sh` |
+| Wipe chain data (keep keys) | `./reset.sh` |
+| Start over after a change | `./reset.sh && ./setup.sh` |
+| Generate keys only | `./gen-address.sh 4 --env` |
+| Build a genesis only | `./gen-genesis.sh [flags]` |
+| Join another network | `./join.sh --genesis g.json --ip <host>` |
+
+Every script supports `-h` / `--help`.
+
+---
+
+## Generating a genesis
+
+`gen-genesis.sh` drives the (bug-fixed) `puppeth` non-interactively. All flags
+are optional and default to the local setup. Addresses accept `0x`, `xdc`, or
+bare-hex.
+
+```bash
+./gen-genesis.sh --chainid 20118 \
+  --signers 0xAAA...,0xBBB...,0xCCC...,0xDDD...
+```
 
 | Flag | Meaning (default) |
 |------|-------------------|
-| `--chainid N` | chain / network id (20118) |
-| `--signers a,b,c` | masternode addresses |
+| `--chainid N` | chain / network id (`20118`) |
+| `--signers a,b,c` | validator / masternode addresses |
 | `--owner ADDR` | masternode owner |
-| `--reward N` | block reward (5000) |
-| `--v2block N` | v2 consensus switch block (2700) |
-| `--epoch N` / `--gap N` | epoch length (900) / checkpoint gap (450) |
+| `--reward N` | block reward (`5000`) |
+| `--v2block N` | v2 consensus switch block (`2700`) |
+| `--epoch N` / `--gap N` | epoch length (`900`) / checkpoint gap (`450`) |
 | `--foundation ADDR` / `--foundation-owners a,b` | foundation wallet / multisig |
 | `--team-owners a,b` / `--swap ADDR` / `--prefund a,b` | governance / funding |
 | `--network NAME` / `--out FILE` | puppeth net name / output path |
 
-### `run.sh`
-Uses `bin/`; rebuilds only if a binary is missing or `REBUILD=1`. Imports the
-`.env` keys, inits each node against `genesis/genesis.json`, starts the local
-bootnode, then 4 mining nodes. Each node advertises this machine's LAN IP
-(`--nat extip`) and a per-host `--identity`, and connects to the local bootnode.
+It also writes `network-roles.env` so `network-info.sh` can label accounts.
 
-### `network-info.sh [genesis.json]`
-Prints a plain-language summary of the current network read live from
-`genesis/genesis.json` (+ `.env` and `network-roles.env`): chain id, consensus
-params, the masternodes (marked if you hold the key), key roles (owner,
-foundation, swap), genesis balances, and total supply. Regenerate a network and
-re-run it — the output always reflects the current files.
+> **Keep your `genesis.json`.** puppeth stamps a genesis with the current time,
+> so an identical one **cannot be regenerated later**. Whoever runs a network
+> must save and share that exact `genesis.json` for others to join.
 
-### `join.sh [flags]`
-Connect to and **sync an existing network** as a non-mining peer. You supply
-that network's `genesis.json`; the bootnode enode defaults to one derived from
-`./bootnode.key` (override with `--bootnodes`, or set the host with `--host`).
+---
+
+## Joining from another machine
+
+Any node started from this repo shares the same `bootnode.key`, so joining just
+needs the network's **`genesis.json`** and the host's **IP**:
 
 ```bash
-# join the local network on THIS machine (default key-based enode):
-./join.sh --genesis genesis/genesis.json
-
-# join a network on another host -- JUST PASS ITS IP (enode is built for you):
-./join.sh --genesis their-genesis.json --ip 10.0.0.5
-# (or 10.0.0.5:30301 to set the bootnode port)
-
-# or point at an explicit enode if you have one:
-./join.sh --genesis g.json --bootnodes "enode://KEY@HOST:30301"
+# on the second machine (has bin/, bootnode.key, and the network's genesis.json):
+./join.sh --genesis genesis.json --ip <HOST_IP>
 ```
 
-`--ip` builds the bootnode enode from the shared `bootnode.key` at that host, so
-you don't need the enode string — it only works when the target runs the same
-`bootnode.key` (true for any node started from this repo).
-
-Key flags: `--networkid` (defaults to the genesis chainId), `--datadir`
-(default `./peer`), `--port/--rpcport/--wsport`, `--name`, and `--mine ADDR`
-(only if that address is a validator in the genesis and its key is in `.env`).
-It **must be the exact same genesis** as the target network, or peers reject
-the handshake.
-
-### `reset.sh`
-Wipes `nodes/*/XDC`, `nodes/*/XDCx`, `nodes/*/keystore`. Run after changing
-genesis or `.env` keys.
-
-## Connecting from another machine
-
-All nodes discover peers through the local bootnode on `:30301`. Its enode is
-fixed (built from `bootnode.key`); only the host IP changes. Print the exact
-endpoint to hand to another machine:
+`--ip` builds the bootnode enode for you. Other ways to point it:
 
 ```bash
-echo "enode://$(./bin/*/bootnode -nodekey ./bootnode.key -writeaddress)@$(ipconfig getifaddr en0):30301"
-# Linux: replace $(ipconfig getifaddr en0) with $(hostname -I | awk '{print $1}')
+./join.sh --genesis genesis/genesis.json                       # local machine
+./join.sh --genesis g.json --ip 10.0.0.5:30301                 # host + custom port
+./join.sh --genesis g.json --bootnodes "enode://KEY@HOST:30301" # explicit enode
 ```
 
-Example (replace the IP with the host's LAN/public IP):
+Useful flags: `--networkid` (defaults to the genesis chainId), `--datadir`
+(default `./peer`), `--port` / `--rpcport` / `--wsport`, `--name`, and
+`--mine ADDR` (only if that address is a validator in the genesis and its key is
+in `.env`). By default it joins as a **read/sync** node.
 
-```
-enode://ec569f5d52cefee5c5405a0c5db720dc7061f3085e0682dd8321413430ddda6a177b85db75b0daf83d2e68760ba3f5beb4ba9e333e7d52072fba4d39b05a0451@<HOST_IP>:30301
-```
+**Requirements to connect:**
+- The **same `genesis.json`** as the target network (a different one → the peer
+  is rejected at the handshake).
+- The host allows inbound **`30301/udp+tcp`** (discovery) and **`30303/tcp`** (p2p).
+- Both machines on the same network (or the host's public IP is reachable).
 
-On the **other machine** (needs `bin/XDC` and the same `genesis/genesis.json`):
+Print the exact bootnode endpoint to hand out:
 
 ```bash
-BOOTNODE="enode://ec569f5d...a0451@<HOST_IP>:30301"   # from the command above
-./bin/*/XDC --datadir ./peer init ./genesis/genesis.json
-./bin/*/XDC --datadir ./peer --networkid 20118 --syncmode full \
-  --bootnodes "$BOOTNODE" --port 30303 \
-  --rpc --rpcaddr 0.0.0.0 --rpcport 8545 --rpcapi eth,net,web3,XDPoS
+echo "enode://$(./bin/*/bootnode -nodekey ./bootnode.key -writeaddress)@$(hostname -I 2>/dev/null | awk '{print $1}' || ipconfig getifaddr en0):30301"
 ```
 
-The host must allow inbound `30301/udp+tcp` (discovery) and `30303/tcp` (p2p).
-Add `--unlock/--mine` only if that machine holds a masternode key that's in the
-genesis signer set; otherwise it joins as a syncing peer.
+---
+
+## What's in this repo
+
+```
+bin/<os>-<arch>/ platform binaries: XDC, bootnode, puppeth
+                 (Darwin-arm64 bundled; other platforms auto-built on first run)
+setup.sh         one-command end-to-end: keys -> genesis -> reset -> run
+run.sh           import keys, init, start bootnode + 4 mining nodes
+gen-address.sh   generate fresh keypairs (private key + address)
+gen-genesis.sh   generate genesis.json via puppeth (flag-driven)
+network-info.sh  plain-language summary of the current network
+join.sh          connect & sync an existing network (by genesis + IP/enode)
+reset.sh         wipe node data for a clean re-init
+lib.sh           shared helper: platform detection, IP, build-on-demand
+genesis/         genesis.json (chainId 20118, 4 masternodes seeded)
+bootnode.key     fixed bootnode private key (shared, so --ip joins work)
+.env / .env.sample  the 4 masternode private keys (.env is git-ignored)
+```
+
+---
 
 ## Network details
 
-- **chainId / networkid:** 20118 (must not be 50/51/551 — those force the
-  built-in mainnet/testnet/devnet genesis)
-- **consensus:** XDPoS, period 2s, epoch 900, gap 450, v2 switch block 2700
+- **chainId / networkid:** `20118` (must **not** be `50/51/551` — those force the
+  built-in mainnet/testnet/devnet genesis and won't accept a custom one)
+- **consensus:** XDPoS — 2s blocks, epoch `900`, gap `450`, v2 switch block `2700`
 - **nodes / ports:**
 
   | node | datadir | p2p | ws | rpc |
@@ -192,19 +193,31 @@ genesis signer set; otherwise it joins as a syncing peer.
   | 3 | nodes/3 | 30305 | 8557 | 8547 |
   | 4 | nodes/4 | 30306 | 8558 | 8548 |
 
+- Nodes report to the `ethstats` endpoint set in `run.sh` (`STATS_SECRET`) —
+  change it if you don't want a shared dashboard.
+- `.env` holds **throwaway devnet keys** — never reuse them anywhere real.
+
+---
+
+## Troubleshooting
+
+| Symptom | Fix |
+|---------|-----|
+| `Permission denied` running a script | `chmod +x *.sh` |
+| `address already in use` | a node is still running: `pkill -f bin/XDC`, then retry |
+| `incompatible genesis (have … new …)` | old data vs new genesis: `./reset.sh` then start again |
+| Blocks stop / stuck at an epoch (e.g. 900) | genesis validators don't match `0x88` — regenerate with `gen-genesis.sh` (see below) |
+| A joining peer won't connect | its `genesis.json` must be byte-identical to the target's; check firewall on `30301`/`30303` |
+| `networkid` rejected / wrong genesis loads | don't use `50/51/551`; keep `networkid == chainId` |
+
+---
+
 ## The puppeth fix
 
 Stock `puppeth` in this XDPoSChain build corrupts the genesis: its storage
 exporter RLP-decoded each already-decoded storage word, truncating every
 masternode address in the `XDCValidator` (`0x88`) `candidates[]` array (e.g.
 `0xbd29…` → `0x00`). `getCandidates()` then returned garbage and the chain
-**stalled at the first epoch boundary (block 900)**. The bundled `bin/puppeth`
-stores the word verbatim, so the masternodes are seeded correctly and the epoch
-transition succeeds. (Fix lives in `cmd/puppeth/wizard_genesis.go`.)
-
-## Notes
-
-- `.env` holds **throwaway devnet private keys** — never reuse them anywhere
-  real. `.env` is git-ignored.
-- Nodes report to the `ethstats` endpoint configured in `run.sh`
-  (`STATS_SECRET`). Change it if you don't want a shared dashboard.
+**stalled at the first epoch boundary (block 900)**. The bundled `bin/*/puppeth`
+stores the word verbatim, so validators are seeded correctly and the epoch
+transition succeeds. Fix: `cmd/puppeth/wizard_genesis.go` in XDPoSChain.
