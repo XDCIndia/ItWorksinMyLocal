@@ -8,3 +8,4 @@ one.json
 network-roles.env
 peer
 peertest
+bin/

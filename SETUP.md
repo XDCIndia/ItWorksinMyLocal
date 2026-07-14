@@ -18,27 +18,27 @@ Nothing here touches the real XDC network or real money.
 
 ## Before you start
 
-Works on **Mac** and **Linux / Ubuntu**.
+Works on **Mac** and **Linux / Ubuntu**. The blockchain programs are built for
+you automatically on the first run, so you install a few free developer tools
+once.
 
-**On a Mac (Apple Silicon):**
-1. The **Terminal** app (find it with Spotlight: `Cmd + Space`, type "Terminal").
+**Mac:** open **Terminal** (Spotlight: `Cmd + Space`, type "Terminal"), then:
 
-That's it — all the required programs are bundled, nothing to install.
+```
+xcode-select --install      # developer tools
+brew install go             # the Go language (or download from https://go.dev/dl)
+```
 
-**On Linux / Ubuntu:** the programs are built for you the first time, so you
-need a few developer tools and the source, installed once:
+**Linux / Ubuntu:**
 
 ```
 sudo apt update && sudo apt install -y build-essential git golang
-git clone https://github.com/XDCIndia/OLDXDC ../XDPoSChain
 ```
 
-(Place the `XDPoSChain` folder next to this one.) That fork already contains the
-`puppeth` fix. After that, the steps below are identical.
-
-> Using plain upstream instead? `git clone https://github.com/XinFinOrg/XDPoSChain ../XDPoSChain`
-> then `(cd ../XDPoSChain && git checkout 68b00c7e5)` — the fix is applied
-> automatically at build time.
+The first run downloads the node software from the pre-fixed
+`XDCIndia/OLDXDC` source and builds it (a few minutes, one time). You need
+access to that repository — if you're in the XDCIndia org and signed in to
+git/GitHub, it just works. After that, everything below is the same on both.
 
 ---
 
@@ -58,7 +58,8 @@ git clone https://github.com/XDCIndia/OLDXDC ../XDPoSChain
    ./setup.sh --new
    ```
 
-That's it. In about **20–30 seconds** you'll have a running 4-node blockchain.
+That's it. The **first run builds the software (a few minutes, one time)**;
+after that it starts in about **20–30 seconds**.
 
 ### What that one command does (so it's not a mystery)
 

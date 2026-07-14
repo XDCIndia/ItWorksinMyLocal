@@ -13,7 +13,9 @@ PUPPETH_BIN="$BIN_DIR/puppeth"
 
 # XDPoSChain source used to build binaries when none are bundled for this
 # platform. Defaults to a sibling checkout; override with XDPOS_DIR=/path.
+# If that directory is missing it's cloned from XDPOS_REPO (our pre-fixed fork).
 XDPOS_DIR="${XDPOS_DIR:-$_LIB_DIR/../XDPoSChain}"
+XDPOS_REPO="${XDPOS_REPO:-https://github.com/XDCIndia/OLDXDC}"
 
 # Best-effort LAN IP on macOS or Linux (falls back to 127.0.0.1).
 detect_ip() {
@@ -63,11 +65,15 @@ ensure_bins() {
     return 0
   fi
   if [ ! -d "$XDPOS_DIR" ]; then
-    echo "No prebuilt binaries for $PLATFORM and XDPoSChain source not found." >&2
-    echo "Clone it next to this repo, or set XDPOS_DIR, e.g.:" >&2
-    echo "    git clone https://github.com/XinFinOrg/XDPoSChain ../XDPoSChain" >&2
-    echo "    XDPOS_DIR=/path/to/XDPoSChain ./setup.sh" >&2
-    exit 1
+    echo "No binaries for $PLATFORM yet; cloning source from $XDPOS_REPO ..."
+    if ! git clone --depth 1 "$XDPOS_REPO" "$XDPOS_DIR"; then
+      echo "Could not clone $XDPOS_REPO (private repo needs access?)." >&2
+      echo "Clone the source manually, then re-run:" >&2
+      echo "    git clone $XDPOS_REPO $XDPOS_DIR" >&2
+      echo "  or upstream pinned:" >&2
+      echo "    git clone https://github.com/XinFinOrg/XDPoSChain $XDPOS_DIR && (cd $XDPOS_DIR && git checkout 68b00c7e5)" >&2
+      exit 1
+    fi
   fi
   patch_puppeth   # fix the genesis-storage bug before building puppeth
   echo "Building XDC/bootnode/puppeth for $PLATFORM from $XDPOS_DIR ..."

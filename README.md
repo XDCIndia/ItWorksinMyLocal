@@ -22,39 +22,38 @@ build a genesis, run 4 mining nodes + a bootnode, and let other machines join.
 
 ## Requirements
 
-Works on **macOS** and **Linux / Ubuntu**. Binaries live in `bin/<os>-<arch>/`
-and are resolved automatically per platform.
+Works on **macOS** and **Linux / Ubuntu**. The node binaries
+(`XDC`, `bootnode`, `puppeth`) are **built from source on first run** and cached
+in `bin/<os>-<arch>/` — the source is our pre-fixed fork
+[`XDCIndia/OLDXDC`](https://github.com/XDCIndia/OLDXDC), cloned automatically if
+it isn't already beside this repo.
 
-**macOS (Apple Silicon):** binaries are bundled — nothing to install.
-
-**Linux / Ubuntu (or any platform without bundled binaries):** they're built
-from source on first run. Install the toolchain and clone the XDPoSChain source
-next to this repo.
+Install the build toolchain once:
 
 ```bash
+# Linux / Ubuntu
 sudo apt update && sudo apt install -y build-essential git golang
+
+# macOS
+xcode-select --install     # C toolchain; install Go from https://go.dev/dl or `brew install go`
 ```
 
-Then pick **one** source (both include the `puppeth` genesis fix and match the
-version the scripts expect):
+Then just run `./setup.sh --new` — it clones the source (if needed) and builds.
+`openssl`, `python3`, `curl`, and `bash` are also required (present by default
+on both). Force a rebuild anytime with `REBUILD=1`.
 
-```bash
-# Recommended: our fork, already patched and version-matched:
-git clone https://github.com/XDCIndia/OLDXDC ../XDPoSChain
+**Source options** (override the auto-clone with `XDPOS_REPO=` or point
+`XDPOS_DIR=` at an existing checkout):
 
-# Or upstream pinned to the supported commit (lib.sh auto-applies the fix):
-git clone https://github.com/XinFinOrg/XDPoSChain ../XDPoSChain
-(cd ../XDPoSChain && git checkout 68b00c7e5)
-```
+- **Default — `XDCIndia/OLDXDC`**: already carries the `puppeth` genesis fix and
+  matches the version the scripts expect.
+- **Upstream** `XinFinOrg/XDPoSChain` pinned to `68b00c7e5`: `lib.sh` auto-applies
+  the storage fix at build time (`patch_puppeth`); the pin keeps the wizard
+  prompts in sync with `gen-genesis.sh`.
 
-> **Why this matters:** upstream `puppeth` has a genesis-storage bug (see
+> Why: upstream `puppeth` has a genesis-storage bug (see
 > [The puppeth fix](#the-puppeth-fix)) and its wizard prompts have since drifted.
-> `lib.sh` auto-applies the storage fix at build time (`patch_puppeth`), and the
-> pinned commit keeps the prompts in sync with `gen-genesis.sh`. Point
-> `XDPOS_DIR=/path/to/checkout` at a different location if needed.
-
-`openssl`, `python3`, `curl`, and `bash` are also needed (present by default on
-macOS and Ubuntu). Force a rebuild anytime with `REBUILD=1`.
+> `OLDXDC` (or the pinned + auto-patched upstream) avoids both.
 
 ---
 
@@ -179,7 +178,7 @@ echo "enode://$(./bin/*/bootnode -nodekey ./bootnode.key -writeaddress)@$(hostna
 
 ```
 bin/<os>-<arch>/ platform binaries: XDC, bootnode, puppeth
-                 (Darwin-arm64 bundled; other platforms auto-built on first run)
+                 (built from source on first run; git-ignored, not committed)
 setup.sh         one-command end-to-end: keys -> genesis -> reset -> run
 run.sh           import keys, init, start bootnode + 4 mining nodes
 gen-address.sh   generate fresh keypairs (private key + address)
