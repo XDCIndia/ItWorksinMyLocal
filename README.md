@@ -28,14 +28,30 @@ and are resolved automatically per platform.
 **macOS (Apple Silicon):** binaries are bundled — nothing to install.
 
 **Linux / Ubuntu (or any platform without bundled binaries):** they're built
-from source on first run. Install the toolchain and clone XDPoSChain next to
-this repo:
+from source on first run. Install the toolchain and clone the XDPoSChain source
+next to this repo.
 
 ```bash
 sudo apt update && sudo apt install -y build-essential git golang
-git clone https://github.com/XinFinOrg/XDPoSChain ../XDPoSChain
-# (or point XDPOS_DIR=/path/to/XDPoSChain at your checkout)
 ```
+
+Then pick **one** source (both include the `puppeth` genesis fix and match the
+version the scripts expect):
+
+```bash
+# Recommended: our fork, already patched and version-matched:
+git clone https://github.com/XDCIndia/OLDXDC ../XDPoSChain
+
+# Or upstream pinned to the supported commit (lib.sh auto-applies the fix):
+git clone https://github.com/XinFinOrg/XDPoSChain ../XDPoSChain
+(cd ../XDPoSChain && git checkout 68b00c7e5)
+```
+
+> **Why this matters:** upstream `puppeth` has a genesis-storage bug (see
+> [The puppeth fix](#the-puppeth-fix)) and its wizard prompts have since drifted.
+> `lib.sh` auto-applies the storage fix at build time (`patch_puppeth`), and the
+> pinned commit keeps the prompts in sync with `gen-genesis.sh`. Point
+> `XDPOS_DIR=/path/to/checkout` at a different location if needed.
 
 `openssl`, `python3`, `curl`, and `bash` are also needed (present by default on
 macOS and Ubuntu). Force a rebuild anytime with `REBUILD=1`.

@@ -26,15 +26,19 @@ Works on **Mac** and **Linux / Ubuntu**.
 That's it — all the required programs are bundled, nothing to install.
 
 **On Linux / Ubuntu:** the programs are built for you the first time, so you
-also need a few developer tools installed once:
+need a few developer tools and the source, installed once:
 
 ```
 sudo apt update && sudo apt install -y build-essential git golang
-git clone https://github.com/XinFinOrg/XDPoSChain ../XDPoSChain
+git clone https://github.com/XDCIndia/OLDXDC ../XDPoSChain
 ```
 
-(Place the `XDPoSChain` folder next to this one.) After that, the steps below
-are identical.
+(Place the `XDPoSChain` folder next to this one.) That fork already contains the
+`puppeth` fix. After that, the steps below are identical.
+
+> Using plain upstream instead? `git clone https://github.com/XinFinOrg/XDPoSChain ../XDPoSChain`
+> then `(cd ../XDPoSChain && git checkout 68b00c7e5)` — the fix is applied
+> automatically at build time.
 
 ---
 
