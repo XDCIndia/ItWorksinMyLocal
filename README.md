@@ -10,6 +10,7 @@ so you don't need the XDPoSChain source tree to run it.
 bin/XDC          node binary (v2.7.1-stable, darwin-arm64)
 bin/bootnode     discovery bootnode
 bin/puppeth      genesis wizard (patched — see "The puppeth fix" below)
+setup.sh         one-command end-to-end: keys -> genesis -> reset -> run
 run.sh           build-if-needed, import keys, init, start bootnode + 4 nodes
 gen-address.sh   generate fresh keypairs (private key + address)
 gen-genesis.sh   generate genesis.json via puppeth using flags
@@ -22,20 +23,30 @@ bootnode.key     fixed bootnode private key
 > The bundled binaries are macOS/arm64. On another platform, run
 > `REBUILD=1 ./run.sh` (needs the XDPoSChain source at the path in `run.sh`).
 
-## Quick start
+## Quick start — one command
+
+Bring up the whole network from scratch (fresh keys → genesis → reset → run):
 
 ```bash
-# 1. generate 4 fresh masternode keys -> .env
-./gen-address.sh 4 --env
+./setup.sh --new
+```
 
-# 2. build a genesis seeded with those keys (use the --signers line it prints)
-./gen-genesis.sh --signers <addr1>,<addr2>,<addr3>,<addr4>
+`setup.sh` generates fresh keys into `.env`, **derives the signer set from those
+keys dynamically** (no hardcoded addresses), seeds the genesis with them, wipes
+old data, and launches the bootnode + 4 mining nodes. Drop `--new` to reuse the
+keys already in `.env`:
 
-# 3. reset any old chain data
-./reset.sh
+```bash
+./setup.sh
+```
 
-# 4. launch the bootnode + 4 mining nodes
-./run.sh
+### Or step by step
+
+```bash
+./gen-address.sh 4 --env                                   # 1. keys -> .env
+./gen-genesis.sh --signers <addr1>,<addr2>,<addr3>,<addr4> # 2. genesis (use printed --signers line)
+./reset.sh                                                 # 3. wipe old data
+./run.sh                                                   # 4. launch
 ```
 
 Confirm it's producing blocks (and crossing the epoch boundary at 900):
@@ -79,6 +90,37 @@ bootnode, then 4 mining nodes. Each node advertises this machine's LAN IP
 ### `reset.sh`
 Wipes `nodes/*/XDC`, `nodes/*/XDCx`, `nodes/*/keystore`. Run after changing
 genesis or `.env` keys.
+
+## Connecting from another machine
+
+All nodes discover peers through the local bootnode on `:30301`. Its enode is
+fixed (built from `bootnode.key`); only the host IP changes. Print the exact
+endpoint to hand to another machine:
+
+```bash
+echo "enode://$(./bin/bootnode -nodekey ./bootnode.key -writeaddress)@$(ipconfig getifaddr en0):30301"
+# Linux: replace $(ipconfig getifaddr en0) with $(hostname -I | awk '{print $1}')
+```
+
+Example (replace the IP with the host's LAN/public IP):
+
+```
+enode://ec569f5d52cefee5c5405a0c5db720dc7061f3085e0682dd8321413430ddda6a177b85db75b0daf83d2e68760ba3f5beb4ba9e333e7d52072fba4d39b05a0451@<HOST_IP>:30301
+```
+
+On the **other machine** (needs `bin/XDC` and the same `genesis/genesis.json`):
+
+```bash
+BOOTNODE="enode://ec569f5d...a0451@<HOST_IP>:30301"   # from the command above
+./bin/XDC --datadir ./peer init ./genesis/genesis.json
+./bin/XDC --datadir ./peer --networkid 20118 --syncmode full \
+  --bootnodes "$BOOTNODE" --port 30303 \
+  --rpc --rpcaddr 0.0.0.0 --rpcport 8545 --rpcapi eth,net,web3,XDPoS
+```
+
+The host must allow inbound `30301/udp+tcp` (discovery) and `30303/tcp` (p2p).
+Add `--unlock/--mine` only if that machine holds a masternode key that's in the
+genesis signer set; otherwise it joins as a syncing peer.
 
 ## Network details
 
