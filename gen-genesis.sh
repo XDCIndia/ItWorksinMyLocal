@@ -97,6 +97,18 @@ rm -rf "$HOME/.puppeth/$NETWORK" "$NETWORK.json"
 if [ -f "$NETWORK.json" ]; then
   mkdir -p "$(dirname "$OUT")"
   cp "$NETWORK.json" "$OUT"
+  # Record the role -> address mapping so network-info.sh can label accounts.
+  {
+    echo "NETWORK=$NETWORK"
+    echo "CHAINID=$CHAINID"
+    echo "OWNER=$(norm "$OWNER")"
+    echo "FOUNDATION=$(norm "$FOUNDATION")"
+    echo "FOUNDATION_OWNERS=$FOUNDATION_OWNERS"
+    echo "TEAM_OWNERS=$TEAM_OWNERS"
+    echo "SWAP=$(norm "$SWAP")"
+    echo "PREFUND=$PREFUND"
+    echo "SIGNERS=$SIGNERS"
+  } > network-roles.env
   echo "OK: $OUT generated (chainId $CHAINID, network '$NETWORK')"
   echo "Reset node data before restart:  rm -rf ./nodes/*/XDC ./nodes/*/XDCx ./nodes/*/keystore"
 else

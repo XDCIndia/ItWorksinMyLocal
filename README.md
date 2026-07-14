@@ -17,6 +17,7 @@ setup.sh         one-command end-to-end: keys -> genesis -> reset -> run
 run.sh           build-if-needed, import keys, init, start bootnode + 4 nodes
 gen-address.sh   generate fresh keypairs (private key + address)
 gen-genesis.sh   generate genesis.json via puppeth using flags
+network-info.sh  plain-language summary of the current network (roles, balances)
 reset.sh         wipe node data (for a clean re-init)
 genesis/         genesis.json (chainId 20118, 4 masternodes seeded)
 bootnode.key     fixed bootnode private key
@@ -89,6 +90,13 @@ Uses `bin/`; rebuilds only if a binary is missing or `REBUILD=1`. Imports the
 `.env` keys, inits each node against `genesis/genesis.json`, starts the local
 bootnode, then 4 mining nodes. Each node advertises this machine's LAN IP
 (`--nat extip`) and a per-host `--identity`, and connects to the local bootnode.
+
+### `network-info.sh [genesis.json]`
+Prints a plain-language summary of the current network read live from
+`genesis/genesis.json` (+ `.env` and `network-roles.env`): chain id, consensus
+params, the masternodes (marked if you hold the key), key roles (owner,
+foundation, swap), genesis balances, and total supply. Regenerate a network and
+re-run it — the output always reflects the current files.
 
 ### `reset.sh`
 Wipes `nodes/*/XDC`, `nodes/*/XDCx`, `nodes/*/keystore`. Run after changing

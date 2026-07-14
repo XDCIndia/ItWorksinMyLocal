@@ -78,6 +78,19 @@ time — that means new blocks keep being added. **A rising number = it's health
 
 ---
 
+## Review what your network looks like
+
+Want a plain summary of your network — who creates blocks, who owns what, the
+starting balances? Run:
+
+```
+./network-info.sh
+```
+
+It prints an easy-to-read report. The masternodes marked "YOU control this" are
+the ones whose keys are in your `.env`. Accounts without a "[yours]" mark are
+placeholders you don't hold keys for — normal for a local test network.
+
 ## How do I stop it?
 
 Click the Terminal window that's printing all the status lines and press:

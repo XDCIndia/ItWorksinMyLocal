@@ -5,3 +5,4 @@ nodes*
 localdpos.json
 one.json
 .pwd
+network-roles.env
