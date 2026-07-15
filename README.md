@@ -186,6 +186,14 @@ in `.env`). By default it joins as a **read/sync** node and **reports to the sam
 ethstats dashboard as `run.sh`**; override with `--ethstats SECRET@HOST:PORT`
 (node name auto-prepended) or turn it off with `--no-ethstats`.
 
+`--client geth` joins with the modern go-ethereum client instead (sync-only — it
+imports blocks but can't seal). Verified cross-client: a `geth` peer syncs an
+`oldxdc`/XDPoSChain network (same genesis hash + protocol handshake):
+
+```bash
+./join.sh --client geth --genesis genesis.json --ip <HOST_IP>
+```
+
 **Requirements to connect:**
 - The **same `genesis.json`** as the target network (a different one → the peer
   is rejected at the handshake).

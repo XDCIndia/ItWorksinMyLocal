@@ -13,6 +13,8 @@
 #   --bootnodes LIST     full enode URL(s) to dial, if you have them
 #                        (overrides --ip; default: derived from ./bootnode.key)
 #   --host IP[:PORT]     alias of --ip
+#   --client C           node client: oldxdc (default) or geth. geth joins as
+#                        sync-only (it can't seal here); both import blocks.
 #   --networkid N        network id (default: chainId from the genesis)
 #   --datadir DIR        where to store this peer's data (default ./peer)
 #   --name NAME          node identity shown to peers/ethstats (default <host>-sync)
@@ -33,10 +35,6 @@ _interupt() { echo "Shutdown $child_proc"; kill -TERM $child_proc 2>/dev/null; e
 trap _interupt INT TERM
 
 cd "$(dirname "$0")"
-source ./lib.sh
-require_oldxdc
-ensure_bins
-XDC="$XDC_BIN"
 
 GENESIS=""; BOOTNODES=""; NETWORKID=""; DATADIR="./peer"; NAME=""; HOST_IP=""
 PORT=30303; RPCPORT=8545; WSPORT=8546; MINEADDR=""
@@ -49,6 +47,7 @@ while [ $# -gt 0 ]; do
     --bootnodes)   BOOTNODES=$2; shift 2;;
     --ip)          HOST_IP=$2; shift 2;;
     --host)        HOST_IP=$2; shift 2;;
+    --client)      export CLIENT=$2; shift 2;;
     --networkid)   NETWORKID=$2; shift 2;;
     --datadir)     DATADIR=$2; shift 2;;
     --name)        NAME=$2; shift 2;;
@@ -58,10 +57,14 @@ while [ $# -gt 0 ]; do
     --mine)        MINEADDR=$2; shift 2;;
     --ethstats)    ETHSTATS=$2; shift 2;;
     --no-ethstats) ETHSTATS=""; shift;;
-    -h|--help)     sed -n '2,29p' "$0" | sed 's/^# \{0,1\}//'; exit 0;;
+    -h|--help)     sed -n '2,31p' "$0" | sed 's/^# \{0,1\}//'; exit 0;;
     *) echo "unknown flag: $1" >&2; exit 1;;
   esac
 done
+
+source ./lib.sh
+ensure_bins
+XDC="$XDC_BIN"
 
 [ -f "$GENESIS" ] || { echo "need --genesis <file> (got '$GENESIS')" >&2; exit 1; }
 
@@ -69,12 +72,17 @@ done
 # IP (--ip/--host, may include :PORT; defaults to this machine's IP:30301).
 if [ -z "$BOOTNODES" ]; then
   [ -f ./bootnode.key ] || { echo "need --bootnodes or --ip, or a ./bootnode.key to derive one" >&2; exit 1; }
+  # The enode pubkey comes from bootnode.key via any bootnode binary. The geth
+  # client has none, so fall back to whichever bootnode binary is built.
+  bn="$BOOTNODE_BIN"
+  [ -x "$bn" ] || bn=$(ls bin/*/*/bootnode 2>/dev/null | head -1)
+  [ -x "$bn" ] || { echo "no bootnode binary to derive the enode; pass --bootnodes, or build the oldxdc client once" >&2; exit 1; }
   target="${HOST_IP:-$(detect_ip)}"
   case "$target" in
     *:*) bhost="${target%:*}"; bport="${target##*:}";;
     *)   bhost="$target";      bport=30301;;
   esac
-  BOOTNODES="enode://$("$BOOTNODE_BIN" -nodekey ./bootnode.key -writeaddress)@${bhost}:${bport}"
+  BOOTNODES="enode://$("$bn" -nodekey ./bootnode.key -writeaddress)@${bhost}:${bport}"
   echo "Using key-based bootnode: $BOOTNODES"
 fi
 
@@ -88,35 +96,49 @@ IP=$(detect_ip)
 [ -z "$NAME" ] && NAME="$(hostname -s)-sync"
 
 # Initialise this peer's datadir against the target genesis (first run only).
-if [ ! -d "$DATADIR/XDC/chaindata" ]; then
+# oldxdc stores chaindata under <datadir>/XDC, geth under <datadir>/geth.
+datasub="XDC"; [ "$CLIENT" = geth ] && datasub="geth"
+if [ ! -d "$DATADIR/$datasub/chaindata" ]; then
   echo "Initialising $DATADIR from $GENESIS ..."
   "$XDC" --datadir "$DATADIR" init "$GENESIS" || exit 1
 fi
 
-MINE_FLAGS=""
-if [ -n "$MINEADDR" ]; then
-  touch .pwd
-  MINE_FLAGS="--unlock $MINEADDR --password ./.pwd --mine --gasprice 1"
-fi
-
 # ethstats: prepend the node name unless SPEC already includes one (name:secret@…)
-ETHSTATS_FLAGS=""
+ETHSTATS_ARG=""
 if [ -n "$ETHSTATS" ]; then
   case "${ETHSTATS%%@*}" in
     *:*) full="$ETHSTATS";;            # already NAME:SECRET
     *)   full="${NAME}:${ETHSTATS}";;  # just SECRET -> prepend node name
   esac
-  ETHSTATS_FLAGS="--ethstats $full"
+  ETHSTATS_ARG="--ethstats $full"
   echo "  ethstats: $full"
 fi
 
-echo "Joining network id=$NETWORKID  bootnodes=$BOOTNODES"
+echo "Joining ($CLIENT) network id=$NETWORKID  bootnodes=$BOOTNODES"
 echo "  datadir=$DATADIR  identity=$NAME  ip=$IP  ports p2p:$PORT rpc:$RPCPORT ws:$WSPORT"
-"$XDC" --datadir "$DATADIR" --networkid "$NETWORKID" --syncmode full \
-  --bootnodes "$BOOTNODES" --port "$PORT" --nat "extip:${IP}" --identity "$NAME" \
-  --rpc --rpccorsdomain "*" --rpcaddr 0.0.0.0 --rpcport "$RPCPORT" --rpcvhosts "*" \
-  --ws --wsaddr 0.0.0.0 --wsorigins "*" --wsport "$WSPORT" \
-  --rpcapi admin,db,eth,debug,miner,net,shh,txpool,personal,web3,XDPoS \
-  $MINE_FLAGS $ETHSTATS_FLAGS &
+
+if [ "$CLIENT" = geth ]; then
+  # Modern geth: dot-notation flags, sync-only (it can't seal here).
+  [ -n "$MINEADDR" ] && echo "note: --mine ignored (geth join is sync-only)" >&2
+  "$XDC" --datadir "$DATADIR" --networkid "$NETWORKID" --syncmode full \
+    --bootnodes "$BOOTNODES" --port "$PORT" --nat "extip:${IP}" --identity "$NAME" --maxpeers 25 \
+    --http --http.corsdomain "*" --http.addr 0.0.0.0 --http.port "$RPCPORT" --http.vhosts "*" \
+    --http.api eth,net,web3,txpool,debug,XDPoS \
+    --ws --ws.addr 0.0.0.0 --ws.origins "*" --ws.port "$WSPORT" --ws.api eth,net,web3,XDPoS \
+    $ETHSTATS_ARG &
+else
+  # oldxdc (XDPoSChain): classic flags; --mine unlocks a validator to also seal.
+  MINE_FLAGS=""
+  if [ -n "$MINEADDR" ]; then
+    touch .pwd
+    MINE_FLAGS="--unlock $MINEADDR --password ./.pwd --mine --gasprice 1"
+  fi
+  "$XDC" --datadir "$DATADIR" --networkid "$NETWORKID" --syncmode full \
+    --bootnodes "$BOOTNODES" --port "$PORT" --nat "extip:${IP}" --identity "$NAME" \
+    --rpc --rpccorsdomain "*" --rpcaddr 0.0.0.0 --rpcport "$RPCPORT" --rpcvhosts "*" \
+    --ws --wsaddr 0.0.0.0 --wsorigins "*" --wsport "$WSPORT" \
+    --rpcapi admin,db,eth,debug,miner,net,shh,txpool,personal,web3,XDPoS \
+    $MINE_FLAGS $ETHSTATS_ARG &
+fi
 child_proc=$!
 wait
