@@ -14,9 +14,12 @@
 #                        (overrides --ip; default: derived from ./bootnode.key)
 #   --host IP[:PORT]     alias of --ip
 #   --client C           node client: oldxdc (default) | geth | erigon. geth &
-#                        erigon join sync-only. erigon uses --chain, not --genesis.
-#   --chain NAME         erigon only: built-in XDC chainspec to join (erigon has
-#                        no custom-genesis-file support)
+#                        erigon join sync-only. All accept --genesis (erigon
+#                        converts it to its own format automatically).
+#   --chain NAME         erigon only: use a built-in chainspec instead of --genesis
+#   --staticpeers LIST   comma-separated enode URLs to connect directly (erigon
+#                        needs these to peer with an XDPoS net; its discv4 doesn't
+#                        discover peers through an XDPoSChain bootnode)
 #   --networkid N        network id (default: chainId from the genesis)
 #   --datadir DIR        where to store this peer's data (default ./peer)
 #   --name NAME          node identity shown to peers/ethstats (default <host>-sync)
@@ -41,7 +44,7 @@ cd "$(dirname "$0")"
 GENESIS=""; BOOTNODES=""; NETWORKID=""; DATADIR="./peer"; NAME=""; HOST_IP=""; CHAIN=""
 # Defaults deliberately avoid a running ./run.sh network on this machine
 # (bootnode 30301, p2p 30303-30306, rpc 8545-8548, ws 8555-8558).
-PORT=30313; RPCPORT=8595; WSPORT=8596; MINEADDR=""
+PORT=30313; RPCPORT=8595; WSPORT=8596; MINEADDR=""; STATICPEERS=""
 # erigon-only extra ports (also chosen clear of run.sh and a geth join):
 AUTHRPC_PORT=8651; TORRENT_PORT=42079; PRIVAPI=127.0.0.1:9095; MCP_PORT=8653
 # ethstats reporting is ON by default (same endpoint as run.sh); --no-ethstats
@@ -62,9 +65,10 @@ while [ $# -gt 0 ]; do
     --rpcport)     RPCPORT=$2; shift 2;;
     --wsport)      WSPORT=$2; shift 2;;
     --mine)        MINEADDR=$2; shift 2;;
+    --staticpeers) STATICPEERS=$2; shift 2;;
     --ethstats)    ETHSTATS=$2; shift 2;;
     --no-ethstats) ETHSTATS=""; shift;;
-    -h|--help)     sed -n '2,33p' "$0" | sed 's/^# \{0,1\}//'; exit 0;;
+    -h|--help)     sed -n '2,36p' "$0" | sed 's/^# \{0,1\}//'; exit 0;;
     *) echo "unknown flag: $1" >&2; exit 1;;
   esac
 done
@@ -73,8 +77,9 @@ source ./lib.sh
 
 # Validate required inputs BEFORE building (a build can take minutes).
 if [ "$CLIENT" = erigon ]; then
-  # erigon uses built-in XDC chainspecs (--chain), not a genesis file.
-  [ -n "$CHAIN" ] || { echo "erigon join needs --chain <name> (it uses built-in XDC chainspecs, not a custom genesis file)" >&2; exit 1; }
+  # erigon: a built-in --chain name, or a --genesis file (loaded generically
+  # via erigon's genesis-file chainspec support).
+  [ -n "$CHAIN" ] || [ -f "$GENESIS" ] || { echo "erigon join needs --genesis <file> or --chain <built-in-name>" >&2; exit 1; }
 else
   [ -f "$GENESIS" ] || { echo "need --genesis <file> (got '$GENESIS')" >&2; exit 1; }
 fi
@@ -137,15 +142,52 @@ echo "Joining ($CLIENT) network=${CHAIN:-id $NETWORKID}  bootnodes=$BOOTNODES"
 echo "  datadir=$DATADIR  identity=$NAME  ip=$IP  ports p2p:$PORT rpc:$RPCPORT ws:$WSPORT"
 
 if [ "$CLIENT" = erigon ]; then
-  # Erigon: --chain (built-in chainspec), sync-only, its own port set.
+  # Erigon (sync-only). --chain takes a built-in name OR a genesis file (the
+  # merged genesis-file chainspec support). XDPoS peers via discv4; discovery
+  # through an XDPoSChain bootnode doesn't populate erigon, so masternode enodes
+  # are usually needed via --staticpeers.
   [ -n "$MINEADDR" ] && echo "note: --mine ignored (erigon join is sync-only)" >&2
-  # erigon picks a p2p port per protocol version from --p2p.allowed-ports
-  # (default 30303-30307, which clashes with run.sh). Pin them to our range.
-  APORTS="$PORT,$((PORT+1)),$((PORT+2)),$((PORT+3)),$((PORT+4))"
-  echo "  erigon ports p2p-allowed:$APORTS authrpc:$AUTHRPC_PORT torrent:$TORRENT_PORT privapi:$PRIVAPI mcp:$MCP_PORT"
+  if [ -n "$CHAIN" ]; then
+    ERC="$CHAIN"                       # built-in chainspec name
+  else
+    # Convert the XDPoSChain-format genesis to erigon's format (reads the real
+    # xdpos params incl. v2.switchBlock; defaults fill anything missing).
+    mkdir -p "$DATADIR"; ERC="$DATADIR/erigon-genesis.json"
+    python3 - "$GENESIS" "$ERC" <<'PY'
+import json, sys
+g = json.load(open(sys.argv[1])); C = g["config"]
+x = C.get("XDPoS") or C.get("xdpos") or {}
+v2 = x.get("v2", {}); c = v2.get("config") or {}
+def g2(d, *ks, d_=None):
+    for k in ks:
+        if k in d: return d[k]
+    return d_
+ct = g2(c, "certificateThreshold", "certThreshold", d_=0.667)
+xdpos = {"period": x.get("period", 2), "epoch": x.get("epoch", 900), "gap": x.get("gap", 450),
+  "reward": x.get("reward", 0), "rewardCheckpoint": x.get("rewardCheckpoint", x.get("epoch", 900)),
+  "foudationWalletAddr": x.get("foudationWalletAddr", "0x" + "0"*40),
+  "v2": {"switchBlock": v2.get("switchBlock", 0), "certThreshold": ct,
+    "allConfigs": {"0": {"maxMasternodes": g2(c, "maxMasternodes", d_=108), "switchRound": 0,
+      "certificateThreshold": ct, "timeoutSyncThreshold": g2(c, "timeoutSyncThreshold", d_=3),
+      "timeoutPeriod": g2(c, "timeoutPeriod", d_=10), "minePeriod": g2(c, "minePeriod", d_=2)}}}}
+cfg = {"chainName": "join-erigon", "chainId": C["chainId"], "consensus": "xdpos",
+  "homesteadBlock": C.get("homesteadBlock", 0), "eip150Block": C.get("eip150Block", 0),
+  "eip155Block": C.get("eip155Block", 0), "eip158Block": C.get("eip158Block", 0),
+  "byzantiumBlock": C.get("byzantiumBlock", 0), "xdpos": xdpos}
+gen = {"config": cfg, "nonce": g.get("nonce", "0x0"), "timestamp": g["timestamp"],
+  "extraData": g["extraData"], "gasLimit": g["gasLimit"], "difficulty": g.get("difficulty", "0x1"),
+  "coinbase": g.get("coinbase", "0x" + "0"*40), "mixHash": g.get("mixHash", "0x" + "0"*64),
+  "alloc": g["alloc"]}
+json.dump(gen, open(sys.argv[2], "w"))
+PY
+    echo "  converted $GENESIS -> $ERC (erigon genesis format)"
+  fi
+  echo "  erigon chain=$ERC ports authrpc:$AUTHRPC_PORT torrent:$TORRENT_PORT privapi:$PRIVAPI mcp:$MCP_PORT"
   BN_ARG=""; [ -n "$BOOTNODES" ] && BN_ARG="--bootnodes $BOOTNODES"
-  "$XDC" --datadir "$DATADIR" --chain "$CHAIN" \
-    --port "$PORT" --p2p.allowed-ports "$APORTS" --nat "extip:${IP}" $BN_ARG \
+  SP_ARG=""; [ -n "$STATICPEERS" ] && SP_ARG="--staticpeers $STATICPEERS"
+  [ -z "$STATICPEERS" ] && echo "  note: no --staticpeers given; erigon may not discover XDPoS peers via the bootnode alone" >&2
+  "$XDC" --datadir "$DATADIR" --chain "$ERC" --discv4 \
+    --port "$PORT" --nat "extip:${IP}" $BN_ARG $SP_ARG \
     --http --http.addr 0.0.0.0 --http.port "$RPCPORT" --http.vhosts "*" \
     --http.corsdomain "*" --http.api eth,net,web3,erigon,debug,txpool \
     --ws --ws.port "$WSPORT" \
