@@ -6,6 +6,8 @@ localdpos.json
 one.json
 .pwd
 network-roles.env
-peer
-peertest
 bin/
+peer*
+gethtest
+gethjoin
+peer-*
