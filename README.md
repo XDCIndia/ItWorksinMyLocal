@@ -68,7 +68,8 @@ Two node clients are selectable with `--client` (or `CLIENT=`):
 | Client | Source repo | Binaries | Status |
 |--------|-------------|----------|--------|
 | `oldxdc` (default) | [`XDCIndia/OLDXDC`](https://github.com/XDCIndia/OLDXDC) (XDPoSChain) | `XDC`, `bootnode`, `puppeth` | full network (run + genesis + join) |
-| `geth` | [`XDCIndia/go-ethereum`](https://github.com/XDCIndia/go-ethereum) (GP5) | `geth` | **build only** — run/genesis profile is TODO |
+| `geth` | [`XDCIndia/go-ethereum`](https://github.com/XDCIndia/go-ethereum) (GP5) | `geth` | **join/sync works**; run (sealing) is TODO |
+| `erigon` | [`XDCIndia/erigon-xdc`](https://github.com/XDCIndia/erigon-xdc) | `erigon` | **join/sync** via `--chain` (built-in XDC chains only) |
 
 ```bash
 ./setup.sh --new                 # default oldxdc — runs the 4-node network
@@ -186,13 +187,25 @@ in `.env`). By default it joins as a **read/sync** node and **reports to the sam
 ethstats dashboard as `run.sh`**; override with `--ethstats SECRET@HOST:PORT`
 (node name auto-prepended) or turn it off with `--no-ethstats`.
 
-`--client geth` joins with the modern go-ethereum client instead (sync-only — it
-imports blocks but can't seal). Verified cross-client: a `geth` peer syncs an
-`oldxdc`/XDPoSChain network (same genesis hash + protocol handshake):
+`--client` selects the node client (all sync-only except oldxdc, which can also
+`--mine`):
+
+| Client | How it joins | Notes |
+|--------|-------------|-------|
+| `oldxdc` (default) | `--genesis` file | full sync + optional `--mine` |
+| `geth` | `--genesis` file | sync-only; **verified** syncing an XDPoSChain net |
+| `erigon` | `--chain NAME` | sync-only; built-in XDC chainspecs only, **not** a custom genesis |
 
 ```bash
-./join.sh --client geth --genesis genesis.json --ip <HOST_IP>
+./join.sh --client geth   --genesis genesis.json --ip <HOST_IP>
+./join.sh --client erigon --chain <xdc-chain> --ip <HOST_IP>
 ```
+
+**Ports:** `join.sh` defaults to `p2p 30313 / rpc 8595 / ws 8596` (and, for
+erigon, `authrpc 8651 / torrent 42079 / private-api 9095 / mcp 8653`) — all
+clear of a running `run.sh` network (30301, 30303-30306, 8545-8548, 8555-8558),
+so you can join on the same machine without conflicts. Override with
+`--port/--rpcport/--wsport`.
 
 **Requirements to connect:**
 - The **same `genesis.json`** as the target network (a different one → the peer

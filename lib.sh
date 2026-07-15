@@ -10,6 +10,8 @@ PLATFORM="$(uname -s)-$(uname -m)"
 # Which client to build/run:
 #   oldxdc  (default) -> XDPoSChain fork (binary: XDC + bootnode + puppeth)
 #   geth              -> modern go-ethereum fork (binary: geth)
+#   erigon            -> erigon fork (binary: erigon) -- joins built-in XDC
+#                        chains via --chain, not a custom genesis file
 CLIENT="${CLIENT:-oldxdc}"
 case "$CLIENT" in
   oldxdc|xdc|XDC)
@@ -26,13 +28,20 @@ case "$CLIENT" in
     CLIENT_TARGETS="geth"
     NODE_NAME_BIN="geth"
     ;;
+  erigon)
+    CLIENT=erigon
+    XDPOS_REPO="${XDPOS_REPO:-https://github.com/XDCIndia/erigon-xdc}"
+    XDPOS_DIR="${XDPOS_DIR:-$_LIB_DIR/../erigon-xdc}"
+    CLIENT_TARGETS="erigon"
+    NODE_NAME_BIN="erigon"
+    ;;
   *)
-    echo "unknown CLIENT '$CLIENT' (use: oldxdc | geth)" >&2; exit 1;;
+    echo "unknown CLIENT '$CLIENT' (use: oldxdc | geth | erigon)" >&2; exit 1;;
 esac
 
-# Binaries live under a per-client, per-platform dir so the two clients coexist.
+# Binaries live under a per-client, per-platform dir so the clients coexist.
 BIN_DIR="$_LIB_DIR/bin/$CLIENT/$PLATFORM"
-NODE_BIN="$BIN_DIR/$NODE_NAME_BIN"   # the node binary (XDC or geth)
+NODE_BIN="$BIN_DIR/$NODE_NAME_BIN"   # the node binary (XDC / geth / erigon)
 XDC_BIN="$NODE_BIN"                  # back-compat alias used by the scripts
 BOOTNODE_BIN="$BIN_DIR/bootnode"     # only exists for the oldxdc client
 PUPPETH_BIN="$BIN_DIR/puppeth"       # only exists for the oldxdc client

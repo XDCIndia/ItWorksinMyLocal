@@ -13,16 +13,18 @@
 #   --bootnodes LIST     full enode URL(s) to dial, if you have them
 #                        (overrides --ip; default: derived from ./bootnode.key)
 #   --host IP[:PORT]     alias of --ip
-#   --client C           node client: oldxdc (default) or geth. geth joins as
-#                        sync-only (it can't seal here); both import blocks.
+#   --client C           node client: oldxdc (default) | geth | erigon. geth &
+#                        erigon join sync-only. erigon uses --chain, not --genesis.
+#   --chain NAME         erigon only: built-in XDC chainspec to join (erigon has
+#                        no custom-genesis-file support)
 #   --networkid N        network id (default: chainId from the genesis)
 #   --datadir DIR        where to store this peer's data (default ./peer)
 #   --name NAME          node identity shown to peers/ethstats (default <host>-sync)
-#   --port N             p2p port (default 30303)
-#   --rpcport N          JSON-RPC port (default 8545)
-#   --wsport N           WebSocket port (default 8546)
-#   --mine KEY           also mine, unlocking this address (only if it's a
-#                        validator in that genesis; needs the key in .env)
+#   --port N             p2p port (default 30313 -- clear of ./run.sh's 30303-6)
+#   --rpcport N          JSON-RPC port (default 8595 -- clear of run.sh's 8545-8)
+#   --wsport N           WebSocket port (default 8596)
+#   --mine KEY           also mine, unlocking this address (oldxdc only; needs a
+#                        validator key in .env). Ignored by geth/erigon.
 #   --ethstats SPEC      ethstats target (ON by default, same as run.sh). SPEC
 #                        is SECRET@HOST:PORT (node name prepended) or a full
 #                        NAME:SECRET@HOST:PORT used verbatim.
@@ -36,14 +38,19 @@ trap _interupt INT TERM
 
 cd "$(dirname "$0")"
 
-GENESIS=""; BOOTNODES=""; NETWORKID=""; DATADIR="./peer"; NAME=""; HOST_IP=""
-PORT=30303; RPCPORT=8545; WSPORT=8546; MINEADDR=""
+GENESIS=""; BOOTNODES=""; NETWORKID=""; DATADIR="./peer"; NAME=""; HOST_IP=""; CHAIN=""
+# Defaults deliberately avoid a running ./run.sh network on this machine
+# (bootnode 30301, p2p 30303-30306, rpc 8545-8548, ws 8555-8558).
+PORT=30313; RPCPORT=8595; WSPORT=8596; MINEADDR=""
+# erigon-only extra ports (also chosen clear of run.sh and a geth join):
+AUTHRPC_PORT=8651; TORRENT_PORT=42079; PRIVAPI=127.0.0.1:9095; MCP_PORT=8653
 # ethstats reporting is ON by default (same endpoint as run.sh); --no-ethstats
 # disables it, --ethstats SPEC overrides the target.
 ETHSTATS="xdc_openscan_stats_2026@stats.xdcindia.com:443"
 while [ $# -gt 0 ]; do
   case "$1" in
     --genesis)     GENESIS=$2; shift 2;;
+    --chain)       CHAIN=$2; shift 2;;
     --bootnodes)   BOOTNODES=$2; shift 2;;
     --ip)          HOST_IP=$2; shift 2;;
     --host)        HOST_IP=$2; shift 2;;
@@ -57,16 +64,23 @@ while [ $# -gt 0 ]; do
     --mine)        MINEADDR=$2; shift 2;;
     --ethstats)    ETHSTATS=$2; shift 2;;
     --no-ethstats) ETHSTATS=""; shift;;
-    -h|--help)     sed -n '2,31p' "$0" | sed 's/^# \{0,1\}//'; exit 0;;
+    -h|--help)     sed -n '2,33p' "$0" | sed 's/^# \{0,1\}//'; exit 0;;
     *) echo "unknown flag: $1" >&2; exit 1;;
   esac
 done
 
 source ./lib.sh
+
+# Validate required inputs BEFORE building (a build can take minutes).
+if [ "$CLIENT" = erigon ]; then
+  # erigon uses built-in XDC chainspecs (--chain), not a genesis file.
+  [ -n "$CHAIN" ] || { echo "erigon join needs --chain <name> (it uses built-in XDC chainspecs, not a custom genesis file)" >&2; exit 1; }
+else
+  [ -f "$GENESIS" ] || { echo "need --genesis <file> (got '$GENESIS')" >&2; exit 1; }
+fi
+
 ensure_bins
 XDC="$XDC_BIN"
-
-[ -f "$GENESIS" ] || { echo "need --genesis <file> (got '$GENESIS')" >&2; exit 1; }
 
 # If no explicit --bootnodes, derive the enode from ./bootnode.key at the given
 # IP (--ip/--host, may include :PORT; defaults to this machine's IP:30301).
@@ -86,8 +100,8 @@ if [ -z "$BOOTNODES" ]; then
   echo "Using key-based bootnode: $BOOTNODES"
 fi
 
-# Default the network id to the genesis chainId.
-if [ -z "$NETWORKID" ]; then
+# Default the network id to the genesis chainId (not used by erigon --chain).
+if [ "$CLIENT" != erigon ] && [ -z "$NETWORKID" ]; then
   NETWORKID=$(python3 -c "import json,sys;print(json.load(open('$GENESIS'))['config']['chainId'])" 2>/dev/null)
   [ -n "$NETWORKID" ] || { echo "could not read chainId from $GENESIS; pass --networkid" >&2; exit 1; }
 fi
@@ -95,12 +109,15 @@ fi
 IP=$(detect_ip)
 [ -z "$NAME" ] && NAME="$(hostname -s)-sync"
 
-# Initialise this peer's datadir against the target genesis (first run only).
-# oldxdc stores chaindata under <datadir>/XDC, geth under <datadir>/geth.
-datasub="XDC"; [ "$CLIENT" = geth ] && datasub="geth"
-if [ ! -d "$DATADIR/$datasub/chaindata" ]; then
-  echo "Initialising $DATADIR from $GENESIS ..."
-  "$XDC" --datadir "$DATADIR" init "$GENESIS" || exit 1
+# Initialise the datadir against the genesis (first run only). oldxdc stores
+# chaindata under <datadir>/XDC, geth under <datadir>/geth. erigon has no init
+# (it derives the chain from --chain), so skip it there.
+if [ "$CLIENT" != erigon ]; then
+  datasub="XDC"; [ "$CLIENT" = geth ] && datasub="geth"
+  if [ ! -d "$DATADIR/$datasub/chaindata" ]; then
+    echo "Initialising $DATADIR from $GENESIS ..."
+    "$XDC" --datadir "$DATADIR" init "$GENESIS" || exit 1
+  fi
 fi
 
 # ethstats: prepend the node name unless SPEC already includes one (name:secret@…)
@@ -114,10 +131,22 @@ if [ -n "$ETHSTATS" ]; then
   echo "  ethstats: $full"
 fi
 
-echo "Joining ($CLIENT) network id=$NETWORKID  bootnodes=$BOOTNODES"
+echo "Joining ($CLIENT) network=${CHAIN:-id $NETWORKID}  bootnodes=$BOOTNODES"
 echo "  datadir=$DATADIR  identity=$NAME  ip=$IP  ports p2p:$PORT rpc:$RPCPORT ws:$WSPORT"
 
-if [ "$CLIENT" = geth ]; then
+if [ "$CLIENT" = erigon ]; then
+  # Erigon: --chain (built-in chainspec), sync-only, its own port set.
+  [ -n "$MINEADDR" ] && echo "note: --mine ignored (erigon join is sync-only)" >&2
+  echo "  erigon ports authrpc:$AUTHRPC_PORT torrent:$TORRENT_PORT privapi:$PRIVAPI mcp:$MCP_PORT"
+  "$XDC" --datadir "$DATADIR" --chain "$CHAIN" \
+    --port "$PORT" --nat "extip:${IP}" --bootnodes "$BOOTNODES" \
+    --http --http.addr 0.0.0.0 --http.port "$RPCPORT" --http.vhosts "*" \
+    --http.corsdomain "*" --http.api eth,net,web3,erigon,debug,txpool \
+    --ws \
+    --authrpc.port "$AUTHRPC_PORT" --torrent.port "$TORRENT_PORT" \
+    --private.api.addr "$PRIVAPI" --mcp.port "$MCP_PORT" \
+    $ETHSTATS_ARG &
+elif [ "$CLIENT" = geth ]; then
   # Modern geth: dot-notation flags, sync-only (it can't seal here).
   [ -n "$MINEADDR" ] && echo "note: --mine ignored (geth join is sync-only)" >&2
   "$XDC" --datadir "$DATADIR" --networkid "$NETWORKID" --syncmode full \
