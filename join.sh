@@ -114,7 +114,16 @@ if [ "$CLIENT" != erigon ] && [ -z "$NETWORKID" ]; then
 fi
 
 IP=$(detect_ip)
-[ -z "$NAME" ] && NAME="$(hostname -s)-sync"
+# Default ethstats/identity name mirrors run.sh's "<client>-v<version>-<host>-…"
+# so all clients (oldxdc/geth/erigon) read consistently on the dashboard.
+if [ -z "$NAME" ]; then
+  if [ "$CLIENT" = erigon ]; then
+    VER=$("$XDC" --version 2>/dev/null | head -1 | awk '{print $NF}')
+  else
+    VER=$("$XDC" version 2>/dev/null | awk '/^Version:/{print $2; exit}')
+  fi
+  NAME="${NODE_NAME_BIN}-v${VER:-0}-$(hostname -s)-sync"
+fi
 
 # Initialise the datadir against the genesis (first run only). oldxdc stores
 # chaindata under <datadir>/XDC, geth under <datadir>/geth. erigon has no init
