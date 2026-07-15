@@ -23,9 +23,10 @@
 #   --networkid N        network id (default: chainId from the genesis)
 #   --datadir DIR        where to store this peer's data (default ./peer)
 #   --name NAME          node identity shown to peers/ethstats (default <host>-sync)
-#   --port N             p2p port (default 30313 -- clear of ./run.sh's 30303-6)
-#   --rpcport N          JSON-RPC port (default 8595 -- clear of run.sh's 8545-8)
-#   --wsport N           WebSocket port (default 8596)
+#   --port N             p2p port (per-client default: oldxdc 30313 / geth 30323
+#                        / erigon 30333 -- clear of run.sh, no cross-client clash)
+#   --rpcport N          JSON-RPC port (oldxdc 8595 / geth 8605 / erigon 8615)
+#   --wsport N           WebSocket port (oldxdc 8596 / geth 8606 / erigon 8616)
 #   --mine KEY           also mine, unlocking this address (oldxdc only; needs a
 #                        validator key in .env). Ignored by geth/erigon.
 #   --ethstats SPEC      ethstats target (ON by default, same as run.sh). SPEC
@@ -42,11 +43,12 @@ trap _interupt INT TERM
 cd "$(dirname "$0")"
 
 GENESIS=""; BOOTNODES=""; NETWORKID=""; DATADIR="./peer"; NAME=""; HOST_IP=""; CHAIN=""
-# Defaults deliberately avoid a running ./run.sh network on this machine
-# (bootnode 30301, p2p 30303-30306, rpc 8545-8548, ws 8555-8558).
-PORT=30313; RPCPORT=8595; WSPORT=8596; MINEADDR=""; STATICPEERS=""
-# erigon-only extra ports (also chosen clear of run.sh and a geth join):
-AUTHRPC_PORT=8651; TORRENT_PORT=42079; PRIVAPI=127.0.0.1:9095; MCP_PORT=8653
+MINEADDR=""; STATICPEERS=""
+# Ports are left empty here and defaulted PER CLIENT after --client is known, so
+# oldxdc/geth/erigon joins each get a distinct set (clear of run.sh) and can run
+# side by side without conflict. Any explicit flag below wins.
+PORT=""; RPCPORT=""; WSPORT=""
+AUTHRPC_PORT=""; TORRENT_PORT=""; PRIVAPI=""; MCP_PORT=""
 # ethstats reporting is ON by default (same endpoint as run.sh); --no-ethstats
 # disables it, --ethstats SPEC overrides the target.
 ETHSTATS="xdc_openscan_stats_2026@stats.xdcindia.com:443"
@@ -74,6 +76,17 @@ while [ $# -gt 0 ]; do
 done
 
 source ./lib.sh
+
+# Per-client default ports (offset by client) so oldxdc/geth/erigon joins never
+# clash with each other or with a running ./run.sh (30301, 30303-6, 8545-8, 8555-8).
+case "$CLIENT" in geth) O=10;; erigon) O=20;; *) O=0;; esac
+PORT="${PORT:-$((30313 + O))}"
+RPCPORT="${RPCPORT:-$((8595 + O))}"
+WSPORT="${WSPORT:-$((8596 + O))}"
+AUTHRPC_PORT="${AUTHRPC_PORT:-$((8651 + O))}"
+TORRENT_PORT="${TORRENT_PORT:-$((42079 + O))}"
+MCP_PORT="${MCP_PORT:-$((8653 + O))}"
+PRIVAPI="${PRIVAPI:-127.0.0.1:$((9095 + O))}"
 
 # Validate required inputs BEFORE building (a build can take minutes).
 if [ "$CLIENT" = erigon ]; then
@@ -114,6 +127,9 @@ if [ "$CLIENT" != erigon ] && [ -z "$NETWORKID" ]; then
 fi
 
 IP=$(detect_ip)
+# Dynamic machine name (robust across OSes; fallback if hostname is unset).
+HOST=$(hostname -s 2>/dev/null || hostname 2>/dev/null || echo node)
+HOST=${HOST:-node}
 # Default ethstats/identity name mirrors run.sh's "<client>-v<version>-<host>-…"
 # so all clients (oldxdc/geth/erigon) read consistently on the dashboard.
 if [ -z "$NAME" ]; then
@@ -122,7 +138,7 @@ if [ -z "$NAME" ]; then
   else
     VER=$("$XDC" version 2>/dev/null | awk '/^Version:/{print $2; exit}')
   fi
-  NAME="${NODE_NAME_BIN}-v${VER:-0}-$(hostname -s)-sync"
+  NAME="${NODE_NAME_BIN}-v${VER:-0}-${HOST}-sync"
 fi
 
 # Initialise the datadir against the genesis (first run only). oldxdc stores
