@@ -84,7 +84,9 @@ XDC="$XDC_BIN"
 
 # If no explicit --bootnodes, derive the enode from ./bootnode.key at the given
 # IP (--ip/--host, may include :PORT; defaults to this machine's IP:30301).
-if [ -z "$BOOTNODES" ]; then
+# erigon joining a built-in --chain (no --ip) uses that chain's own bootnodes,
+# so skip derivation there.
+if [ -z "$BOOTNODES" ] && { [ "$CLIENT" != erigon ] || [ -n "$HOST_IP" ]; }; then
   [ -f ./bootnode.key ] || { echo "need --bootnodes or --ip, or a ./bootnode.key to derive one" >&2; exit 1; }
   # The enode pubkey comes from bootnode.key via any bootnode binary. The geth
   # client has none, so fall back to whichever bootnode binary is built.
@@ -137,12 +139,16 @@ echo "  datadir=$DATADIR  identity=$NAME  ip=$IP  ports p2p:$PORT rpc:$RPCPORT w
 if [ "$CLIENT" = erigon ]; then
   # Erigon: --chain (built-in chainspec), sync-only, its own port set.
   [ -n "$MINEADDR" ] && echo "note: --mine ignored (erigon join is sync-only)" >&2
-  echo "  erigon ports authrpc:$AUTHRPC_PORT torrent:$TORRENT_PORT privapi:$PRIVAPI mcp:$MCP_PORT"
+  # erigon picks a p2p port per protocol version from --p2p.allowed-ports
+  # (default 30303-30307, which clashes with run.sh). Pin them to our range.
+  APORTS="$PORT,$((PORT+1)),$((PORT+2)),$((PORT+3)),$((PORT+4))"
+  echo "  erigon ports p2p-allowed:$APORTS authrpc:$AUTHRPC_PORT torrent:$TORRENT_PORT privapi:$PRIVAPI mcp:$MCP_PORT"
+  BN_ARG=""; [ -n "$BOOTNODES" ] && BN_ARG="--bootnodes $BOOTNODES"
   "$XDC" --datadir "$DATADIR" --chain "$CHAIN" \
-    --port "$PORT" --nat "extip:${IP}" --bootnodes "$BOOTNODES" \
+    --port "$PORT" --p2p.allowed-ports "$APORTS" --nat "extip:${IP}" $BN_ARG \
     --http --http.addr 0.0.0.0 --http.port "$RPCPORT" --http.vhosts "*" \
     --http.corsdomain "*" --http.api eth,net,web3,erigon,debug,txpool \
-    --ws \
+    --ws --ws.port "$WSPORT" \
     --authrpc.port "$AUTHRPC_PORT" --torrent.port "$TORRENT_PORT" \
     --private.api.addr "$PRIVAPI" --mcp.port "$MCP_PORT" \
     $ETHSTATS_ARG &
