@@ -191,7 +191,7 @@ except Exception: ps=[]
 out=['enode://%s@%s'%(p.get('id',''),(p.get('network') or {}).get('remoteAddress','')) for p in ps if p.get('id') and (p.get('network') or {}).get('remoteAddress')]
 print(','.join(out))" 2>/dev/null)
     [ -n "$enodes" ] && break
-    perl -e 'select(undef,undef,undef,2)'
+    sleep 2
   done
   kill -9 "$hpid" 2>/dev/null
   rm -rf "$dd"
