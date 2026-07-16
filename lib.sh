@@ -152,7 +152,14 @@ ensure_bins() {
     exit 1
   }
   mkdir -p "$BIN_DIR"
-  for t in $CLIENT_TARGETS; do cp "$XDPOS_DIR/build/bin/$t" "$BIN_DIR/"; done
+  for t in $CLIENT_TARGETS; do
+    cp "$XDPOS_DIR/build/bin/$t" "$BIN_DIR/"
+    # macOS: cp invalidates the binary's ad-hoc code signature, so Gatekeeper
+    # SIGKILLs the copy on exec. Re-sign it ad-hoc so it runs.
+    if [ "$(uname -s)" = Darwin ] && command -v codesign >/dev/null 2>&1; then
+      codesign -f -s - "$BIN_DIR/$t" >/dev/null 2>&1 || true
+    fi
+  done
   echo "$CLIENT binaries ready in $BIN_DIR"
 }
 
