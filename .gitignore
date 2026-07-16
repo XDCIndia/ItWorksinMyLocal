@@ -7,7 +7,9 @@ one.json
 .pwd
 network-roles.env
 bin/
-peer*
 gethtest
 gethjoin
-peer-*
+/peer/
+/peer-*/
+peertest/
+erigon-genesis.json
