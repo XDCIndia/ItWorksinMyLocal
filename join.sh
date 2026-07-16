@@ -3,7 +3,13 @@
 # You supply that network's genesis file and one or more bootnode enodes.
 #
 # Usage:
-#   ./join.sh --genesis path/to/genesis.json --bootnodes "enode://KEY@HOST:30301"
+#   ./join.sh --genesis path/to/genesis.json         # uses default host + peers
+#   ./join.sh --genesis g.json --ip 10.0.0.5         # override the host
+#   ./join.sh --genesis g.json --bootnodes "enode://KEY@HOST:30301"
+#
+# Defaults (no --ip / --staticpeers needed): the target host comes from
+# network.env (DEFAULT_HOST) and the peers from peers.list -- edit those to
+# point at your own network. --ip / --bootnodes / --staticpeers still override.
 #
 # Flags:
 #   --genesis FILE       the target network's genesis.json            (required)
@@ -70,12 +76,24 @@ while [ $# -gt 0 ]; do
     --staticpeers) STATICPEERS=$2; shift 2;;
     --ethstats)    ETHSTATS=$2; shift 2;;
     --no-ethstats) ETHSTATS=""; shift;;
-    -h|--help)     sed -n '2,36p' "$0" | sed 's/^# \{0,1\}//'; exit 0;;
+    -h|--help)     sed -n '2,40p' "$0" | sed 's/^# \{0,1\}//'; exit 0;;
     *) echo "unknown flag: $1" >&2; exit 1;;
   esac
 done
 
 source ./lib.sh
+
+# Default network target so neither --ip nor --staticpeers is required.
+# network.env -> DEFAULT_HOST/DEFAULT_BOOTNODE_PORT; peers.list -> default peers.
+[ -f network.env ] && . ./network.env
+if [ -z "$HOST_IP" ] && [ -z "$BOOTNODES" ] && [ -n "$DEFAULT_HOST" ]; then
+  HOST_IP="${DEFAULT_HOST}:${DEFAULT_BOOTNODE_PORT:-30301}"
+  echo "No --ip/--bootnodes given; using default host $HOST_IP (from network.env)"
+fi
+if [ -z "$STATICPEERS" ] && [ -f peers.list ]; then
+  STATICPEERS=$(grep -v '^[[:space:]]*#' peers.list | grep enode | paste -sd, -)
+  [ -n "$STATICPEERS" ] && echo "Using $(echo "$STATICPEERS" | tr ',' '\n' | grep -c enode) default peer(s) from peers.list"
+fi
 
 # Per-client default ports (offset by client) so oldxdc/geth/erigon joins never
 # clash with each other or with a running ./run.sh (30301, 30303-6, 8545-8, 8555-8).
@@ -120,10 +138,26 @@ if [ -z "$BOOTNODES" ] && { [ "$CLIENT" != erigon ] || [ -n "$HOST_IP" ]; }; the
   echo "Using key-based bootnode: $BOOTNODES"
 fi
 
-# Default the network id to the genesis chainId (not used by erigon --chain).
-if [ "$CLIENT" != erigon ] && [ -z "$NETWORKID" ]; then
+# Default the network id to the genesis chainId (erigon --chain <name> needn't).
+if [ -z "$NETWORKID" ] && [ -f "$GENESIS" ]; then
   NETWORKID=$(python3 -c "import json,sys;print(json.load(open('$GENESIS'))['config']['chainId'])" 2>/dev/null)
-  [ -n "$NETWORKID" ] || { echo "could not read chainId from $GENESIS; pass --networkid" >&2; exit 1; }
+fi
+if [ "$CLIENT" != erigon ] && [ -z "$NETWORKID" ]; then
+  echo "could not read chainId from $GENESIS; pass --networkid" >&2; exit 1
+fi
+
+# erigon can't discover XDPoS peers through the bootnode (its discv4 doesn't
+# traverse it), so when joining by --ip/--genesis without explicit --staticpeers
+# we borrow a discovering client (oldxdc/geth) to harvest the live peer enodes
+# -- the same discovery geth uses -- and hand them to erigon. Gives a simple
+# "just an --ip" erigon join.
+if [ "$CLIENT" = erigon ] && [ -z "$STATICPEERS" ] && [ -n "$BOOTNODES" ] && [ -f "$GENESIS" ]; then
+  STATICPEERS=$(harvest_peers "$GENESIS" "$BOOTNODES" "${NETWORKID:-0}")
+  if [ -n "$STATICPEERS" ]; then
+    echo "  harvested $(echo "$STATICPEERS" | tr ',' '\n' | grep -c enode) peer(s) from the network"
+  else
+    echo "  warning: could not harvest peers; erigon may stay at peers=0 (pass --staticpeers)" >&2
+  fi
 fi
 
 IP=$(detect_ip)

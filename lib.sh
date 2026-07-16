@@ -163,6 +163,41 @@ ensure_bins() {
   echo "$CLIENT binaries ready in $BIN_DIR"
 }
 
+# Harvest live peer enodes from a network by running a short-lived DISCOVERING
+# client (oldxdc/geth) against a bootnode, then reading its admin_peers. This is
+# how erigon gets its --staticpeers automatically from just an --ip: erigon's
+# discv4 doesn't discover through an XDPoSChain bootnode, but oldxdc/geth do
+# (exactly what geth does when it joins), so we borrow their discovery.
+#   $1 genesis file   $2 bootnode enode   $3 networkid
+# Prints a comma-separated enode list on stdout ("" if none). Logs to stderr.
+harvest_peers() {
+  local genesis="$1" bootnode="$2" nid="$3"
+  local xdc="$_LIB_DIR/bin/oldxdc/$PLATFORM/XDC"
+  [ -x "$xdc" ] || xdc="$_LIB_DIR/bin/geth/$PLATFORM/geth"
+  [ -x "$xdc" ] || { echo "harvest: no oldxdc/geth binary to discover peers" >&2; return 1; }
+  local dd rp=8799; dd=$(mktemp -d)
+  "$xdc" --datadir "$dd" init "$genesis" >/dev/null 2>&1
+  echo "Harvesting peers from bootnode via $(basename "$xdc") discovery ..." >&2
+  "$xdc" --datadir "$dd" --networkid "$nid" --syncmode full --bootnodes "$bootnode" \
+    --port 30399 --nat "extip:$(detect_ip)" --maxpeers 25 \
+    --http --http.addr 127.0.0.1 --http.port "$rp" --http.api admin,net >/dev/null 2>&1 &
+  local hpid=$! enodes="" i
+  for i in $(seq 1 30); do
+    enodes=$(curl -s -m3 "http://127.0.0.1:$rp" -X POST -H 'Content-Type: application/json' \
+      --data '{"jsonrpc":"2.0","method":"admin_peers","params":[],"id":1}' 2>/dev/null \
+      | python3 -c "import sys,json
+try: ps=json.load(sys.stdin).get('result',[]) or []
+except Exception: ps=[]
+out=['enode://%s@%s'%(p.get('id',''),(p.get('network') or {}).get('remoteAddress','')) for p in ps if p.get('id') and (p.get('network') or {}).get('remoteAddress')]
+print(','.join(out))" 2>/dev/null)
+    [ -n "$enodes" ] && break
+    perl -e 'select(undef,undef,undef,2)'
+  done
+  kill -9 "$hpid" 2>/dev/null
+  rm -rf "$dd"
+  echo "$enodes"
+}
+
 # The run/genesis/join scripts are wired for the oldxdc (XDPoSChain) client:
 # separate bootnode binary, puppeth genesis, XDPoS-v1 flags. The modern geth
 # fork uses a different run model (no bootnode binary, --http.* flags, its own
