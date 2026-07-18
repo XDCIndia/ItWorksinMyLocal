@@ -12,16 +12,21 @@
 # point at your own network. --ip / --bootnodes / --staticpeers still override.
 #
 # Flags:
-#   --genesis FILE       the target network's genesis.json            (required)
+#   --genesis FILE       the target network's genesis.json (defaults to
+#                        DEFAULT_GENESIS in network.env -- devnet 5151)
 #   --ip IP[:PORT]       just give the target machine's IP -- connects to its
 #                        bootnode (shared bootnode.key) at PORT (default 30301).
 #                        Simplest way to join a network on another host.
 #   --bootnodes LIST     full enode URL(s) to dial, if you have them
 #                        (overrides --ip; default: derived from ./bootnode.key)
 #   --host IP[:PORT]     alias of --ip
-#   --client C           node client: oldxdc (default) | geth | erigon. geth &
-#                        erigon join sync-only. All accept --genesis (erigon
-#                        converts it to its own format automatically).
+#   --client C           node client: oldxdc (default) | geth | erigon | besu |
+#                        nethermind | reth. Only oldxdc can seal (--mine); all
+#                        others join sync-only. oldxdc/geth/erigon build from
+#                        source; besu/nethermind/reth need a prebuilt binary via
+#                        BESU_BIN / RETH_BIN / NETHERMIND_DIST (or on PATH).
+#                        besu & reth read the geth-format --genesis natively;
+#                        erigon converts it; nethermind uses its own chainspec.
 #   --chain NAME         erigon only: use a built-in chainspec instead of --genesis
 #   --staticpeers LIST   comma-separated enode URLs to connect directly (erigon
 #                        needs these to peer with an XDPoS net; its discv4 doesn't
@@ -84,8 +89,25 @@ done
 source ./lib.sh
 
 # Default network target so neither --ip nor --staticpeers is required.
-# network.env -> DEFAULT_HOST/DEFAULT_BOOTNODE_PORT; peers.list -> default peers.
+# network.env -> DEFAULT_HOST/DEFAULT_BOOTNODE_PORT/DEFAULT_BOOTNODES/DEFAULT_GENESIS;
+# peers.list -> default peers.
 [ -f network.env ] && . ./network.env
+
+# Default the genesis from network.env (DEFAULT_GENESIS) when --genesis is omitted,
+# so a plain `./join.sh` joins the configured network (devnet 5151) with no flags.
+if [ -z "$GENESIS" ] && [ -n "$DEFAULT_GENESIS" ] && [ -f "$DEFAULT_GENESIS" ]; then
+  GENESIS="$DEFAULT_GENESIS"
+  echo "No --genesis given; using default genesis $GENESIS (from network.env)"
+fi
+
+# Prefer explicit DEFAULT_BOOTNODES (real masternode enodes) over deriving one from
+# bootnode.key: devnet 5151's masternodes live on four separate hosts with their own
+# node keys, so a key-derived enode would carry the wrong node id and fail to dial.
+if [ -z "$BOOTNODES" ] && [ -z "$HOST_IP" ] && [ -n "$DEFAULT_BOOTNODES" ]; then
+  BOOTNODES="$DEFAULT_BOOTNODES"
+  echo "No --ip/--bootnodes given; using $(echo "$BOOTNODES" | tr ',' '\n' | grep -c enode) default bootnode(s) from network.env"
+fi
+
 if [ -z "$HOST_IP" ] && [ -z "$BOOTNODES" ] && [ -n "$DEFAULT_HOST" ]; then
   HOST_IP="${DEFAULT_HOST}:${DEFAULT_BOOTNODE_PORT:-30301}"
   echo "No --ip/--bootnodes given; using default host $HOST_IP (from network.env)"
@@ -95,9 +117,10 @@ if [ -z "$STATICPEERS" ] && [ -f peers.list ]; then
   [ -n "$STATICPEERS" ] && echo "Using $(echo "$STATICPEERS" | tr ',' '\n' | grep -c enode) default peer(s) from peers.list"
 fi
 
-# Per-client default ports (offset by client) so oldxdc/geth/erigon joins never
-# clash with each other or with a running ./run.sh (30301, 30303-6, 8545-8, 8555-8).
-case "$CLIENT" in geth) O=10;; erigon) O=20;; *) O=0;; esac
+# Per-client default ports (offset by client) so oldxdc/geth/erigon/besu/
+# nethermind/reth joins never clash with each other or with a running ./run.sh
+# (30301, 30303-6, 8545-8, 8555-8).
+case "$CLIENT" in geth) O=10;; erigon) O=20;; besu) O=30;; nethermind) O=40;; reth) O=50;; *) O=0;; esac
 PORT="${PORT:-$((30313 + O))}"
 RPCPORT="${RPCPORT:-$((8595 + O))}"
 WSPORT="${WSPORT:-$((8596 + O))}"
@@ -107,22 +130,49 @@ MCP_PORT="${MCP_PORT:-$((8653 + O))}"
 PRIVAPI="${PRIVAPI:-127.0.0.1:$((9095 + O))}"
 
 # Validate required inputs BEFORE building (a build can take minutes).
-if [ "$CLIENT" = erigon ]; then
-  # erigon: a built-in --chain name, or a --genesis file (loaded generically
-  # via erigon's genesis-file chainspec support).
-  [ -n "$CHAIN" ] || [ -f "$GENESIS" ] || { echo "erigon join needs --genesis <file> or --chain <built-in-name>" >&2; exit 1; }
-else
-  [ -f "$GENESIS" ] || { echo "need --genesis <file> (got '$GENESIS')" >&2; exit 1; }
-fi
+case "$CLIENT" in
+  erigon)
+    # erigon: a built-in --chain name, or a --genesis file (loaded generically
+    # via erigon's genesis-file chainspec support).
+    [ -n "$CHAIN" ] || [ -f "$GENESIS" ] || { echo "erigon join needs --genesis <file> or --chain <built-in-name>" >&2; exit 1; } ;;
+  nethermind)
+    : ;;  # nethermind loads its own chainspec from the dist, not --genesis
+  *)
+    # oldxdc/geth/besu/reth all consume the geth-format genesis natively.
+    [ -f "$GENESIS" ] || { echo "need --genesis <file> (got '$GENESIS')" >&2; exit 1; } ;;
+esac
 
-ensure_bins
-XDC="$XDC_BIN"
+# besu/nethermind/reth are separate toolchains (Java/.NET/Rust) that ensure_bins
+# does not build; locate a prebuilt binary (env override, then PATH, then a build
+# hint). oldxdc/geth/erigon build from the XDPoS source via ensure_bins as before.
+case "$CLIENT" in
+  besu)
+    CLIENT_BIN="${BESU_BIN:-$(command -v besu 2>/dev/null)}"
+    [ -x "$CLIENT_BIN" ] || { echo "besu binary not found. Build besu-xdc (XDCIndia/besu-xdc) and set BESU_BIN=/path/to/besu, or put 'besu' on PATH." >&2; exit 1; } ;;
+  reth)
+    CLIENT_BIN="${RETH_BIN:-$(command -v xdc-reth 2>/dev/null)}"
+    [ -x "$CLIENT_BIN" ] || { echo "reth binary not found. Build reth-xdc (XDCIndia/reth-xdc) and set RETH_BIN=/path/to/xdc-reth, or put 'xdc-reth' on PATH." >&2; exit 1; } ;;
+  nethermind)
+    NM_ON_PATH=$(command -v nethermind 2>/dev/null)
+    NETHERMIND_DIST="${NETHERMIND_DIST:-${NM_ON_PATH:+$(dirname "$NM_ON_PATH")}}"
+    CLIENT_BIN="$NETHERMIND_DIST/nethermind"
+    [ -x "$CLIENT_BIN" ] || { echo "nethermind not found. Build the xdc nethermind dist (XDCIndia/nethermind) and set NETHERMIND_DIST=/path/to/dist (containing ./nethermind and chainspec/xdc-devnet5151.json)." >&2; exit 1; }
+    [ -f "$NETHERMIND_DIST/chainspec/xdc-devnet5151.json" ] || { echo "nethermind dist '$NETHERMIND_DIST' is missing chainspec/xdc-devnet5151.json" >&2; exit 1; } ;;
+  *)
+    ensure_bins
+    XDC="$XDC_BIN" ;;
+esac
 
 # If no explicit --bootnodes, derive the enode from ./bootnode.key at the given
 # IP (--ip/--host, may include :PORT; defaults to this machine's IP:30301).
 # erigon joining a built-in --chain (no --ip) uses that chain's own bootnodes,
 # so skip derivation there.
-if [ -z "$BOOTNODES" ] && { [ "$CLIENT" != erigon ] || [ -n "$HOST_IP" ]; }; then
+# besu/nethermind/reth take the validator enodes directly (network.env
+# DEFAULT_BOOTNODES / --bootnodes); a key-derived enode would carry the wrong
+# node id, so never derive one for them.
+if [ -z "$BOOTNODES" ] \
+   && [ "$CLIENT" != besu ] && [ "$CLIENT" != nethermind ] && [ "$CLIENT" != reth ] \
+   && { [ "$CLIENT" != erigon ] || [ -n "$HOST_IP" ]; }; then
   [ -f ./bootnode.key ] || { echo "need --bootnodes or --ip, or a ./bootnode.key to derive one" >&2; exit 1; }
   # The enode pubkey comes from bootnode.key via any bootnode binary. The geth
   # client has none, so fall back to whichever bootnode binary is built.
@@ -167,33 +217,41 @@ HOST=${HOST:-node}
 # Default ethstats/identity name mirrors run.sh's "<client>-v<version>-<host>-…"
 # so all clients (oldxdc/geth/erigon) read consistently on the dashboard.
 if [ -z "$NAME" ]; then
-  if [ "$CLIENT" = erigon ]; then
-    VER=$("$XDC" --version 2>/dev/null | head -1 | awk '{print $NF}')
-  else
-    VER=$("$XDC" version 2>/dev/null | awk '/^Version:/{print $2; exit}')
-  fi
-  NAME="${NODE_NAME_BIN}-v${VER:-0}-${HOST}-sync"
+  case "$CLIENT" in
+    erigon)     VER=$("$XDC" --version 2>/dev/null | head -1 | awk '{print $NF}'); NAME="${NODE_NAME_BIN}-v${VER:-0}-${HOST}-sync" ;;
+    besu|reth)  VER=$("$CLIENT_BIN" --version 2>/dev/null | head -1 | awk '{print $NF}'); NAME="${CLIENT}-v${VER:-0}-${HOST}-sync" ;;
+    nethermind) VER=$("$CLIENT_BIN" --version 2>/dev/null | grep -oiE '[0-9]+\.[0-9]+[^ ]*' | head -1); NAME="${CLIENT}-v${VER:-0}-${HOST}-sync" ;;
+    *)          VER=$("$XDC" version 2>/dev/null | awk '/^Version:/{print $2; exit}'); NAME="${NODE_NAME_BIN}-v${VER:-0}-${HOST}-sync" ;;
+  esac
 fi
+# ethstats/identity names must not contain URL-breaking characters -- some client
+# --version strings (notably besu's "besu/vX/os/jvm") contain '/', which breaks the
+# ethstats "name:secret@host" URL parsing -- so normalise to [A-Za-z0-9._-].
+NAME=$(printf '%s' "$NAME" | tr -c 'A-Za-z0-9._-' '-')
 
-# Initialise the datadir against the genesis (first run only). oldxdc stores
-# chaindata under <datadir>/XDC, geth under <datadir>/geth. erigon has no init
-# (it derives the chain from --chain), so skip it there.
-if [ "$CLIENT" != erigon ]; then
-  datasub="XDC"; [ "$CLIENT" = geth ] && datasub="geth"
-  if [ ! -d "$DATADIR/$datasub/chaindata" ]; then
-    echo "Initialising $DATADIR from $GENESIS ..."
-    "$XDC" --datadir "$DATADIR" init "$GENESIS" || exit 1
-  fi
-fi
+# Initialise the datadir against the genesis (first run only). oldxdc and the
+# GP5 geth fork both store chaindata under <datadir>/XDC and need an explicit
+# init. erigon (derives from --chain), besu/reth (write genesis on first launch),
+# and nethermind (loads its own chainspec) do their own thing, so skip init there.
+case "$CLIENT" in
+  oldxdc|geth|"")
+    if [ ! -d "$DATADIR/XDC/chaindata" ]; then
+      echo "Initialising $DATADIR from $GENESIS ..."
+      "$XDC" --datadir "$DATADIR" init "$GENESIS" || exit 1
+    fi ;;
+esac
 
 # ethstats: prepend the node name unless SPEC already includes one (name:secret@…)
-ETHSTATS_ARG=""
+ETHSTATS_ARG=""; full=""; ES_NAME=""; ES_SECRET=""; ES_HOSTPORT=""
 if [ -n "$ETHSTATS" ]; then
   case "${ETHSTATS%%@*}" in
     *:*) full="$ETHSTATS";;            # already NAME:SECRET
     *)   full="${NAME}:${ETHSTATS}";;  # just SECRET -> prepend node name
   esac
   ETHSTATS_ARG="--ethstats $full"
+  # Split NAME:SECRET@HOST:PORT into pieces -- reth and nethermind want the parts
+  # separately and a wss:// scheme rather than geth's bare NAME:SECRET@host:port.
+  ES_NAME="${full%%:*}"; _es_rest="${full#*:}"; ES_SECRET="${_es_rest%%@*}"; ES_HOSTPORT="${_es_rest#*@}"
   echo "  ethstats: $full"
 fi
 
@@ -259,9 +317,61 @@ elif [ "$CLIENT" = geth ]; then
   "$XDC" --datadir "$DATADIR" --networkid "$NETWORKID" --syncmode full \
     --bootnodes "$BOOTNODES" --port "$PORT" --nat "extip:${IP}" --identity "$NAME" --maxpeers 25 \
     --http --http.corsdomain "*" --http.addr 0.0.0.0 --http.port "$RPCPORT" --http.vhosts "*" \
-    --http.api eth,net,web3,txpool,debug,XDPoS \
+    --http.api eth,net,web3,txpool,debug,admin,XDPoS \
     --ws --ws.addr 0.0.0.0 --ws.origins "*" --ws.port "$WSPORT" --ws.api eth,net,web3,XDPoS \
     $ETHSTATS_ARG &
+elif [ "$CLIENT" = besu ]; then
+  # besu-xdc (sync-only). Reads the geth-format genesis natively via --genesis-file
+  # (no translation). Needs BOTH --bootnodes and --static-nodes-file: bootnodes are
+  # only used for initial discovery, and besu drops the validators as "UselessPeer"
+  # after capability negotiation unless they are pinned via static-nodes.
+  [ -n "$MINEADDR" ] && echo "note: --mine ignored (besu join is sync-only)" >&2
+  [ -n "$BOOTNODES" ] || { echo "besu join needs peers: set DEFAULT_BOOTNODES in network.env or pass --bootnodes" >&2; exit 1; }
+  mkdir -p "$DATADIR"
+  python3 -c "import json,sys;print(json.dumps([e for e in sys.argv[1].split(',') if e]))" "$BOOTNODES" > "$DATADIR/static-nodes.json"
+  BESU_ES=""; [ -n "$full" ] && BESU_ES="--ethstats=$full"
+  "$CLIENT_BIN" \
+    --genesis-file="$GENESIS" --data-path="$DATADIR" --network-id="$NETWORKID" \
+    --sync-mode=FULL --data-storage-format=BONSAI \
+    --p2p-port="$PORT" --p2p-host="$IP" --nat-method=NONE \
+    --bootnodes="$BOOTNODES" --static-nodes-file="$DATADIR/static-nodes.json" \
+    --rpc-http-enabled=true --rpc-http-host=127.0.0.1 --rpc-http-port="$RPCPORT" \
+    --rpc-http-apis=ETH,NET,WEB3,ADMIN,DEBUG,TXPOOL \
+    --engine-rpc-enabled=false --min-gas-price=0 --auto-log-bloom-caching-enabled=false \
+    $BESU_ES &
+elif [ "$CLIENT" = reth ]; then
+  # reth-xdc (sync-only). Reads the geth-format genesis natively via --chain <file>.
+  # Peers via trusted-only (its discv4/v5 doesn't traverse an XDPoS bootnode), and
+  # its --ethstats wants a wss:// URL, not geth's bare host:port.
+  [ -n "$MINEADDR" ] && echo "note: --mine ignored (reth join is sync-only)" >&2
+  [ -n "$BOOTNODES" ] || { echo "reth join needs peers: set DEFAULT_BOOTNODES in network.env or pass --bootnodes" >&2; exit 1; }
+  mkdir -p "$DATADIR"
+  RETH_ES=""; [ -n "$full" ] && RETH_ES="--ethstats ${ES_NAME}:${ES_SECRET}@wss://${ES_HOSTPORT}"
+  "$CLIENT_BIN" node --chain "$GENESIS" --datadir "$DATADIR" \
+    --port "$PORT" --discovery.port "$PORT" \
+    --disable-discv5-discovery --disable-dns-discovery --trusted-only \
+    --nat "extip:${IP}" --trusted-peers "$BOOTNODES" \
+    --http --http.addr 127.0.0.1 --http.port "$RPCPORT" --http.api eth,net,web3,admin,debug \
+    --authrpc.addr 127.0.0.1 --authrpc.port "$AUTHRPC_PORT" \
+    $RETH_ES &
+elif [ "$CLIENT" = nethermind ]; then
+  # nethermind-xdc (sync-only). Loads its own Parity-style chainspec that ships in
+  # the dist ($NETHERMIND_DIST/chainspec/xdc-devnet5151.json) via --config; it does
+  # NOT read the geth-format genesis. nethermind resolves configs/ and chainspec/
+  # relative to CWD, so cd into the dist first. WebSocketsPort must be set explicitly
+  # (the config hardcodes 8549; a clash aborts the whole JSON-RPC stack silently).
+  [ -n "$MINEADDR" ] && echo "note: --mine ignored (nethermind join is sync-only)" >&2
+  [ -n "$BOOTNODES" ] || { echo "nethermind join needs peers: set DEFAULT_BOOTNODES in network.env or pass --bootnodes" >&2; exit 1; }
+  mkdir -p "$DATADIR"
+  WS_PORT=$((RPCPORT + 1))
+  NM_ES=""; [ -n "$full" ] && NM_ES="--EthStats.Enabled true --EthStats.Name $ES_NAME --EthStats.Secret $ES_SECRET --EthStats.Server wss://${ES_HOSTPORT}/api"
+  ( cd "$NETHERMIND_DIST" && ./nethermind \
+    --config xdc-devnet5151 \
+    --Init.BaseDbPath "$DATADIR" \
+    --Network.P2PPort "$PORT" --Network.DiscoveryPort "$PORT" \
+    --JsonRpc.Port "$RPCPORT" --JsonRpc.WebSocketsPort "$WS_PORT" --JsonRpc.Host 127.0.0.1 \
+    --Network.StaticPeers "$BOOTNODES" \
+    $NM_ES ) &
 else
   # oldxdc (XDPoSChain): classic flags; --mine unlocks a validator to also seal.
   MINE_FLAGS=""

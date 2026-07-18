@@ -63,13 +63,21 @@ on both). Force a rebuild anytime with `REBUILD=1`.
 
 ## Choosing a client
 
-Two node clients are selectable with `--client` (or `CLIENT=`):
+Six node clients are selectable with `--client` (or `CLIENT=`). All six join and
+sync **devnet 5151** (`./join.sh --client <name>` — validated end-to-end against
+the live network). `oldxdc/geth/erigon` build from source via the scripts;
+`besu/nethermind/reth` are separate toolchains (Java/.NET/Rust) — build them from
+their repo and point `join.sh` at the binary with `BESU_BIN` / `RETH_BIN` /
+`NETHERMIND_DIST` (or put it on `PATH`).
 
-| Client | Source repo | Binaries | Status |
-|--------|-------------|----------|--------|
-| `oldxdc` (default) | [`XDCIndia/OLDXDC`](https://github.com/XDCIndia/OLDXDC) (XDPoSChain) | `XDC`, `bootnode`, `puppeth` | full network (run + genesis + join) |
-| `geth` | [`XDCIndia/go-ethereum`](https://github.com/XDCIndia/go-ethereum) (GP5) | `geth` | **join/sync works**; run (sealing) is TODO |
-| `erigon` | [`XDCIndia/erigon-xdc`](https://github.com/XDCIndia/erigon-xdc) | `erigon` | **join/sync** via `--chain` (built-in XDC chains only) |
+| Client | Source repo | Binary discovery | Status (devnet 5151) |
+|--------|-------------|------------------|--------|
+| `oldxdc` (default) | [`XDCIndia/OLDXDC`](https://github.com/XDCIndia/OLDXDC) (XDPoSChain) | built from source | full network (run + genesis + join + seal) |
+| `geth` | [`XDCIndia/go-ethereum`](https://github.com/XDCIndia/go-ethereum) (GP5) | built from source | **join/sync** (seal TODO; full-sync past the mid-history epoch switch needs the xdcSyncer fix) |
+| `erigon` | [`XDCIndia/erigon-xdc`](https://github.com/XDCIndia/erigon-xdc) | built from source | **join/sync** ✅ (genesis auto-converted) |
+| `besu` | [`XDCIndia/besu-xdc`](https://github.com/XDCIndia/besu-xdc) | `BESU_BIN` / PATH | **join/sync to tip** ✅ (reads geth genesis natively) |
+| `nethermind` | [`XDCIndia/nethermind`](https://github.com/XDCIndia/nethermind) | `NETHERMIND_DIST` / PATH | **join/sync to tip** ✅ (uses its own chainspec) |
+| `reth` | [`XDCIndia/reth-xdc`](https://github.com/XDCIndia/reth-xdc) | `RETH_BIN` / PATH | **join/sync to tip** ✅ (reads geth genesis natively) |
 
 ```bash
 ./setup.sh --new                 # default oldxdc — runs the 4-node network

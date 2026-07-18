@@ -35,8 +35,32 @@ case "$CLIENT" in
     CLIENT_TARGETS="erigon"
     NODE_NAME_BIN="erigon"
     ;;
+  besu)
+    # Prebuilt (Java): located by join.sh via BESU_BIN / PATH, not built here.
+    CLIENT=besu
+    XDPOS_REPO="${XDPOS_REPO:-https://github.com/XDCIndia/besu-xdc}"
+    XDPOS_DIR="${XDPOS_DIR:-$_LIB_DIR/../besu-xdc}"
+    CLIENT_TARGETS=""
+    NODE_NAME_BIN="besu"
+    ;;
+  nethermind)
+    # Prebuilt (.NET): located by join.sh via NETHERMIND_DIST / PATH, not built here.
+    CLIENT=nethermind
+    XDPOS_REPO="${XDPOS_REPO:-https://github.com/XDCIndia/nethermind}"
+    XDPOS_DIR="${XDPOS_DIR:-$_LIB_DIR/../nethermind}"
+    CLIENT_TARGETS=""
+    NODE_NAME_BIN="nethermind"
+    ;;
+  reth)
+    # Prebuilt (Rust): located by join.sh via RETH_BIN / PATH, not built here.
+    CLIENT=reth
+    XDPOS_REPO="${XDPOS_REPO:-https://github.com/XDCIndia/reth-xdc}"
+    XDPOS_DIR="${XDPOS_DIR:-$_LIB_DIR/../reth-xdc}"
+    CLIENT_TARGETS=""
+    NODE_NAME_BIN="xdc-reth"
+    ;;
   *)
-    echo "unknown CLIENT '$CLIENT' (use: oldxdc | geth | erigon)" >&2; exit 1;;
+    echo "unknown CLIENT '$CLIENT' (use: oldxdc | geth | erigon | besu | nethermind | reth)" >&2; exit 1;;
 esac
 
 # Binaries live under a per-client, per-platform dir so the clients coexist.
