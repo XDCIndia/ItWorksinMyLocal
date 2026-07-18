@@ -12,7 +12,8 @@
 # point at your own network. --ip / --bootnodes / --staticpeers still override.
 #
 # Flags:
-#   --genesis FILE       the target network's genesis.json            (required)
+#   --genesis FILE       the target network's genesis.json (defaults to
+#                        DEFAULT_GENESIS in network.env -- devnet 5151)
 #   --ip IP[:PORT]       just give the target machine's IP -- connects to its
 #                        bootnode (shared bootnode.key) at PORT (default 30301).
 #                        Simplest way to join a network on another host.
@@ -84,8 +85,25 @@ done
 source ./lib.sh
 
 # Default network target so neither --ip nor --staticpeers is required.
-# network.env -> DEFAULT_HOST/DEFAULT_BOOTNODE_PORT; peers.list -> default peers.
+# network.env -> DEFAULT_HOST/DEFAULT_BOOTNODE_PORT/DEFAULT_BOOTNODES/DEFAULT_GENESIS;
+# peers.list -> default peers.
 [ -f network.env ] && . ./network.env
+
+# Default the genesis from network.env (DEFAULT_GENESIS) when --genesis is omitted,
+# so a plain `./join.sh` joins the configured network (devnet 5151) with no flags.
+if [ -z "$GENESIS" ] && [ -n "$DEFAULT_GENESIS" ] && [ -f "$DEFAULT_GENESIS" ]; then
+  GENESIS="$DEFAULT_GENESIS"
+  echo "No --genesis given; using default genesis $GENESIS (from network.env)"
+fi
+
+# Prefer explicit DEFAULT_BOOTNODES (real masternode enodes) over deriving one from
+# bootnode.key: devnet 5151's masternodes live on four separate hosts with their own
+# node keys, so a key-derived enode would carry the wrong node id and fail to dial.
+if [ -z "$BOOTNODES" ] && [ -z "$HOST_IP" ] && [ -n "$DEFAULT_BOOTNODES" ]; then
+  BOOTNODES="$DEFAULT_BOOTNODES"
+  echo "No --ip/--bootnodes given; using $(echo "$BOOTNODES" | tr ',' '\n' | grep -c enode) default bootnode(s) from network.env"
+fi
+
 if [ -z "$HOST_IP" ] && [ -z "$BOOTNODES" ] && [ -n "$DEFAULT_HOST" ]; then
   HOST_IP="${DEFAULT_HOST}:${DEFAULT_BOOTNODE_PORT:-30301}"
   echo "No --ip/--bootnodes given; using default host $HOST_IP (from network.env)"
