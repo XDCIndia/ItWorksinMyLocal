@@ -224,6 +224,10 @@ if [ -z "$NAME" ]; then
     *)          VER=$("$XDC" version 2>/dev/null | awk '/^Version:/{print $2; exit}'); NAME="${NODE_NAME_BIN}-v${VER:-0}-${HOST}-sync" ;;
   esac
 fi
+# ethstats/identity names must not contain URL-breaking characters -- some client
+# --version strings (notably besu's "besu/vX/os/jvm") contain '/', which breaks the
+# ethstats "name:secret@host" URL parsing -- so normalise to [A-Za-z0-9._-].
+NAME=$(printf '%s' "$NAME" | tr -c 'A-Za-z0-9._-' '-')
 
 # Initialise the datadir against the genesis (first run only). oldxdc and the
 # GP5 geth fork both store chaindata under <datadir>/XDC and need an explicit
