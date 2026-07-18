@@ -197,7 +197,10 @@ fi
 # chaindata under <datadir>/XDC, geth under <datadir>/geth. erigon has no init
 # (it derives the chain from --chain), so skip it there.
 if [ "$CLIENT" != erigon ]; then
-  datasub="XDC"; [ "$CLIENT" = geth ] && datasub="geth"
+  # Both oldxdc and the GP5 geth fork store chaindata under <datadir>/XDC
+  # (GP5 kept the XDC datadir layout), so the init guard must check XDC for both
+  # -- otherwise geth re-inits from genesis on every run.
+  datasub="XDC"
   if [ ! -d "$DATADIR/$datasub/chaindata" ]; then
     echo "Initialising $DATADIR from $GENESIS ..."
     "$XDC" --datadir "$DATADIR" init "$GENESIS" || exit 1
@@ -277,7 +280,7 @@ elif [ "$CLIENT" = geth ]; then
   "$XDC" --datadir "$DATADIR" --networkid "$NETWORKID" --syncmode full \
     --bootnodes "$BOOTNODES" --port "$PORT" --nat "extip:${IP}" --identity "$NAME" --maxpeers 25 \
     --http --http.corsdomain "*" --http.addr 0.0.0.0 --http.port "$RPCPORT" --http.vhosts "*" \
-    --http.api eth,net,web3,txpool,debug,XDPoS \
+    --http.api eth,net,web3,txpool,debug,admin,XDPoS \
     --ws --ws.addr 0.0.0.0 --ws.origins "*" --ws.port "$WSPORT" --ws.api eth,net,web3,XDPoS \
     $ETHSTATS_ARG &
 else
