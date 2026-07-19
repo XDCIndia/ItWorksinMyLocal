@@ -13,3 +13,10 @@ gethjoin
 /peer-*/
 peertest/
 erigon-genesis.json
+
+# Lab (XDPoS multi-client consensus test lab) -- see docs/lab/DESIGN.md §10
+lab/results/
+lab/lab-accounts.env
+lab/*/peer/
+lab/**/datadir
+lab/genesis-lab-*.json
