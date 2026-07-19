@@ -7,12 +7,15 @@ _interupt() {
 
 trap _interupt INT TERM
 
-cd "$(dirname "$0")"
+cd "$(dirname "$0")" || exit 1
 source ./lib.sh
 require_oldxdc
 
 touch .pwd
-export $(cat .env | xargs)
+set -a
+# shellcheck disable=SC1091
+[ -f .env ] && source .env
+set +a
 
 Bin_NAME=XDC
 NUM_NODES=4
@@ -32,12 +35,22 @@ declare -a WALLETS
 if [ ! -d ./nodes/1/$Bin_NAME/chaindata ]; then
   for i in $(seq 1 $NUM_NODES); do
     pk_var="PRIVATE_KEY_$i"
-    WALLETS[$i]=$("$XDC" account import --password .pwd --datadir ./nodes/$i <(echo ${!pk_var}) | awk -v FS="({|})" '{print $2}')
+    WALLETS[$i]=$("$XDC" account import --password .pwd --datadir ./nodes/$i <(echo "${!pk_var}") | awk -v FS="({|})" '{print $2}')
+    if [ -z "${WALLETS[$i]}" ]; then
+      # `account import` fails (e.g. "account already exists") if the
+      # keystore already holds this key even though chaindata is missing --
+      # fall back to the already-imported account instead of silently
+      # unlocking an empty address (which crashes the sealer at startup
+      # with "etherbase must be explicitly specified").
+      WALLETS[$i]=$("$XDC" account list --datadir ./nodes/$i | head -n 1 | awk -v FS="({|})" '{print $2}')
+    fi
+    [ -n "${WALLETS[$i]}" ] || { echo "run.sh: could not determine a wallet address for node $i (check PRIVATE_KEY_$i in .env)" >&2; exit 1; }
     "$XDC" --datadir ./nodes/$i init ./genesis/genesis.json
   done
 else
   for i in $(seq 1 $NUM_NODES); do
     WALLETS[$i]=$("$XDC" account list --datadir ./nodes/$i | head -n 1 | awk -v FS="({|})" '{print $2}')
+    [ -n "${WALLETS[$i]}" ] || { echo "run.sh: no account found in ./nodes/$i (empty keystore?)" >&2; exit 1; }
   done
 fi
 
@@ -70,7 +83,7 @@ for i in $(seq 1 $NUM_NODES); do
     --networkid "${networkid}" --port $P2P_PORT --nat "extip:${IP}" --identity "${NODE_IDENTITY}" \
     --rpc --rpccorsdomain "*" --ws --wsaddr="0.0.0.0" --wsorigins "*" --wsport $WS_PORT \
     --rpcaddr 0.0.0.0 --rpcport $RPC_PORT --rpcvhosts "*" \
-    --unlock "${WALLETS[$i]}" --password ./.pwd --mine --gasprice "${GASPRICE}" \
+    --unlock "${WALLETS[$i]}" --etherbase "${WALLETS[$i]}" --password ./.pwd --mine --gasprice "${GASPRICE}" \
     --targetgaslimit "420000000" --verbosity ${VERBOSITY} \
     --rpcapi admin,db,eth,debug,miner,net,shh,txpool,personal,web3,XDPoS \
     --ethstats "${ETHSTATS}" &
