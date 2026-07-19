@@ -68,6 +68,10 @@ Producer net from `run.sh` (oldxdc sealers): rpc `8545-8548`, ws `8555-8558`, p2
 | follower  | nethermind | 8635 | 8636 | 30353 | via config| **no**         | join.sh --client nethermind |
 | follower  | reth       | 8645 | 8646 | 30363 | yes       | **no**         | join.sh --client reth |
 
+Note: erigon can only join with a built-in chainspec (`--chain xdc|xdc-apothem`) — it
+can't yet load the lab's custom genesis file (issue #9), so it's excluded from the
+lab's followers until erigon-xdc gains genesis-file support.
+
 **Consequence (hard constraint):** the oracle MUST NOT depend on `XDPoS_*` — only oldxdc/geth
 expose it. Cross-client observation uses **universal** calls only:
 `eth_getBlockByNumber`, `eth_getBlockByHash`, `eth_call` (to `0x88`), `eth_getStorageAt`,
