@@ -1,0 +1,571 @@
+#!/bin/bash
+# lib-lab.sh - shared helpers for the XDPoS multi-client consensus test lab.
+# Sourced by every lab/*.sh script (see docs/lab/DESIGN.md §7 for the full
+# contract). Builds on the repo's existing lib.sh/run.sh/join.sh rather than
+# reinventing launch or build logic: lab_start_producer wraps run.sh,
+# lab_start_follower wraps join.sh.
+#
+# Client registry / ports (docs/lab/DESIGN.md §3):
+#   reference  oldxdc(node1)  rpc 8545  ws 8555  p2p 30303  (run.sh)
+#   follower   geth           rpc 8605  ws 8606  p2p 30323  (join.sh --client geth)
+#   follower   erigon         rpc 8615  ws 8616  p2p 30333  (join.sh --client erigon)
+#   follower   besu           rpc 8625  ws 8626  p2p 30343  (join.sh --client besu)
+#   follower   nethermind     rpc 8635  ws 8636  p2p 30353  (join.sh --client nethermind)
+#   follower   reth           rpc 8645  ws 8646  p2p 30363  (join.sh --client reth)
+#
+# HARD CONSTRAINT: nothing in here may depend on XDPoS_* RPC methods for
+# cross-client comparisons -- only oldxdc/geth expose that namespace. All
+# cross-client reads use eth_getBlockByNumber/eth_getBlockByHash/eth_call
+# (to 0x88)/eth_getStorageAt/web3_clientVersion, per docs/lab/DESIGN.md §3.
+
+_LAB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit 1
+LAB_DIR="$_LAB_DIR"
+REPO_ROOT="$(cd "$LAB_DIR/.." && pwd)" || exit 1
+LAB_RESULTS_DIR="$LAB_DIR/results"
+mkdir -p "$LAB_RESULTS_DIR" 2>/dev/null || true
+
+# The XDPoS masternode/validator contract, always at this address on every
+# XDC-family client (genesis-deployed; see docs/lab/DESIGN.md §4).
+LAB_MASTERNODE_CONTRACT="0x0000000000000000000000000000000000000088"
+
+# Reuse the repo's existing helpers (detect_ip, ensure_bins, PLATFORM, ...)
+# rather than reimplementing them.
+# shellcheck source=../lib.sh
+source "$REPO_ROOT/lib.sh"
+
+# ---------------------------------------------------------------------------
+# Client registry
+# ---------------------------------------------------------------------------
+
+# lab_clients: echoes the client ids configured this run (subset of the 6),
+# space-separated. Override with LAB_CLIENTS="geth,erigon" (comma-separated).
+# Defaults to the 5 followers (the producer/reference is addressed
+# separately via `lab_rpc oldxdc`).
+lab_clients() {
+  local list="${LAB_CLIENTS:-geth,erigon,besu,nethermind,reth}"
+  printf '%s' "$list" | tr ',' ' '
+}
+
+# lab_rpc <client>: echoes that client's RPC URL.
+lab_rpc() {
+  case "$1" in
+    oldxdc|ref|reference) printf 'http://127.0.0.1:8545\n' ;;
+    geth)                  printf 'http://127.0.0.1:8605\n' ;;
+    erigon)                printf 'http://127.0.0.1:8615\n' ;;
+    besu)                  printf 'http://127.0.0.1:8625\n' ;;
+    nethermind)            printf 'http://127.0.0.1:8635\n' ;;
+    reth)                  printf 'http://127.0.0.1:8645\n' ;;
+    *) echo "lab_rpc: unknown client '$1'" >&2; return 1 ;;
+  esac
+}
+
+# _lab_producer_rpc_port <node1|node2|node3|node4>: the run.sh RPC port for
+# that individual sealer (used for per-node admin/partition control).
+_lab_producer_rpc_port() {
+  case "$1" in
+    node1) echo 8545 ;; node2) echo 8546 ;; node3) echo 8547 ;; node4) echo 8548 ;;
+    *) echo "_lab_producer_rpc_port: unknown node '$1'" >&2; return 1 ;;
+  esac
+}
+
+# ---------------------------------------------------------------------------
+# JSON-RPC transport
+# ---------------------------------------------------------------------------
+
+# lab_rpc_call <url> <method> <json-params>: POSTs a JSON-RPC request and
+# prints the raw "result" (a bare string as-is, anything else JSON-encoded).
+# Returns nonzero on a transport error, an RPC error, or a null result.
+lab_rpc_call() {
+  local url="$1" method="$2" params="${3:-[]}" resp
+  resp=$(curl -s -m "${LAB_RPC_TIMEOUT:-10}" -X POST "$url" \
+    -H 'Content-Type: application/json' \
+    --data "{\"jsonrpc\":\"2.0\",\"method\":\"${method}\",\"params\":${params},\"id\":1}") || return 1
+  [ -n "$resp" ] || return 1
+  python3 - "$resp" <<'PY'
+import json
+import sys
+
+try:
+    obj = json.loads(sys.argv[1])
+except Exception:
+    sys.exit(1)
+if "error" in obj:
+    sys.stderr.write(json.dumps(obj["error"]) + "\n")
+    sys.exit(1)
+result = obj.get("result")
+if result is None:
+    sys.exit(1)
+if isinstance(result, str):
+    print(result)
+else:
+    print(json.dumps(result))
+PY
+}
+
+# lab_block_number <url>: decimal head height.
+lab_block_number() {
+  local url="$1" hex
+  hex=$(lab_rpc_call "$url" eth_blockNumber "[]") || return 1
+  printf '%d\n' "$hex"
+}
+
+# lab_block_hash <url> <N>: 0x... hash of block N, or "" (+ nonzero) if the
+# node doesn't have that block yet.
+lab_block_hash() {
+  local url="$1" n="$2" hexn block
+  hexn=$(printf '0x%x' "$n")
+  block=$(lab_rpc_call "$url" eth_getBlockByNumber "[\"${hexn}\",false]") || { printf ''; return 1; }
+  python3 -c "
+import json
+import sys
+
+b = json.loads(sys.argv[1])
+print(b.get('hash', '') if b else '')
+" "$block"
+}
+
+# lab_wait_block <url> <N> [timeout_s]: blocks until head >= N, or returns
+# nonzero after timeout_s (default 120).
+lab_wait_block() {
+  local url="$1" target="$2" timeout="${3:-120}" waited=0 cur
+  while :; do
+    cur=$(lab_block_number "$url" 2>/dev/null) || cur=0
+    [ -n "$cur" ] && [ "$cur" -ge "$target" ] 2>/dev/null && return 0
+    [ "$waited" -ge "$timeout" ] && return 1
+    sleep 2
+    waited=$((waited + 2))
+  done
+}
+
+# ---------------------------------------------------------------------------
+# ABI helpers (0x88 masternode contract; see docs/lab/DESIGN.md §4)
+# ---------------------------------------------------------------------------
+
+# lab_abi_encode_address <0xAddr>: 32-byte left-padded word (64 hex chars,
+# no 0x prefix), suitable for concatenating after a selector.
+lab_abi_encode_address() {
+  python3 -c "
+import sys
+
+a = sys.argv[1].lower()
+if a.startswith('0x'):
+    a = a[2:]
+if len(a) != 40:
+    sys.stderr.write('lab_abi_encode_address: not a 20-byte address: %s\n' % sys.argv[1])
+    sys.exit(1)
+print(a.rjust(64, '0'))
+" "$1"
+}
+
+# lab_abi_encode_uint256 <decimal>: 32-byte left-padded word (64 hex chars,
+# no 0x prefix). Accepts arbitrary-size integers (wei amounts).
+lab_abi_encode_uint256() {
+  python3 -c "
+import sys
+
+n = int(sys.argv[1])
+if n < 0:
+    sys.stderr.write('lab_abi_encode_uint256: negative value\n')
+    sys.exit(1)
+print(format(n, '064x'))
+" "$1"
+}
+
+# lab_abi_encode_string <string>: ABI encoding of a single dynamic `string`
+# argument (offset word + length word + data, right-padded to a 32-byte
+# boundary), no leading selector. Needed for uploadKYC(string) -- see the
+# note on cmd_upload_kyc in masternode.sh for why that call exists at all.
+lab_abi_encode_string() {
+  python3 -c "
+import sys
+
+s = sys.argv[1].encode('utf-8')
+length = len(s)
+padded = ((length + 31) // 32) * 32
+data_hex = s.hex().ljust(padded * 2, '0')
+print(format(0x20, '064x') + format(length, '064x') + data_hex)
+" "$1"
+}
+
+# lab_xdc_to_wei_hex <XDC-amount>: 0x-prefixed hex wei value for a decimal
+# XDC amount (arbitrary size; XDC has 18 decimals like ether).
+lab_xdc_to_wei_hex() {
+  python3 -c "
+import sys
+
+print('0x%x' % (int(sys.argv[1]) * 10**18))
+" "$1"
+}
+
+# lab_decode_address_array <hex>: decodes an ABI dynamic address[] return
+# value (offset word, length word, then N left-padded address words) into a
+# sorted, comma-joined, lowercase 0x-prefixed address list. Pure decode, no
+# network access -- this is what oracle.sh --self-test exercises directly.
+lab_decode_address_array() {
+  python3 -c "
+import sys
+
+h = sys.argv[1]
+if h.startswith('0x'):
+    h = h[2:]
+if len(h) < 128:
+    print('')
+    sys.exit(0)
+length = int(h[64:128], 16)
+addrs = []
+pos = 128
+for _ in range(length):
+    word = h[pos:pos + 64]
+    if len(word) < 64:
+        break
+    addrs.append('0x' + word[-40:].lower())
+    pos += 64
+addrs.sort()
+print(','.join(addrs))
+" "$1"
+}
+
+# lab_call_0x88 <url> <selector-with-args-hex>: eth_call to the masternode
+# contract at 'latest', returns the raw hex result.
+lab_call_0x88() {
+  local url="$1" data="$2"
+  lab_rpc_call "$url" eth_call "[{\"to\":\"${LAB_MASTERNODE_CONTRACT}\",\"data\":\"0x${data#0x}\"},\"latest\"]"
+}
+
+# lab_get_candidates <url>: decoded, sorted, comma-joined getCandidates()
+# address list. Universal (eth_call only) -- works against every client.
+lab_get_candidates() {
+  local url="$1" raw
+  raw=$(lab_call_0x88 "$url" "06a49fce") || return 1
+  lab_decode_address_array "$raw"
+}
+
+# lab_unlock_key <url> <hex-private-key> [unlock-secs] [known-address]:
+# imports a raw private key via personal_importRawKey and unlocks it,
+# printing the resulting address. Used by masternode.sh to drive txs from a
+# lab candidate-owner account (see lab/lab-accounts.env).
+#
+# personal_importRawKey on this client errors ("account already exists")
+# the second time the SAME key is imported -- which happens routinely, since
+# every masternode.sh invocation is a fresh process (e.g. upload-kyc then
+# propose for the same account). Pass the address as $4 (masternode.sh does
+# this whenever both --key and --from are given) to skip re-import entirely
+# for the address and make re-import best-effort; without it, the address
+# comes from personal_importRawKey's response, which only works the first
+# time a given key is used.
+lab_unlock_key() {
+  local url="$1" key="${2#0x}" secs="${3:-300}" known_addr="${4:-}" addr
+  if [ -n "$known_addr" ]; then
+    addr="$known_addr"
+    lab_rpc_call "$url" personal_importRawKey "[\"${key}\",\"\"]" >/dev/null 2>&1 || true
+  else
+    addr=$(lab_rpc_call "$url" personal_importRawKey "[\"${key}\",\"\"]") || return 1
+  fi
+  lab_rpc_call "$url" personal_unlockAccount "[\"${addr}\",\"\",${secs}]" >/dev/null || return 1
+  printf '%s\n' "$addr"
+}
+
+# ---------------------------------------------------------------------------
+# Node enode / peer helpers (producer sealers only -- they carry the admin
+# API; see docs/lab/DESIGN.md §3/§6)
+# ---------------------------------------------------------------------------
+
+# _lab_node_enode <node1..node4>: that sealer's own enode (admin_nodeInfo).
+_lab_node_enode() {
+  local node="$1" port url info
+  port=$(_lab_producer_rpc_port "$node") || return 1
+  url="http://127.0.0.1:${port}"
+  info=$(lab_rpc_call "$url" admin_nodeInfo "[]") || return 1
+  python3 -c "
+import json
+import sys
+
+print(json.loads(sys.argv[1]).get('enode', ''))
+" "$info"
+}
+
+# _lab_producer_enodes: comma-joined enodes of all 4 producer sealers.
+# Needed as --bootnodes for besu/nethermind/reth followers, which (per
+# join.sh) never derive a bootnode from ./bootnode.key and instead dial the
+# validator enodes directly.
+_lab_producer_enodes() {
+  local i e out=""
+  for i in 1 2 3 4; do
+    e=$(_lab_node_enode "node${i}") || return 1
+    [ -n "$e" ] || return 1
+    if [ -n "$out" ]; then out="${out},${e}"; else out="${e}"; fi
+  done
+  printf '%s\n' "$out"
+}
+
+# lab_peers <node>: comma-joined enode list of that producer node's current
+# peers (admin_peers). $1: node1..node4. admin_peers entries carry no
+# top-level "enode" field -- just "id" + "network.remoteAddress" -- so this
+# reconstructs the enode URL the same way lib.sh's harvest_peers does.
+lab_peers() {
+  local node="$1" port url peers
+  port=$(_lab_producer_rpc_port "$node") || return 1
+  url="http://127.0.0.1:${port}"
+  peers=$(lab_rpc_call "$url" admin_peers "[]") || return 1
+  python3 -c "
+import json
+import sys
+
+ps = json.loads(sys.argv[1]) or []
+out = []
+for p in ps:
+    pid = p.get('id')
+    addr = (p.get('network') or {}).get('remoteAddress')
+    if pid and addr:
+        out.append('enode://%s@%s' % (pid, addr))
+print(','.join(out))
+" "$peers"
+}
+
+# _lab_toggle_peers <add|remove> <groupA nodes> <groupB nodes>: calls
+# admin_<action>Peer across every A<->B pair (full split/heal), using each
+# node's own admin RPC.
+_lab_toggle_peers() {
+  local action="$1" group_a="$2" group_b="$3" a b rpc_a rpc_b enode_a enode_b port_a port_b
+  for a in $group_a; do
+    port_a=$(_lab_producer_rpc_port "$a") || return 1
+    rpc_a="http://127.0.0.1:${port_a}"
+    enode_a=$(_lab_node_enode "$a") || return 1
+    for b in $group_b; do
+      port_b=$(_lab_producer_rpc_port "$b") || return 1
+      rpc_b="http://127.0.0.1:${port_b}"
+      enode_b=$(_lab_node_enode "$b") || return 1
+      lab_rpc_call "$rpc_a" "admin_${action}Peer" "[\"${enode_b}\"]" >/dev/null
+      lab_rpc_call "$rpc_b" "admin_${action}Peer" "[\"${enode_a}\"]" >/dev/null
+    done
+  done
+}
+
+# lab_partition <groupA-nodes> <groupB-nodes>: splits the sealer set into
+# two groups via admin_removePeer (comma- or space-separated node1..node4
+# lists, e.g. "node1,node2" "node3,node4"). Records the split so lab_heal
+# knows what to reconnect.
+lab_partition() {
+  local group_a group_b
+  group_a=$(printf '%s' "$1" | tr ',' ' ')
+  group_b=$(printf '%s' "$2" | tr ',' ' ')
+  mkdir -p "$LAB_RESULTS_DIR" || return 1
+  _lab_toggle_peers remove "$group_a" "$group_b" || return 1
+  printf '%s|%s\n' "$group_a" "$group_b" > "$LAB_RESULTS_DIR/partition.state"
+}
+
+# lab_heal: reconnects the most recent lab_partition split via
+# admin_addPeer.
+lab_heal() {
+  [ -f "$LAB_RESULTS_DIR/partition.state" ] || { echo "lab_heal: no active partition to heal" >&2; return 1; }
+  local line group_a group_b
+  line=$(cat "$LAB_RESULTS_DIR/partition.state")
+  group_a="${line%%|*}"
+  group_b="${line#*|}"
+  _lab_toggle_peers add "$group_a" "$group_b" || return 1
+  rm -f "$LAB_RESULTS_DIR/partition.state"
+}
+
+# ---------------------------------------------------------------------------
+# Producer / follower lifecycle
+# ---------------------------------------------------------------------------
+
+# _lab_pid_on_port <port>: PID of the process LISTENing on that TCP port
+# (empty if none). Used for per-node stop/restart, since run.sh manages all
+# 4 sealers as one process group with no per-node control of its own.
+_lab_pid_on_port() {
+  command -v lsof >/dev/null 2>&1 || return 1
+  lsof -ti "tcp:$1" -sTCP:LISTEN 2>/dev/null | head -1
+}
+
+# lab_start_producer: brings up the run.sh 4-node oldxdc net using the lab
+# genesis for the current LAB_SWITCH_BLOCK/LAB_PERIOD/LAB_TIMEOUT_PERIOD env
+# vars (the pinned contract in docs/lab/DESIGN.md Section 5; scenarios
+# `export` these before calling in), generating it first via
+# gen-lab-genesis.sh if missing. Reuses run.sh unmodified, which hardcodes
+# ./genesis/genesis.json and ./nodes/<i> -- so this stages the lab genesis
+# into genesis/genesis.json (backing up the original once) and wipes
+# ./nodes/* via reset.sh whenever the active config changes, forcing a fresh
+# init against the new genesis.
+lab_start_producer() {
+  local switch_block period timeout_period config_key genesis
+  switch_block="${LAB_SWITCH_BLOCK:-900}"
+  period="${LAB_PERIOD:-1}"
+  timeout_period="${LAB_TIMEOUT_PERIOD:-10}"
+  config_key="sw${switch_block}-p${period}-t${timeout_period}"
+  genesis="$LAB_DIR/genesis-lab-${config_key}.json"
+  if [ ! -f "$genesis" ]; then
+    echo "lab_start_producer: $genesis missing; generating it..." >&2
+    LAB_SWITCH_BLOCK="$switch_block" LAB_PERIOD="$period" LAB_TIMEOUT_PERIOD="$timeout_period" \
+      "$LAB_DIR/gen-lab-genesis.sh" || return 1
+  fi
+  mkdir -p "$LAB_RESULTS_DIR" || return 1
+
+  local root_genesis="$REPO_ROOT/genesis/genesis.json"
+  if [ -f "$root_genesis" ] && [ ! -f "$LAB_RESULTS_DIR/genesis-orig-backup.json" ]; then
+    cp "$root_genesis" "$LAB_RESULTS_DIR/genesis-orig-backup.json" || return 1
+  fi
+
+  local active_marker="$LAB_RESULTS_DIR/active-config" prev_config=""
+  [ -f "$active_marker" ] && prev_config=$(cat "$active_marker")
+  if [ "$prev_config" != "$config_key" ]; then
+    echo "lab_start_producer: (re)initialising nodes/ for config '$config_key'" >&2
+    ( cd "$REPO_ROOT" && ./reset.sh ) || return 1
+    printf '%s\n' "$config_key" > "$active_marker"
+  fi
+
+  cp "$genesis" "$root_genesis" || return 1
+
+  ( cd "$REPO_ROOT" && nohup ./run.sh >"$LAB_RESULTS_DIR/producer.log" 2>&1 &
+    echo $! > "$LAB_RESULTS_DIR/producer.pid" )
+
+  local waited=0
+  while ! lab_rpc_call "$(lab_rpc oldxdc)" eth_blockNumber "[]" >/dev/null 2>&1; do
+    waited=$((waited + 2))
+    if [ "$waited" -ge 60 ]; then
+      echo "lab_start_producer: node1 RPC not reachable after 60s (see $LAB_RESULTS_DIR/producer.log)" >&2
+      return 1
+    fi
+    sleep 2
+  done
+  echo "lab_start_producer: up (switchBlock=$switch_block period=$period timeoutPeriod=$timeout_period), reference=$(lab_rpc oldxdc)" >&2
+}
+
+# lab_start_producer_node <node1..node4>: (re)starts a single stopped
+# producer sealer, replicating run.sh's per-node XDC invocation (same
+# binary/datadir/ports/unlock+mine flags/bootnode). run.sh itself has no
+# single-node restart primitive -- it manages all 4 sealers as one process
+# group -- so this is the lab's own minimal equivalent, used for the
+# offline-validator-penalty scenario (stop one sealer, restart it later).
+lab_start_producer_node() {
+  local node="$1" idx port_rpc
+  case "$node" in
+    node1) idx=1 ;; node2) idx=2 ;; node3) idx=3 ;; node4) idx=4 ;;
+    *) echo "lab_start_producer_node: unknown node '$node'" >&2; return 1 ;;
+  esac
+  port_rpc=$(_lab_producer_rpc_port "$node") || return 1
+  if [ -n "$(_lab_pid_on_port "$port_rpc")" ]; then
+    echo "lab_start_producer_node: $node already running (port $port_rpc busy)" >&2
+    return 1
+  fi
+  mkdir -p "$LAB_RESULTS_DIR" || return 1
+
+  (
+    cd "$REPO_ROOT" || exit 1
+    # shellcheck source=../lib.sh
+    source ./lib.sh
+    require_oldxdc
+    ensure_bins
+    xdc="$XDC_BIN"
+    datadir="./nodes/${idx}"
+    wallet=$("$xdc" account list --datadir "$datadir" 2>/dev/null | head -n 1 | awk -v FS='({|})' '{print $2}')
+    if [ -z "$wallet" ]; then
+      echo "lab_start_producer_node: no account found in $datadir" >&2
+      exit 1
+    fi
+    ip=$(detect_ip)
+    bootnode_enode="enode://$("$BOOTNODE_BIN" -nodekey ./bootnode.key -writeaddress)@${ip}:30301"
+    p2p_port=$((30302 + idx))
+    ws_port=$((8554 + idx))
+    nohup "$xdc" --bootnodes "$bootnode_enode" --syncmode full --datadir "$datadir" \
+      --networkid 20118 --port "$p2p_port" --nat "extip:${ip}" --identity "lab-restart-${node}" \
+      --rpc --rpccorsdomain "*" --ws --wsaddr 0.0.0.0 --wsorigins "*" --wsport "$ws_port" \
+      --rpcaddr 0.0.0.0 --rpcport "$port_rpc" --rpcvhosts "*" \
+      --unlock "$wallet" --password ./.pwd --mine --gasprice 1 --targetgaslimit 420000000 \
+      --verbosity 3 --rpcapi admin,db,eth,debug,miner,net,shh,txpool,personal,web3,XDPoS \
+      >"$LAB_RESULTS_DIR/${node}-restart.log" 2>&1 &
+    echo $! > "$LAB_RESULTS_DIR/${node}.pid"
+  )
+}
+
+# lab_start_follower <client>: joins the lab producer network as a
+# sync-only follower via join.sh --client <client>. geth/erigon/oldxdc
+# derive the bootnode from ./bootnode.key like run.sh does (forced via
+# --ip so the derivation always fires); besu/nethermind/reth need the
+# validator enodes directly (join.sh never derives one for them), so this
+# gathers them from the 4 producer sealers first.
+lab_start_follower() {
+  local client="$1" config_key genesis datadir name
+  [ -n "$client" ] || { echo "lab_start_follower: client required" >&2; return 1; }
+  config_key="sw900-p1-t10"
+  [ -f "$LAB_RESULTS_DIR/active-config" ] && config_key=$(cat "$LAB_RESULTS_DIR/active-config")
+  genesis="$LAB_DIR/genesis-lab-${config_key}.json"
+  [ -f "$genesis" ] || { echo "lab_start_follower: $genesis missing; run lab_start_producer first" >&2; return 1; }
+  mkdir -p "$LAB_RESULTS_DIR" || return 1
+
+  datadir="$LAB_RESULTS_DIR/${client}-peer"
+  name="lab-${client}"
+
+  (
+    cd "$REPO_ROOT" || exit 1
+    case "$client" in
+      besu|nethermind|reth)
+        enodes=$(_lab_producer_enodes 2>/dev/null)
+        if [ -z "$enodes" ]; then
+          echo "lab_start_follower: could not gather producer enodes for $client (is the producer up?)" >&2
+          exit 1
+        fi
+        nohup ./join.sh --genesis "$genesis" --client "$client" --bootnodes "$enodes" \
+          --datadir "$datadir" --name "$name" --no-ethstats \
+          >"$LAB_RESULTS_DIR/${client}.log" 2>&1 &
+        ;;
+      *)
+        # shellcheck source=../lib.sh
+        source ./lib.sh
+        ip=$(detect_ip)
+        nohup ./join.sh --genesis "$genesis" --client "$client" --ip "$ip" \
+          --datadir "$datadir" --name "$name" --no-ethstats \
+          >"$LAB_RESULTS_DIR/${client}.log" 2>&1 &
+        ;;
+    esac
+    echo $! > "$LAB_RESULTS_DIR/${client}.pid"
+  )
+}
+
+# lab_stop <client|producer|node1..node4>: SIGTERMs that follower's join.sh
+# wrapper (which itself traps and cleans up its child), the whole producer
+# wrapper (run.sh, which cleans up bootnode + all 4 sealers), or a single
+# producer sealer found by the OS process listening on its RPC port.
+lab_stop() {
+  local target="$1" pidfile pid port
+  case "$target" in
+    producer)
+      pidfile="$LAB_RESULTS_DIR/producer.pid"
+      ;;
+    node1|node2|node3|node4)
+      port=$(_lab_producer_rpc_port "$target") || return 1
+      pid=$(_lab_pid_on_port "$port")
+      [ -n "$pid" ] || { echo "lab_stop: no process found on port $port for $target" >&2; return 1; }
+      kill -TERM "$pid" 2>/dev/null
+      rm -f "$LAB_RESULTS_DIR/${target}.pid"
+      return 0
+      ;;
+    *)
+      pidfile="$LAB_RESULTS_DIR/${target}.pid"
+      ;;
+  esac
+  [ -f "$pidfile" ] || { echo "lab_stop: no pidfile for '$target' ($pidfile)" >&2; return 1; }
+  pid=$(cat "$pidfile")
+  kill -TERM "$pid" 2>/dev/null
+  rm -f "$pidfile"
+}
+
+# lab_teardown: stops the producer and every configured follower
+# (best-effort), restores the original genesis/genesis.json if lab_start_
+# producer backed one up, and clears the active-config marker. Always
+# succeeds (best-effort cleanup) so callers can use it freely between/after
+# scenarios. Leaves results/ in place.
+lab_teardown() {
+  local c
+  for c in $(lab_clients); do lab_stop "$c" >/dev/null 2>&1; done
+  local i
+  for i in 1 2 3 4; do lab_stop "node${i}" >/dev/null 2>&1; done
+  lab_stop producer >/dev/null 2>&1
+
+  if [ -f "$LAB_RESULTS_DIR/genesis-orig-backup.json" ]; then
+    cp "$LAB_RESULTS_DIR/genesis-orig-backup.json" "$REPO_ROOT/genesis/genesis.json" 2>/dev/null \
+      && echo "lab_teardown: restored original genesis/genesis.json" >&2
+  fi
+  rm -f "$LAB_RESULTS_DIR/active-config" "$LAB_RESULTS_DIR/partition.state"
+  return 0
+}
