@@ -5,7 +5,7 @@
 #
 # Usage: ./network-info.sh [path/to/genesis.json]
 
-cd "$(dirname "$0")"
+cd "$(dirname "$0")" || exit 1
 source ./lib.sh
 GENESIS="${1:-genesis/genesis.json}"
 XDC="$XDC_BIN"
@@ -14,7 +14,8 @@ XDC="$XDC_BIN"
 # Derive the addresses of the private keys held in .env (accounts you control).
 HELD=""
 if [ -f .env ] && [ -x "$XDC" ]; then
-  export $(grep -E '^PRIVATE_KEY_[0-9]+=' .env | xargs) 2>/dev/null
+  # shellcheck disable=SC2163  # intentional: $_kv holds a "NAME=VALUE" pair from .env, not a var name
+  while IFS= read -r _kv; do export "$_kv"; done < <(grep -E '^PRIVATE_KEY_[0-9]+=' .env 2>/dev/null)
   TMP=$(mktemp -d); : > "$TMP/pw"; trap 'rm -rf "$TMP"' EXIT
   i=1
   while :; do

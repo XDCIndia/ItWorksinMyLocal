@@ -65,7 +65,7 @@ done
 norm() { echo "$1" | sed -E 's/^0[xX]//; s/^xdc//'; }
 emit_list() { local IFS=,; for a in $1; do norm "$a"; done; echo; }  # addresses + blank terminator
 
-cd "$(dirname "$0")"
+cd "$(dirname "$0")" || exit 1
 source ./lib.sh
 require_oldxdc
 ensure_bins
