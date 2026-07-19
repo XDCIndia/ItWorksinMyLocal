@@ -132,9 +132,16 @@ PRIVAPI="${PRIVAPI:-127.0.0.1:$((9095 + O))}"
 # Validate required inputs BEFORE building (a build can take minutes).
 case "$CLIENT" in
   erigon)
-    # erigon: a built-in --chain name, or a --genesis file (loaded generically
-    # via erigon's genesis-file chainspec support).
-    [ -n "$CHAIN" ] || [ -f "$GENESIS" ] || { echo "erigon join needs --genesis <file> or --chain <built-in-name>" >&2; exit 1; } ;;
+    # erigon requires a built-in chainspec name: its --chain flag only resolves
+    # built-in names, and a custom/converted genesis file falls back silently
+    # to Ethereum mainnet (see issue #9). Fail loud and early, before any build.
+    if [ -z "$CHAIN" ]; then
+      echo "erigon join requires a built-in chainspec: --chain xdc | xdc-apothem" >&2
+      echo "This erigon-xdc build cannot load a custom/converted genesis file (its --chain" >&2
+      echo "only resolves built-in names; a custom genesis would fall back to Ethereum" >&2
+      echo "mainnet). See issue #9. To join a custom network, use --client geth instead." >&2
+      exit 1
+    fi ;;
   nethermind)
     : ;;  # nethermind loads its own chainspec from the dist, not --genesis
   *)

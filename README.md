@@ -74,7 +74,7 @@ their repo and point `join.sh` at the binary with `BESU_BIN` / `RETH_BIN` /
 |--------|-------------|------------------|--------|
 | `oldxdc` (default) | [`XDCIndia/OLDXDC`](https://github.com/XDCIndia/OLDXDC) (XDPoSChain) | built from source | full network (run + genesis + join + seal) |
 | `geth` | [`XDCIndia/go-ethereum`](https://github.com/XDCIndia/go-ethereum) (GP5) | built from source | **join/sync** (seal TODO; full-sync past the mid-history epoch switch needs the xdcSyncer fix) |
-| `erigon` | [`XDCIndia/erigon-xdc`](https://github.com/XDCIndia/erigon-xdc) | built from source | **join/sync** ✅ (genesis auto-converted) |
+| `erigon` | [`XDCIndia/erigon-xdc`](https://github.com/XDCIndia/erigon-xdc) | built from source | **join/sync** ✅ built-in chainspecs only (`--chain xdc\|xdc-apothem`); **not** a custom `--genesis` (see #9) |
 | `besu` | [`XDCIndia/besu-xdc`](https://github.com/XDCIndia/besu-xdc) | `BESU_BIN` / PATH | **join/sync to tip** ✅ (reads geth genesis natively) |
 | `nethermind` | [`XDCIndia/nethermind`](https://github.com/XDCIndia/nethermind) | `NETHERMIND_DIST` / PATH | **join/sync to tip** ✅ (uses its own chainspec) |
 | `reth` | [`XDCIndia/reth-xdc`](https://github.com/XDCIndia/reth-xdc) | `RETH_BIN` / PATH | **join/sync to tip** ✅ (reads geth genesis natively) |
