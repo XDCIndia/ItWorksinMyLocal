@@ -66,8 +66,11 @@ esac
 # Binaries live under a per-client, per-platform dir so the clients coexist.
 BIN_DIR="$_LIB_DIR/bin/$CLIENT/$PLATFORM"
 NODE_BIN="$BIN_DIR/$NODE_NAME_BIN"   # the node binary (XDC / geth / erigon)
+# shellcheck disable=SC2034  # XDC_BIN/BOOTNODE_BIN/PUPPETH_BIN are used by scripts that `source ./lib.sh`
 XDC_BIN="$NODE_BIN"                  # back-compat alias used by the scripts
+# shellcheck disable=SC2034  # used by scripts that `source ./lib.sh` (e.g. join.sh)
 BOOTNODE_BIN="$BIN_DIR/bootnode"     # only exists for the oldxdc client
+# shellcheck disable=SC2034  # used by scripts that `source ./lib.sh` (e.g. gen-genesis.sh)
 PUPPETH_BIN="$BIN_DIR/puppeth"       # only exists for the oldxdc client
 
 # Best-effort LAN IP on macOS or Linux (falls back to 127.0.0.1).
@@ -166,7 +169,7 @@ ensure_bins() {
 
   # build/ci.go reads the GOPATH env var directly and fails if it's unset,
   # even though modern Go defaults it. Set it for the build.
-  [ -z "$GOPATH" ] && export GOPATH="$(go env GOPATH 2>/dev/null)"
+  if [ -z "$GOPATH" ]; then GOPATH="$(go env GOPATH 2>/dev/null)"; export GOPATH; fi
   [ -z "$GOPATH" ] && export GOPATH="$HOME/go"
   mkdir -p "$GOPATH"
 
@@ -205,8 +208,8 @@ harvest_peers() {
   "$xdc" --datadir "$dd" --networkid "$nid" --syncmode full --bootnodes "$bootnode" \
     --port 30399 --nat "extip:$(detect_ip)" --maxpeers 25 \
     --http --http.addr 127.0.0.1 --http.port "$rp" --http.api admin,net >/dev/null 2>&1 &
-  local hpid=$! enodes="" i
-  for i in $(seq 1 30); do
+  local hpid=$! enodes=""
+  for _ in $(seq 1 30); do
     enodes=$(curl -s -m3 "http://127.0.0.1:$rp" -X POST -H 'Content-Type: application/json' \
       --data '{"jsonrpc":"2.0","method":"admin_peers","params":[],"id":1}' 2>/dev/null \
       | python3 -c "import sys,json

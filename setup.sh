@@ -42,7 +42,8 @@ fi
 [ -f .env ] || { echo ".env not found -- run: ./setup.sh --new" >&2; exit 1; }
 
 # Derive signer addresses from the .env private keys (dynamic).
-export $(grep -E '^PRIVATE_KEY_[0-9]+=' .env | xargs)
+# shellcheck disable=SC2163  # intentional: $_kv holds a "NAME=VALUE" pair from .env, not a var name
+while IFS= read -r _kv; do export "$_kv"; done < <(grep -E '^PRIVATE_KEY_[0-9]+=' .env)
 TMP=$(mktemp -d); : > "$TMP/pw"; trap 'rm -rf "$TMP"' EXIT
 SIGNERS=""; i=1
 while :; do
