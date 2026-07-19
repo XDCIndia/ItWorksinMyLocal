@@ -7,12 +7,12 @@ _interupt() {
 
 trap _interupt INT TERM
 
-cd "$(dirname "$0")"
+cd "$(dirname "$0")" || exit 1
 source ./lib.sh
 require_oldxdc
 
 touch .pwd
-export $(cat .env | xargs)
+set -a; . ./.env; set +a
 
 Bin_NAME=XDC
 NUM_NODES=4

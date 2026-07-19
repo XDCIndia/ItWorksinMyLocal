@@ -22,7 +22,7 @@ for a in "$@"; do
   esac
 done
 
-cd "$(dirname "$0")"
+cd "$(dirname "$0")" || exit 1
 source ./lib.sh
 ensure_bins
 XDC="$XDC_BIN"

@@ -51,7 +51,7 @@
 _interupt() { echo "Shutdown $child_proc"; kill -TERM $child_proc 2>/dev/null; exit; }
 trap _interupt INT TERM
 
-cd "$(dirname "$0")"
+cd "$(dirname "$0")" || exit 1
 
 GENESIS=""; BOOTNODES=""; NETWORKID=""; DATADIR="./peer"; NAME=""; HOST_IP=""; CHAIN=""
 MINEADDR=""; STATICPEERS=""
