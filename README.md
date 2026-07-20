@@ -90,23 +90,31 @@ nethermind still needs a custom `NETHERMIND_DIST` (join.sh says so if missing).
 
 ## Choosing a client
 
-Six node clients are selectable with `--client` (or `CLIENT=`). All six join and
-sync **devnet 5151** (`./join.sh --client <name>` — validated end-to-end against
-the live network). By default every client is fetched as a **prebuilt binary**
-(see [Prebuilt binaries vs local build](#prebuilt-binaries-vs-local-build));
+Six node clients are selectable with `--client` (or `CLIENT=`), joining **devnet
+5151** with `./join.sh --client <name>`. By default every client is fetched as a
+**prebuilt binary** (see [Prebuilt binaries vs local build](#prebuilt-binaries-vs-local-build));
 `oldxdc/geth/erigon` build from source when a prebuilt isn't available (or with
 `BIN_SOURCE=build`), while `besu/nethermind/reth` (separate Java/.NET/Rust
 toolchains) are download-only unless you point `join.sh` at your own binary via
 `BESU_BIN` / `RETH_BIN` / `NETHERMIND_DIST` (or `PATH`).
 
-| Client | Source repo | Binary discovery | Status (devnet 5151) |
-|--------|-------------|------------------|--------|
-| `oldxdc` (default) | [`XDCIndia/OLDXDC`](https://github.com/XDCIndia/OLDXDC) (XDPoSChain) | built from source | full network (run + genesis + join + seal) |
-| `geth` | [`XDCIndia/go-ethereum`](https://github.com/XDCIndia/go-ethereum) (GP5) | built from source | **join/sync** (seal TODO; full-sync past the mid-history epoch switch needs the xdcSyncer fix) |
-| `erigon` | [`XDCIndia/erigon-xdc`](https://github.com/XDCIndia/erigon-xdc) | built from source | **join/sync** ✅ built-in chainspecs only (`--chain xdc\|xdc-apothem`); **not** a custom `--genesis` (see #9) |
-| `besu` | [`XDCIndia/besu-xdc`](https://github.com/XDCIndia/besu-xdc) | `BESU_BIN` / PATH | **join/sync to tip** ✅ (reads geth genesis natively) |
-| `nethermind` | [`XDCIndia/nethermind`](https://github.com/XDCIndia/nethermind) | `NETHERMIND_DIST` / PATH | **join/sync to tip** ✅ (uses its own chainspec) |
-| `reth` | [`XDCIndia/reth-xdc`](https://github.com/XDCIndia/reth-xdc) | `RETH_BIN` / PATH | **join/sync to tip** ✅ (reads geth genesis natively) |
+| Client | Source repo | Binary source | Status (devnet 5151) |
+|--------|-------------|---------------|--------|
+| `oldxdc` (default) | [`XDCIndia/OLDXDC`](https://github.com/XDCIndia/OLDXDC) (XDPoSChain) | build (no prebuilt) | local run + genesis + seal ✅; **5151 join: 0 peers observed — under investigation ([#13](../../issues/13))** |
+| `geth` | [`XDCIndia/go-ethereum`](https://github.com/XDCIndia/go-ethereum) (GP5) | download or build | **join/sync ✅ verified** (~400 blk/s); seal TODO; full-sync past the mid-history epoch switch needs the xdcSyncer fix |
+| `erigon` | [`XDCIndia/erigon-xdc`](https://github.com/XDCIndia/erigon-xdc) | download (`linux-amd64` only) or build | sync via built-in `--chain xdc\|xdc-apothem`; custom `--genesis` blocked ([#9](../../issues/9)) — fix proven in a lab (`PARITY OK 1..1054` incl. v1→v2 switch), not yet upstreamed |
+| `besu` | [`XDCIndia/besu-xdc`](https://github.com/XDCIndia/besu-xdc) | download or `BESU_BIN`/PATH | reads geth genesis natively; large prebuilt (**slow download**) and needs a modern JRE (11+) |
+| `nethermind` | [`XDCIndia/nethermind`](https://github.com/XDCIndia/nethermind) | download or `NETHERMIND_DIST`/PATH | **custom `NETHERMIND_DIST` required for 5151** — the prebuilt archive doesn't ship `chainspec/xdc-devnet5151.json` |
+| `reth` | [`XDCIndia/reth-xdc`](https://github.com/XDCIndia/reth-xdc) | download or `RETH_BIN`/PATH | reads geth genesis natively; **5151 join: 0 peers — falls back to ETH bootnodes for chainId 5151 ([#12](../../issues/12))** |
+
+> **Verification status.** Last full end-to-end matrix (download → spin up → sync)
+> was run on **macOS/arm64**: **geth** synced cleanly toward tip; **oldxdc** and
+> **reth** spun up but got 0 peers ([#13](../../issues/13), [#12](../../issues/12));
+> **besu** download didn't finish in-window (slow); **nethermind**/**erigon** are
+> blocked for 5151 as noted above. `linux/amd64` (where the erigon prebuilt exists
+> and a nethermind 5151 dist can be built) is the reference platform for the full
+> six-client matrix — expect better coverage there. Re-run it yourself with
+> `./join.sh --client <name>` per client.
 
 ```bash
 ./setup.sh --new                 # default oldxdc — runs the 4-node network
@@ -229,14 +237,21 @@ ethstats dashboard as `run.sh`**; override with `--ethstats SECRET@HOST:PORT`
 
 | Client | How it joins | Notes |
 |--------|-------------|-------|
-| `oldxdc` (default) | `--genesis` file | full sync + optional `--mine` |
+| `oldxdc` (default) | `--genesis` file | full sync + optional `--mine` (5151 peering under investigation — [#13](../../issues/13)) |
 | `geth` | `--genesis` file | sync-only; **verified** syncing an XDPoSChain net |
-| `erigon` | `--chain NAME` | sync-only; built-in XDC chainspecs only, **not** a custom genesis |
+| `besu` | `--genesis` file | sync-only; reads geth genesis natively |
+| `reth` | `--genesis` file | sync-only; reads geth genesis natively (5151 peering — [#12](../../issues/12)) |
+| `erigon` | `--chain NAME` | sync-only; built-in XDC chainspecs only, **not** a custom genesis ([#9](../../issues/9)) |
+| `nethermind` | own chainspec | sync-only; needs a `NETHERMIND_DIST` with the target chainspec |
 
 ```bash
 ./join.sh --client geth   --genesis genesis.json --ip <HOST_IP>
+./join.sh --client besu   --genesis genesis.json --ip <HOST_IP>
 ./join.sh --client erigon --chain <xdc-chain> --ip <HOST_IP>
 ```
+
+See [Choosing a client](#choosing-a-client) for the full per-client status and
+the latest verification matrix.
 
 **Ports:** `join.sh` defaults to `p2p 30313 / rpc 8595 / ws 8596` (and, for
 erigon, `authrpc 8651 / torrent 42079 / private-api 9095 / mcp 8653`) — all
@@ -270,11 +285,30 @@ gen-genesis.sh   generate genesis.json via puppeth (flag-driven)
 network-info.sh  plain-language summary of the current network
 join.sh          connect & sync an existing network (by genesis + IP/enode)
 reset.sh         wipe node data for a clean re-init
-lib.sh           shared helper: platform detection, IP, build-on-demand
+lib.sh           shared helper: platform detection, IP, build-or-download
+binaries.json    prebuilt-binary manifest (URL + per-client sha256/platforms)
 genesis/         genesis.json (chainId 20118, 4 masternodes seeded)
 bootnode.key     fixed bootnode private key (shared, so --ip joins work)
 .env / .env.sample  the 4 masternode private keys (.env is git-ignored)
+lab/             XDPoS multi-client consensus test lab (see below)
+docs/lab/        lab design, contract inventory, worst-case scenario catalog
 ```
+
+---
+
+## Consensus test lab (`lab/`)
+
+A validation-parity harness that checks whether each Ethereum client's XDPoS
+port agrees with the reference (`oldxdc`) — the `oldxdc` net produces the chain
+and injects worst cases (propose/resign at epoch boundaries, offline validators,
+partitions), the other clients follow sync-only, and `lab/oracle.sh` compares
+per-block **block hash** and the `0x88` **masternode set** across clients (a
+divergence = a porting bug). It ships 10 P0 scenarios (`lab/scenarios/`) and a
+propose/resign/vote CLI (`lab/masternode.sh`).
+
+Result so far: **geth holds full parity with oldxdc through the v1→v2 switch**
+(`PARITY OK 1..1054`); the erigon custom-genesis fix that unblocks it is proven
+in the lab but not yet upstreamed. Design/status: [`docs/lab/DESIGN.md`](docs/lab/DESIGN.md).
 
 ---
 
