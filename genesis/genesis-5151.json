@@ -36,13 +36,13 @@
       "rewardCheckpoint": 900,
       "gap": 450,
       "foudationWalletAddr": "0x34cd31bdbddb6c54cb925312a5ade694059a947d",
-      "maxMasternodesV2": 4,
+      "maxMasternodesV2": 108,
       "SkipV1Validation": false,
       "v2": {
         "switchEpoch": 2,
         "switchBlock": 1800,
         "config": {
-          "maxMasternodes": 4,
+          "maxMasternodes": 108,
           "maxProtectorNodes": 0,
           "maxObserverNodes": 0,
           "switchRound": 0,
@@ -57,13 +57,13 @@
           "limitPenaltyEpoch": 0,
           "minimumSigningTx": 0,
           "expTimeoutConfig": {
-            "base": 0,
+            "base": 1.0,
             "maxExponent": 0
           }
         },
         "allConfigs": {
           "0": {
-            "maxMasternodes": 4,
+            "maxMasternodes": 108,
             "maxProtectorNodes": 0,
             "maxObserverNodes": 0,
             "switchRound": 0,
@@ -78,7 +78,7 @@
             "limitPenaltyEpoch": 0,
             "minimumSigningTx": 0,
             "expTimeoutConfig": {
-              "base": 0,
+              "base": 1.0,
               "maxExponent": 0
             }
           }
