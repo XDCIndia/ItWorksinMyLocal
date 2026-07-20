@@ -1,0 +1,63 @@
+{
+  "_comment": "Prebuilt-binary manifest for lib.sh:download_bins() / join.sh. baseUrl + file (with {os}/{arch} substituted) form the download URL; archive says how to unpack it; produces maps a logical binary name to its path *inside* the download (\"\" = the download IS the binary, \".\" = the whole extracted directory is the product, e.g. a dist dir). platforms uses {os}-{arch} keys (darwin|linux, amd64|arm64); \"*\" = platform-independent. sha256 keys mirror platforms (or \"*\"), fetched from the upstream <file>.sha256 siblings on xdc.network. Re-run the fetch and bump 'updated' if xdc.network publishes new binaries.",
+  "baseUrl": "https://xdc.network/snapshots/bin/",
+  "updated": "2026-07-20",
+  "clients": {
+    "geth": {
+      "file": "geth-{os}-{arch}",
+      "archive": "none",
+      "produces": { "geth": "" },
+      "platforms": ["darwin-amd64", "darwin-arm64", "linux-amd64", "linux-arm64"],
+      "sha256": {
+        "darwin-amd64": "12000bdde6ad903d068bd3ee9df1b438cd366b5e1168ec17647f584fa9198f57",
+        "darwin-arm64": "b2a686cb12081f766ce16031df9c363df0eb320ea17666a725c06d48b3b887e1",
+        "linux-amd64": "6f30a929a583a9fbf4ef0d91ac02c5eef796661e9791dd75308dc5787e0f1999",
+        "linux-arm64": "f56076efc6664a8ee0739b47879be16c53b1a935fb436a1bf43ab5058e399e11"
+      }
+    },
+    "erigon": {
+      "_comment": "xdc.network only publishes erigon for linux-amd64 -- darwin/arm64 stay build-from-source (lib.sh falls back automatically).",
+      "file": "erigon-{os}-{arch}",
+      "archive": "none",
+      "produces": { "erigon": "" },
+      "platforms": ["linux-amd64"],
+      "sha256": {
+        "linux-amd64": "8bf60b5c522b54d650c56f5641b23f63b5456949a6b5af9d060c3673a9a2c8d8"
+      }
+    },
+    "reth": {
+      "file": "reth-{os}-{arch}",
+      "archive": "none",
+      "produces": { "xdc-reth": "" },
+      "platforms": ["darwin-amd64", "darwin-arm64", "linux-amd64", "linux-arm64"],
+      "sha256": {
+        "darwin-amd64": "189f4a1a8f595232a834456722cc17f22571a4ee0339cb4b89b51d2b53526cee",
+        "darwin-arm64": "36c35bcd13a5570608f9dfaf733e2486c0c00b830afd7525be82d7a13471107f",
+        "linux-amd64": "5cb2b199bdaeb68293c00c316674a3a095fa0c3846b67f91dc674adac20d22ed",
+        "linux-arm64": "425dc422c7f1eecfbd655fdecff8827f208adee73b8060ffdde9507513497630"
+      }
+    },
+    "besu": {
+      "_comment": "Java, platform-independent. Archive contains bin/besu (the launcher) + lib/*.jar.",
+      "file": "besu-latest.tar.gz",
+      "archive": "tar.gz",
+      "produces": { "besu": "bin/besu" },
+      "platforms": ["*"],
+      "sha256": {
+        "*": "daa7f3f10106b73acb4372ab7c524d8e5308a1653c794337af25e72b354f737c"
+      }
+    },
+    "nethermind": {
+      "_comment": "No linux-arm64 build published. Archive is a flat .NET publish dir (./nethermind launcher + ./chainspec/*.json + ./configs/*.json at the archive root, no version-prefixed top dir), so produces path is '.' (the whole extracted dir is NETHERMIND_DIST). NOTE: as of this snapshot the archive does NOT include chainspec/xdc-devnet5151.json (only xdc.json/xdc-testnet.json/xdc-apothem.json/xdc-net5050.json) -- join.sh's existing chainspec check will correctly reject it for devnet 5151 until xdc.network publishes that chainspec; a custom NETHERMIND_DIST build is still required for 5151 today.",
+      "file": "nethermind-{os}-{arch}.tar.gz",
+      "archive": "tar.gz",
+      "produces": { "nethermind": "." },
+      "platforms": ["darwin-amd64", "darwin-arm64", "linux-amd64"],
+      "sha256": {
+        "darwin-amd64": "bd5e95912d4b01d3952047949f440a49ce56c584e7d0a632f2ca8fbdbb1a1459",
+        "darwin-arm64": "2d84a4a04c87d353f5eb78195eaa3db5f230d90fdaba289aadb8a9844126d788",
+        "linux-amd64": "8692e9597376db7519d2d77af576701fe848fa68e311b31c6af6c35279530ba4"
+      }
+    }
+  }
+}
