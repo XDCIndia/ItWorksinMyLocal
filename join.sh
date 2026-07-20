@@ -33,6 +33,9 @@
 #                        --genesis natively; erigon converts it; nethermind
 #                        uses its own chainspec.
 #   --chain NAME         erigon only: use a built-in chainspec instead of --genesis
+#   --nm-config NAME     nethermind only: chainspec name to load from
+#                        NETHERMIND_DIST/chainspec/NAME.json via --config
+#                        (default: xdc-devnet5151; env override: NM_CONFIG)
 #   --staticpeers LIST   comma-separated enode URLs to connect directly (erigon
 #                        needs these to peer with an XDPoS net; its discv4 doesn't
 #                        discover peers through an XDPoSChain bootnode)
@@ -68,10 +71,14 @@ AUTHRPC_PORT=""; TORRENT_PORT=""; PRIVAPI=""; MCP_PORT=""
 # ethstats reporting is ON by default (same endpoint as run.sh); --no-ethstats
 # disables it, --ethstats SPEC overrides the target.
 ETHSTATS="xdc_openscan_stats_2026@stats.xdcindia.com:443"
+# nethermind's chainspec name (NETHERMIND_DIST/chainspec/$NM_CONFIG.json via
+# --config); env-overridable, defaults to devnet 5151. --nm-config wins over both.
+NM_CONFIG="${NM_CONFIG:-xdc-devnet5151}"
 while [ $# -gt 0 ]; do
   case "$1" in
     --genesis)     GENESIS=$2; shift 2;;
     --chain)       CHAIN=$2; shift 2;;
+    --nm-config)   NM_CONFIG=$2; shift 2;;
     --bootnodes)   BOOTNODES=$2; shift 2;;
     --ip)          HOST_IP=$2; shift 2;;
     --host)        HOST_IP=$2; shift 2;;
@@ -183,8 +190,17 @@ case "$CLIENT" in
         CLIENT_BIN="$NETHERMIND_DIST/nethermind"
       fi
     fi
-    [ -x "$CLIENT_BIN" ] || { echo "nethermind not found. Build the xdc nethermind dist (XDCIndia/nethermind) and set NETHERMIND_DIST=/path/to/dist (containing ./nethermind and chainspec/xdc-devnet5151.json), put it on PATH, or let this script download it (unset BIN_SOURCE/BIN_SOURCE_nethermind if you set either to 'build')." >&2; exit 1; }
-    [ -f "$NETHERMIND_DIST/chainspec/xdc-devnet5151.json" ] || { echo "nethermind dist '$NETHERMIND_DIST' is missing chainspec/xdc-devnet5151.json (the current xdc.network prebuilt archive doesn't ship it for devnet 5151 -- a custom NETHERMIND_DIST build is still required for this network)." >&2; exit 1; } ;;
+    [ -x "$CLIENT_BIN" ] || { echo "nethermind not found. Build the xdc nethermind dist (XDCIndia/nethermind) and set NETHERMIND_DIST=/path/to/dist (containing ./nethermind and chainspec/$NM_CONFIG.json), put it on PATH, or let this script download it (unset BIN_SOURCE/BIN_SOURCE_nethermind if you set either to 'build')." >&2; exit 1; }
+    if [ ! -f "$NETHERMIND_DIST/chainspec/$NM_CONFIG.json" ]; then
+      echo "nethermind dist '$NETHERMIND_DIST' is missing chainspec/$NM_CONFIG.json." >&2
+      echo "nethermind loads its own Parity-style chainspec matching the target chainId" >&2
+      echo "-- it does NOT read the geth-format --genesis -- so joining a custom network" >&2
+      echo "needs either a NETHERMIND_DIST that ships a chainspec for it, or --nm-config" >&2
+      echo "(env NM_CONFIG) set to a name that's already present. Chainspecs present in" >&2
+      echo "'$NETHERMIND_DIST/chainspec/':" >&2
+      { ls "$NETHERMIND_DIST/chainspec/" 2>/dev/null || echo "  (directory not found)"; } >&2
+      exit 1
+    fi ;;
   *)
     ensure_bins
     XDC="$XDC_BIN" ;;
@@ -383,7 +399,7 @@ elif [ "$CLIENT" = reth ]; then
     $RETH_ES &
 elif [ "$CLIENT" = nethermind ]; then
   # nethermind-xdc (sync-only). Loads its own Parity-style chainspec that ships in
-  # the dist ($NETHERMIND_DIST/chainspec/xdc-devnet5151.json) via --config; it does
+  # the dist ($NETHERMIND_DIST/chainspec/$NM_CONFIG.json) via --config; it does
   # NOT read the geth-format genesis. nethermind resolves configs/ and chainspec/
   # relative to CWD, so cd into the dist first. WebSocketsPort must be set explicitly
   # (the config hardcodes 8549; a clash aborts the whole JSON-RPC stack silently).
@@ -393,7 +409,7 @@ elif [ "$CLIENT" = nethermind ]; then
   WS_PORT=$((RPCPORT + 1))
   NM_ES=""; [ -n "$full" ] && NM_ES="--EthStats.Enabled true --EthStats.Name $ES_NAME --EthStats.Secret $ES_SECRET --EthStats.Server wss://${ES_HOSTPORT}/api"
   ( cd "$NETHERMIND_DIST" && ./nethermind \
-    --config xdc-devnet5151 \
+    --config "$NM_CONFIG" \
     --Init.BaseDbPath "$DATADIR" \
     --Network.P2PPort "$PORT" --Network.DiscoveryPort "$PORT" \
     --JsonRpc.Port "$RPCPORT" --JsonRpc.WebSocketsPort "$WS_PORT" --JsonRpc.Host 127.0.0.1 \
