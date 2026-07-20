@@ -22,11 +22,16 @@
 #   --host IP[:PORT]     alias of --ip
 #   --client C           node client: oldxdc (default) | geth | erigon | besu |
 #                        nethermind | reth. Only oldxdc can seal (--mine); all
-#                        others join sync-only. oldxdc/geth/erigon build from
-#                        source; besu/nethermind/reth need a prebuilt binary via
-#                        BESU_BIN / RETH_BIN / NETHERMIND_DIST (or on PATH).
-#                        besu & reth read the geth-format --genesis natively;
-#                        erigon converts it; nethermind uses its own chainspec.
+#                        others join sync-only. All clients default to a
+#                        prebuilt-binary download (binaries.json) for this
+#                        platform, falling back to a source build for
+#                        oldxdc/geth/erigon if unavailable; BIN_SOURCE=build
+#                        (or per-client BIN_SOURCE_<client>=build) forces a
+#                        build / skips the download. besu/nethermind/reth also
+#                        honor BESU_BIN / RETH_BIN / NETHERMIND_DIST (or PATH)
+#                        ahead of both. besu & reth read the geth-format
+#                        --genesis natively; erigon converts it; nethermind
+#                        uses its own chainspec.
 #   --chain NAME         erigon only: use a built-in chainspec instead of --genesis
 #   --staticpeers LIST   comma-separated enode URLs to connect directly (erigon
 #                        needs these to peer with an XDPoS net; its discv4 doesn't
@@ -150,21 +155,36 @@ case "$CLIENT" in
 esac
 
 # besu/nethermind/reth are separate toolchains (Java/.NET/Rust) that ensure_bins
-# does not build; locate a prebuilt binary (env override, then PATH, then a build
-# hint). oldxdc/geth/erigon build from the XDPoS source via ensure_bins as before.
+# does not build; locate a prebuilt binary (env override, then PATH, then a
+# binaries.json download, then a build hint). oldxdc/geth/erigon build from the
+# XDPoS source via ensure_bins as before. BIN_SOURCE=build (or the per-client
+# BIN_SOURCE_besu/BIN_SOURCE_reth/BIN_SOURCE_nethermind) skips the download and
+# goes straight to the "not found" hint below.
 case "$CLIENT" in
   besu)
     CLIENT_BIN="${BESU_BIN:-$(command -v besu 2>/dev/null)}"
-    [ -x "$CLIENT_BIN" ] || { echo "besu binary not found. Build besu-xdc (XDCIndia/besu-xdc) and set BESU_BIN=/path/to/besu, or put 'besu' on PATH." >&2; exit 1; } ;;
+    if [ ! -x "$CLIENT_BIN" ] && [ "${BIN_SOURCE_besu:-$BIN_SOURCE}" != build ]; then
+      download_bins && CLIENT_BIN="$BIN_DIR/besu"
+    fi
+    [ -x "$CLIENT_BIN" ] || { echo "besu binary not found. Build besu-xdc (XDCIndia/besu-xdc) and set BESU_BIN=/path/to/besu, put 'besu' on PATH, or let this script download it (unset BIN_SOURCE/BIN_SOURCE_besu if you set either to 'build')." >&2; exit 1; } ;;
   reth)
     CLIENT_BIN="${RETH_BIN:-$(command -v xdc-reth 2>/dev/null)}"
-    [ -x "$CLIENT_BIN" ] || { echo "reth binary not found. Build reth-xdc (XDCIndia/reth-xdc) and set RETH_BIN=/path/to/xdc-reth, or put 'xdc-reth' on PATH." >&2; exit 1; } ;;
+    if [ ! -x "$CLIENT_BIN" ] && [ "${BIN_SOURCE_reth:-$BIN_SOURCE}" != build ]; then
+      download_bins && CLIENT_BIN="$BIN_DIR/xdc-reth"
+    fi
+    [ -x "$CLIENT_BIN" ] || { echo "reth binary not found. Build reth-xdc (XDCIndia/reth-xdc) and set RETH_BIN=/path/to/xdc-reth, put 'xdc-reth' on PATH, or let this script download it (unset BIN_SOURCE/BIN_SOURCE_reth if you set either to 'build')." >&2; exit 1; } ;;
   nethermind)
     NM_ON_PATH=$(command -v nethermind 2>/dev/null)
     NETHERMIND_DIST="${NETHERMIND_DIST:-${NM_ON_PATH:+$(dirname "$NM_ON_PATH")}}"
     CLIENT_BIN="$NETHERMIND_DIST/nethermind"
-    [ -x "$CLIENT_BIN" ] || { echo "nethermind not found. Build the xdc nethermind dist (XDCIndia/nethermind) and set NETHERMIND_DIST=/path/to/dist (containing ./nethermind and chainspec/xdc-devnet5151.json)." >&2; exit 1; }
-    [ -f "$NETHERMIND_DIST/chainspec/xdc-devnet5151.json" ] || { echo "nethermind dist '$NETHERMIND_DIST' is missing chainspec/xdc-devnet5151.json" >&2; exit 1; } ;;
+    if [ ! -x "$CLIENT_BIN" ] && [ "${BIN_SOURCE_nethermind:-$BIN_SOURCE}" != build ]; then
+      if download_bins && [ -n "$DOWNLOADED_DIST" ]; then
+        NETHERMIND_DIST="$DOWNLOADED_DIST"
+        CLIENT_BIN="$NETHERMIND_DIST/nethermind"
+      fi
+    fi
+    [ -x "$CLIENT_BIN" ] || { echo "nethermind not found. Build the xdc nethermind dist (XDCIndia/nethermind) and set NETHERMIND_DIST=/path/to/dist (containing ./nethermind and chainspec/xdc-devnet5151.json), put it on PATH, or let this script download it (unset BIN_SOURCE/BIN_SOURCE_nethermind if you set either to 'build')." >&2; exit 1; }
+    [ -f "$NETHERMIND_DIST/chainspec/xdc-devnet5151.json" ] || { echo "nethermind dist '$NETHERMIND_DIST' is missing chainspec/xdc-devnet5151.json (the current xdc.network prebuilt archive doesn't ship it for devnet 5151 -- a custom NETHERMIND_DIST build is still required for this network)." >&2; exit 1; } ;;
   *)
     ensure_bins
     XDC="$XDC_BIN" ;;

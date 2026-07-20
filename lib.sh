@@ -7,6 +7,15 @@ _LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # Platform key, e.g. Darwin-arm64, Linux-x86_64, Linux-aarch64
 PLATFORM="$(uname -s)-$(uname -m)"
 
+# Prebuilt-binary manifest (repo root); see download_bins() below.
+BINARIES_JSON="$_LIB_DIR/binaries.json"
+
+# Where each client's binary comes from, default "download" (fetch a prebuilt
+# binary from binaries.json for this platform; falls back to a source build
+# if unavailable). Set BIN_SOURCE=build to always build from source, or
+# override a single client with BIN_SOURCE_<client>= (e.g. BIN_SOURCE_erigon=build).
+BIN_SOURCE="${BIN_SOURCE:-download}"
+
 # Which client to build/run:
 #   oldxdc  (default) -> XDPoSChain fork (binary: XDC + bootnode + puppeth)
 #   geth              -> modern go-ethereum fork (binary: geth)
@@ -86,6 +95,24 @@ detect_ip() {
   echo "$ip"
 }
 
+# This platform's {os}-{arch} key as used in binaries.json -- distinct from
+# $PLATFORM (which is "uname -s-uname -m" / used for BIN_DIR): lowercase os,
+# and machine arch normalised to amd64/arm64.
+platform_slug() {
+  local os arch
+  case "$(uname -s)" in
+    Darwin) os=darwin ;;
+    Linux)  os=linux ;;
+    *)      os=$(uname -s | tr '[:upper:]' '[:lower:]') ;;
+  esac
+  case "$(uname -m)" in
+    x86_64|amd64)  arch=amd64 ;;
+    arm64|aarch64) arch=arm64 ;;
+    *)             arch=$(uname -m) ;;
+  esac
+  echo "${os}-${arch}"
+}
+
 # Apply the puppeth genesis-storage fix to the XDPoSChain source (idempotent).
 # Upstream's cmd/puppeth/wizard_genesis.go re-RLP-decodes each storage word,
 # truncating masternode addresses in the 0x88 validator contract and stalling
@@ -113,6 +140,152 @@ if 'rlp.DecodeBytes' in s2:
 open(p, 'w').write(s2)
 sys.stderr.write("Applied puppeth genesis-storage fix to wizard_genesis.go\n")
 PY
+}
+
+# sha256 of a file, using whichever tool this host has (sha256sum is typical
+# on Linux, shasum -a 256 on macOS; some hosts have both, either works).
+sha256_file() {
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "$1" | awk '{print $1}'
+  elif command -v shasum >/dev/null 2>&1; then
+    shasum -a 256 "$1" | awk '{print $1}'
+  else
+    echo "no sha256sum/shasum found -- cannot verify downloads" >&2
+    return 1
+  fi
+}
+
+# Read binaries.json for $1=client/$2=platform-slug and print bash assignments
+# to eval: _BJ_OK=1 (only when there's a manifest entry supporting this
+# platform), _BJ_URL/_BJ_FILE/_BJ_ARCHIVE/_BJ_SHA256, plus one
+# `_bj_produce NAME RELPATH` call per entry in that client's "produces" map.
+_binjson_query() {
+  local client="$1" slug="$2"
+  python3 - "$BINARIES_JSON" "$client" "$slug" <<'PY'
+import json, sys
+path, client, slug = sys.argv[1], sys.argv[2], sys.argv[3]
+try:
+    m = json.load(open(path))
+except Exception:
+    sys.exit(0)  # caller checks _BJ_OK; no valid manifest
+c = (m.get("clients") or {}).get(client)
+if not c:
+    sys.exit(0)
+platforms = c.get("platforms") or []
+if slug not in platforms and "*" not in platforms:
+    sys.exit(0)
+os_, arch = slug.split("-", 1)
+file = (c.get("file") or "").replace("{os}", os_).replace("{arch}", arch)
+archive = c.get("archive", "none")
+sha = (c.get("sha256") or {}).get(slug) or (c.get("sha256") or {}).get("*") or ""
+base = (m.get("baseUrl") or "").rstrip("/")
+
+def q(s):
+    return "'" + str(s).replace("'", "'\\''") + "'"
+
+print("_BJ_OK=1")
+print("_BJ_URL=" + q(base + "/" + file))
+print("_BJ_FILE=" + q(file))
+print("_BJ_ARCHIVE=" + q(archive))
+print("_BJ_SHA256=" + q(sha))
+for k, v in (c.get("produces") or {}).items():
+    print("_bj_produce " + q(k) + " " + q(v))
+PY
+}
+
+# Download this $CLIENT's prebuilt binary for the current platform from
+# binaries.json, verify its sha256 (mandatory -- refuses to proceed without a
+# recorded hash, and deletes the file on mismatch), extract it if it's an
+# archive, and place the resulting binary(ies) at $BIN_DIR/<name> (chmod +x,
+# plus an ad-hoc macOS codesign so Gatekeeper doesn't SIGKILL it).
+#
+# Idempotent: a cached download that still matches its recorded sha256 is
+# reused as-is; REBUILD=1 forces a fresh fetch. Returns 1 (after a clear
+# message) if this client has no manifest entry, no prebuilt binary for this
+# platform, or the download/verification fails -- callers should fall back to
+# a source build.
+#
+# On success, sets DOWNLOADED_DIST to the extraction directory for archive
+# clients whose "produces" path is "." (a whole-directory product, e.g.
+# nethermind's dist, as opposed to a single extracted binary).
+download_bins() {
+  # shellcheck disable=SC2034  # DOWNLOADED_DIST is used by scripts that `source ./lib.sh` (e.g. join.sh)
+  DOWNLOADED_DIST=""
+  [ -f "$BINARIES_JSON" ] || { echo "binaries.json not found at $BINARIES_JSON" >&2; return 1; }
+  command -v python3 >/dev/null 2>&1 || { echo "python3 is required to read binaries.json" >&2; return 1; }
+  command -v curl >/dev/null 2>&1 || { echo "curl is required to download prebuilt binaries" >&2; return 1; }
+
+  local slug; slug=$(platform_slug)
+  local _BJ_OK="" _BJ_URL="" _BJ_FILE="" _BJ_ARCHIVE="" _BJ_SHA256=""
+  local _BJ_PRODUCE_NAMES=() _BJ_PRODUCE_PATHS=()
+  _bj_produce() { _BJ_PRODUCE_NAMES+=("$1"); _BJ_PRODUCE_PATHS+=("$2"); }
+  eval "$(_binjson_query "$CLIENT" "$slug")"
+
+  if [ "$_BJ_OK" != 1 ]; then
+    echo "binaries.json: no prebuilt $CLIENT binary for platform $slug" >&2
+    return 1
+  fi
+  if [ -z "$_BJ_SHA256" ]; then
+    echo "binaries.json: no sha256 recorded for $CLIENT/$slug -- refusing to trust an unverifiable download" >&2
+    return 1
+  fi
+
+  mkdir -p "$BIN_DIR"
+  local dl="$BIN_DIR/.download-$_BJ_FILE"
+
+  if [ "$REBUILD" != "1" ] && [ -f "$dl" ] && [ "$(sha256_file "$dl" 2>/dev/null)" = "$_BJ_SHA256" ]; then
+    echo "$CLIENT: cached download for $slug already verified ($_BJ_FILE)"
+  else
+    echo "Downloading $CLIENT for $slug: $_BJ_URL"
+    rm -f "$dl"
+    # --retry rides out transient failures; --speed-time/-limit aborts a truly
+    # stalled connection (no bytes for 60s) instead of hanging forever; -C -
+    # resumes a partial temp from a prior interrupted attempt.
+    if ! curl -fsSL --retry 3 --retry-delay 2 --connect-timeout 20 \
+              --speed-time 60 --speed-limit 1024 -C - -o "$dl" "$_BJ_URL"; then
+      echo "download failed: $_BJ_URL" >&2
+      rm -f "$dl"
+      return 1
+    fi
+    local got; got=$(sha256_file "$dl") || { rm -f "$dl"; return 1; }
+    if [ "$got" != "$_BJ_SHA256" ]; then
+      echo "sha256 MISMATCH for $_BJ_FILE: expected $_BJ_SHA256, got $got -- deleting" >&2
+      rm -f "$dl"
+      return 1
+    fi
+    echo "  sha256 OK ($got)"
+  fi
+
+  local distdir="$BIN_DIR/.dist-$CLIENT"
+  if [ "$_BJ_ARCHIVE" = tar.gz ]; then
+    rm -rf "$distdir"; mkdir -p "$distdir"
+    tar xzf "$dl" -C "$distdir" || { echo "extract failed: $dl" >&2; return 1; }
+  fi
+
+  local i name relpath src_path dest
+  for (( i=0; i<${#_BJ_PRODUCE_NAMES[@]}; i++ )); do
+    name="${_BJ_PRODUCE_NAMES[$i]}"; relpath="${_BJ_PRODUCE_PATHS[$i]}"
+    if [ "$_BJ_ARCHIVE" = none ]; then
+      src_path="$dl"
+    elif [ -z "$relpath" ] || [ "$relpath" = "." ]; then
+      # shellcheck disable=SC2034  # DOWNLOADED_DIST is used by scripts that `source ./lib.sh` (e.g. join.sh)
+      DOWNLOADED_DIST="$distdir"   # whole-directory product; nothing to copy
+      continue
+    else
+      src_path="$distdir/$relpath"
+    fi
+    dest="$BIN_DIR/$name"
+    cp -f "$src_path" "$dest" || { echo "could not place $name from $src_path" >&2; return 1; }
+    chmod +x "$dest"
+    # macOS: cp invalidates the binary's ad-hoc code signature, so Gatekeeper
+    # SIGKILLs it on exec. Re-sign it ad-hoc so it runs (same as the build path).
+    if [ "$(uname -s)" = Darwin ] && command -v codesign >/dev/null 2>&1; then
+      codesign -f -s - "$dest" >/dev/null 2>&1 || true
+    fi
+  done
+
+  echo "$CLIENT: prebuilt binary ready in $BIN_DIR (downloaded for $slug)"
+  return 0
 }
 
 # Verify the build toolchain is present before attempting a source build.
@@ -146,11 +319,30 @@ check_toolchain() {
   exit 1
 }
 
-# Ensure this client's binaries exist for this platform; build from source if not.
+# Ensure this client's binaries exist for this platform: prefer downloading a
+# prebuilt binary from binaries.json (BIN_SOURCE=download, the default);
+# build from source if unavailable, unsupported on this platform, or
+# BIN_SOURCE(_<client>)=build. REBUILD=1 always forces a source build.
 ensure_bins() {
   local t ready=1
   for t in $CLIENT_TARGETS; do [ -x "$BIN_DIR/$t" ] || ready=0; done
   [ "$ready" = 1 ] && [ "$REBUILD" != "1" ] && return 0
+
+  local src="$BIN_SOURCE"
+  case "$CLIENT" in
+    geth)   src="${BIN_SOURCE_geth:-$src}" ;;
+    erigon) src="${BIN_SOURCE_erigon:-$src}" ;;
+  esac
+  [ "$CLIENT" = oldxdc ] && src=build   # no prebuilt oldxdc/XDC binary exists (see binaries.json) -- always build
+  [ "$REBUILD" = "1" ] && src=build
+
+  if [ "$src" != build ]; then
+    if download_bins; then
+      echo "$CLIENT binaries ready in $BIN_DIR (downloaded)"
+      return 0
+    fi
+    echo "$CLIENT: no usable prebuilt binary for $PLATFORM; falling back to a source build." >&2
+  fi
 
   check_toolchain   # need git + make + go + gcc to build from source
 

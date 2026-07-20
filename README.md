@@ -59,16 +59,45 @@ on both). Force a rebuild anytime with `REBUILD=1`.
 > [The puppeth fix](#the-puppeth-fix)) and its wizard prompts have since drifted.
 > `OLDXDC` (or the pinned + auto-patched upstream) avoids both.
 
+### Prebuilt binaries vs local build
+
+By default the scripts **download** a prebuilt, platform-matched binary from
+[`xdc.network/snapshots/bin`](https://xdc.network/snapshots/bin/) instead of
+building from source — no Go/Java/.NET/Rust toolchain needed, and no multi-minute
+build. Which binary to fetch (and its `sha256`, verified before use) is recorded
+in [`binaries.json`](binaries.json); bump its `updated` tag / hashes to track new
+uploads. Downloads land in `bin/<client>/<os>-<arch>/` (git-ignored), the same
+place a source build would.
+
+Control it with `BIN_SOURCE`:
+
+| Setting | Effect |
+|---------|--------|
+| `BIN_SOURCE=download` (default) | download the prebuilt binary; fall back to a source build if none exists for this platform |
+| `BIN_SOURCE=build` | always build from source (oldxdc/geth/erigon), skip the download |
+| `BIN_SOURCE_<client>=build` | per-client override, e.g. `BIN_SOURCE_erigon=build` |
+| `REBUILD=1` | force a fresh build/redownload, ignoring any cache |
+
+Notes: `oldxdc` (XDC + bootnode + puppeth) has no prebuilt and always builds.
+`erigon` is published for `linux-amd64` only, so on macOS/arm it auto-falls back
+to a source build. `besu`/`reth`/`nethermind` are download-only here (the scripts
+don't build them) — an explicit `BESU_BIN` / `RETH_BIN` / `NETHERMIND_DIST` (or a
+binary on `PATH`) still takes priority over the download. The nethermind prebuilt
+does not yet ship the `xdc-devnet5151` chainspec, so joining devnet 5151 with
+nethermind still needs a custom `NETHERMIND_DIST` (join.sh says so if missing).
+
 ---
 
 ## Choosing a client
 
 Six node clients are selectable with `--client` (or `CLIENT=`). All six join and
 sync **devnet 5151** (`./join.sh --client <name>` — validated end-to-end against
-the live network). `oldxdc/geth/erigon` build from source via the scripts;
-`besu/nethermind/reth` are separate toolchains (Java/.NET/Rust) — build them from
-their repo and point `join.sh` at the binary with `BESU_BIN` / `RETH_BIN` /
-`NETHERMIND_DIST` (or put it on `PATH`).
+the live network). By default every client is fetched as a **prebuilt binary**
+(see [Prebuilt binaries vs local build](#prebuilt-binaries-vs-local-build));
+`oldxdc/geth/erigon` build from source when a prebuilt isn't available (or with
+`BIN_SOURCE=build`), while `besu/nethermind/reth` (separate Java/.NET/Rust
+toolchains) are download-only unless you point `join.sh` at your own binary via
+`BESU_BIN` / `RETH_BIN` / `NETHERMIND_DIST` (or `PATH`).
 
 | Client | Source repo | Binary discovery | Status (devnet 5151) |
 |--------|-------------|------------------|--------|
