@@ -116,6 +116,21 @@ toolchains) are download-only unless you point `join.sh` at your own binary via
 > six-client matrix — expect better coverage there. Re-run it yourself with
 > `./join.sh --client <name>` per client.
 
+**Local network (own `run.sh` net, chainId 20118).** A follower joining your own
+local net was also tested (macOS/arm64):
+
+| Client | Local sync | Notes |
+|--------|:---:|-------|
+| `oldxdc` | ✅ | it *is* the local net (4 sealers) |
+| `geth` | ✅ | full block-for-block parity incl. the v1→v2 switch |
+| `erigon` | ✅ | full parity incl. the switch — needs the genesis-file fix ([#9](../../issues/9), proven in the lab, not yet upstreamed) |
+| `reth` | ❌ | doesn't recognize custom chainIds as XDC → falls back to ETH bootnodes ([#12](../../issues/12)) — fails locally *and* on 5151, same cause |
+| `nethermind` | ❌ | needs a chainspec matching the target chainId; the launcher check was also hardcoded to 5151 ([#15](../../issues/15)) |
+| `besu` | ⛔ | not runnable on this host (Java 8; besu needs 17/21+) — a host limitation, not a client/network issue |
+
+So on a stock macOS/arm64 host, **oldxdc, geth, and erigon sync a local network**;
+`reth`/`nethermind` need the fixes above, and `besu` needs a modern JRE.
+
 ```bash
 ./setup.sh --new                 # default oldxdc — runs the 4-node network
 ./setup.sh --client geth         # builds the modern geth client
