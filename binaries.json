@@ -11,8 +11,8 @@
       "sha256": {
         "darwin-amd64": "12000bdde6ad903d068bd3ee9df1b438cd366b5e1168ec17647f584fa9198f57",
         "darwin-arm64": "b2a686cb12081f766ce16031df9c363df0eb320ea17666a725c06d48b3b887e1",
-        "linux-amd64": "6f30a929a583a9fbf4ef0d91ac02c5eef796661e9791dd75308dc5787e0f1999",
-        "linux-arm64": "f56076efc6664a8ee0739b47879be16c53b1a935fb436a1bf43ab5058e399e11"
+        "linux-amd64": "493ecf159828b690444037783249ab6574ed7feeac44433be72a2c35fd1f6637",
+        "linux-arm64": "b74452cc43587f4aca482166c4214c2b6f72c37e77dd4424b4eeabfc15d9b7b7"
       }
     },
     "erigon": {
