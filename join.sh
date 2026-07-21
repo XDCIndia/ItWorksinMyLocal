@@ -392,7 +392,7 @@ elif [ "$CLIENT" = reth ]; then
   RETH_ES=""; [ -n "$full" ] && RETH_ES="--ethstats ${ES_NAME}:${ES_SECRET}@wss://${ES_HOSTPORT}"
   "$CLIENT_BIN" node --chain "$GENESIS" --datadir "$DATADIR" \
     --port "$PORT" --discovery.port "$PORT" \
-    --disable-discv5-discovery --disable-dns-discovery --trusted-only \
+    --disable-discv4-discovery --disable-dns-discovery --trusted-only \
     --nat "extip:${IP}" --trusted-peers "$BOOTNODES" \
     --http --http.addr 127.0.0.1 --http.port "$RPCPORT" --http.api eth,net,web3,admin,debug \
     --authrpc.addr 127.0.0.1 --authrpc.port "$AUTHRPC_PORT" \
