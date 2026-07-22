@@ -346,7 +346,10 @@ HOST=${MACHINE:-$HOST}
 if [ -z "$NAME" ]; then
   case "$CLIENT" in
     erigon)     VER=$("$XDC" --version 2>/dev/null | head -1 | awk '{print $NF}') ;;
-    besu|reth)  VER=$("$CLIENT_BIN" --version 2>/dev/null | head -1 | awk '{print $NF}') ;;
+    # besu prints ONE slash-delimited token "besu/v<ver>/<os>/<jvm>" (no spaces),
+    # so awk '$NF' would grab the whole string; extract just the <ver> segment.
+    besu)       VER=$("$CLIENT_BIN" --version 2>/dev/null | head -1 | sed -E 's#^besu/v?([^/]+).*#\1#') ;;
+    reth)       VER=$("$CLIENT_BIN" --version 2>/dev/null | head -1 | awk '{print $NF}') ;;
     nethermind) VER=$("$CLIENT_BIN" --version 2>/dev/null | grep -oiE '[0-9]+\.[0-9]+[^ ]*' | head -1) ;;
     # xone MUST use --version: its `version` SUBCOMMAND launches a full node
     # (unknown-subcommand -> node boot), which would hang here. "xone v1.0.0 (…)".
