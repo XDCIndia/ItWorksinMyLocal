@@ -46,7 +46,9 @@
 #   --networkid N        network id (default: chainId from the genesis)
 #   --datadir DIR        where to store this peer's data (default
 #                        nodes/<client>-<nodetype>, e.g. nodes/geth-sync)
-#   --name NAME          node identity shown to peers/ethstats (default <host>-sync)
+#   --name NAME          node identity shown to peers/ethstats (default
+#                        <client>-v<ver>-<host>-<nodetype>; <host> comes from
+#                        MACHINE in network.env/env, else the hostname)
 #   --port N             p2p port (per-client default: oldxdc 30313 / geth 30323
 #                        / erigon 30333 -- clear of run.sh, no cross-client clash)
 #   --rpcport N          JSON-RPC port (oldxdc 8595 / geth 8605 / erigon 8615)
@@ -185,15 +187,16 @@ if [ "$CLIENT" = all ]; then
   exit 0
 fi
 
+# Node role: "seal" when this client will mine (oldxdc + --mine), else "sync".
+# Drives both the default datadir and the default identity/ethstats name so they
+# read consistently (nodes/<client>-<nodetype> <-> <client>-v<ver>-<host>-<nodetype>).
+NODETYPE=sync
+[ -n "$MINEADDR" ] && case "$CLIENT" in oldxdc) NODETYPE=seal;; esac
+
 # Default datadir: nodes/<client>-<nodetype>, so every client's chaindata lives
 # under ./nodes (clear of run.sh's numbered nodes/1..N local net) and different
-# clients never share a datadir. nodetype is "seal" when this client will mine
-# (oldxdc + --mine), else "sync". An explicit --datadir always wins.
-if [ -z "$DATADIR" ]; then
-  NODETYPE=sync
-  [ -n "$MINEADDR" ] && case "$CLIENT" in oldxdc) NODETYPE=seal;; esac
-  DATADIR="nodes/${CLIENT}-${NODETYPE}"
-fi
+# clients never share a datadir. An explicit --datadir always wins.
+[ -z "$DATADIR" ] && DATADIR="nodes/${CLIENT}-${NODETYPE}"
 
 # Per-client default ports (offset by client) so oldxdc/geth/erigon/besu/
 # nethermind/reth joins never clash with each other or with a running ./run.sh
@@ -323,15 +326,24 @@ IP=$(detect_ip)
 # Dynamic machine name (robust across OSes; fallback if hostname is unset).
 HOST=$(hostname -s 2>/dev/null || hostname 2>/dev/null || echo node)
 HOST=${HOST:-node}
-# Default ethstats/identity name mirrors run.sh's "<client>-v<version>-<host>-…"
-# so all clients (oldxdc/geth/erigon) read consistently on the dashboard.
+# Machine label for the node name's <host> token. Prefer an explicit env value
+# (MACHINE in network.env or the environment) over the auto-detected hostname, so
+# operators can give each host a stable, dashboard-friendly name (e.g.
+# MACHINE=frankfurt-1 -> geth-v1.2-frankfurt-1-sync). Falls back to the hostname.
+HOST=${MACHINE:-$HOST}
+# Default identity/ethstats name: a UNIFORM <client>-v<ver>-<host>-<nodetype>
+# across every client (canonical CLIENT token, real node role), so the dashboard
+# reads consistently and each name lines up with its nodes/<client>-<nodetype>
+# datadir. Only the version LOOKUP differs per client (each --version formats
+# differently); the name shape is identical.
 if [ -z "$NAME" ]; then
   case "$CLIENT" in
-    erigon)     VER=$("$XDC" --version 2>/dev/null | head -1 | awk '{print $NF}'); NAME="${NODE_NAME_BIN}-v${VER:-0}-${HOST}-sync" ;;
-    besu|reth)  VER=$("$CLIENT_BIN" --version 2>/dev/null | head -1 | awk '{print $NF}'); NAME="${CLIENT}-v${VER:-0}-${HOST}-sync" ;;
-    nethermind) VER=$("$CLIENT_BIN" --version 2>/dev/null | grep -oiE '[0-9]+\.[0-9]+[^ ]*' | head -1); NAME="${CLIENT}-v${VER:-0}-${HOST}-sync" ;;
-    *)          VER=$("$XDC" version 2>/dev/null | awk '/^Version:/{print $2; exit}'); NAME="${NODE_NAME_BIN}-v${VER:-0}-${HOST}-sync" ;;
+    erigon)     VER=$("$XDC" --version 2>/dev/null | head -1 | awk '{print $NF}') ;;
+    besu|reth)  VER=$("$CLIENT_BIN" --version 2>/dev/null | head -1 | awk '{print $NF}') ;;
+    nethermind) VER=$("$CLIENT_BIN" --version 2>/dev/null | grep -oiE '[0-9]+\.[0-9]+[^ ]*' | head -1) ;;
+    *)          VER=$("$XDC" version 2>/dev/null | awk '/^Version:/{print $2; exit}') ;;
   esac
+  NAME="${CLIENT}-v${VER:-0}-${HOST}-${NODETYPE}"
 fi
 # ethstats/identity names must not contain URL-breaking characters -- some client
 # --version strings (notably besu's "besu/vX/os/jvm") contain '/', which breaks the
