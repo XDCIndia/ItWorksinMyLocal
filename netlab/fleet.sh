@@ -210,7 +210,18 @@ cmd_up() {
         --reward "$TOPO_REWARD" --v2block "$TOPO_V2BLOCK" --epoch "$TOPO_EPOCH" \
         --gap "$TOPO_GAP" --period "$TOPO_PERIOD" --skip-v1-validation "$skip_v1_arg" \
         --timestamp 0x0 \
-        --out "$GENESIS_FILE" ) || return 1
+        --out "$GENESIS_FILE" )
+    local gg_rc=$?
+    # gen-genesis.sh's underlying puppeth wizard always drops its own
+    # "$puppeth_network.json" export next to gen-genesis.sh (i.e. at
+    # $REPO_ROOT, regardless of --out) -- a known side effect
+    # lab/gen-lab-genesis.sh's own header explicitly documents and avoids
+    # by not using puppeth at all. fleet.sh DOES need gen-genesis.sh (for
+    # arbitrary per-topology signers/chainId), so it inherits that stray
+    # file; clean it up here rather than leaving repo-root state mutated
+    # by a topology run (D6 -- instance-scoped state only).
+    rm -f "$REPO_ROOT/${puppeth_network}.json"
+    [ "$gg_rc" -eq 0 ] || return 1
   fi
 
   # -- bootnode --
