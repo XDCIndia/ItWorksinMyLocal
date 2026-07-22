@@ -503,11 +503,17 @@ elif [ "$CLIENT" = nethermind ]; then
   [ -n "$MINEADDR" ] && echo "note: --mine ignored (nethermind join is sync-only)" >&2
   [ -n "$BOOTNODES" ] || { echo "nethermind join needs peers: set DEFAULT_BOOTNODES in network.env or pass --bootnodes" >&2; exit 1; }
   mkdir -p "$DATADIR"
+  # Resolve the datadir to an ABSOLUTE path BEFORE the `cd "$NETHERMIND_DIST"`
+  # below: nethermind is launched from inside the dist (to resolve configs/ and
+  # chainspec/), so a relative --Init.BaseDbPath would land inside the dist dir
+  # (e.g. <dist>/nodes/<client>-sync) instead of here -- and silently reuse a
+  # stale DB there, ignoring the intended (and chainspec-fresh) datadir.
+  NM_DATADIR="$(cd "$DATADIR" && pwd)"
   WS_PORT=$((RPCPORT + 1))
   NM_ES=""; [ -n "$full" ] && NM_ES="--EthStats.Enabled true --EthStats.Name $ES_NAME --EthStats.Secret $ES_SECRET --EthStats.Server wss://${ES_HOSTPORT}/api"
   ( cd "$NETHERMIND_DIST" && ./nethermind \
     --config "$NM_CONFIG" \
-    --Init.BaseDbPath "$DATADIR" \
+    --Init.BaseDbPath "$NM_DATADIR" \
     --Network.P2PPort "$PORT" --Network.DiscoveryPort "$PORT" \
     --JsonRpc.Port "$RPCPORT" --JsonRpc.WebSocketsPort "$WS_PORT" --JsonRpc.Host 127.0.0.1 \
     --Network.StaticPeers "$BOOTNODES" \
