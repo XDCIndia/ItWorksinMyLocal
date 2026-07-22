@@ -54,6 +54,19 @@
 #                             geth follower with "invalid gas used" a few
 #                             blocks after genesis. This does not change the
 #                             genesis hash (config isn't part of the header).
+#   --timestamp N             post-process the header's "timestamp" field
+#                             (0x-hex or decimal; default: leave puppeth's
+#                             own default alone, the wall-clock time it ran
+#                             at). Unlike --skip-v1-validation/--period,
+#                             timestamp IS part of the header, so it DOES
+#                             change the genesis hash -- but puppeth stamps
+#                             the live clock in unconditionally, so without
+#                             this flag no two invocations (even with
+#                             identical --signers/--chainid/etc) ever
+#                             produce the same genesis. Pass a fixed value
+#                             (e.g. --timestamp 0x0) for a reproducible,
+#                             assertable-hash genesis -- netlab/fleet.sh
+#                             does this for every topology it generates.
 #   --out FILE                output path (default genesis/genesis.json)
 
 NETWORK=localdpos
@@ -71,6 +84,7 @@ SWAP=b49a187961E310fBEa9071975fAe9F497fD3A938
 PREFUND=29E07C0905FECcD3b4a35A0C3Ea86c48cbEa893E
 SKIP_V1_VALIDATION=""
 PERIOD=""
+TIMESTAMP=""
 OUT=genesis/genesis.json
 
 while [ $# -gt 0 ]; do
@@ -90,8 +104,9 @@ while [ $# -gt 0 ]; do
     --prefund) PREFUND=$2; shift 2;;
     --skip-v1-validation) SKIP_V1_VALIDATION=$2; shift 2;;
     --period) PERIOD=$2; shift 2;;
+    --timestamp) TIMESTAMP=$2; shift 2;;
     --out) OUT=$2; shift 2;;
-    -h|--help) sed -n '2,40p' "$0" | sed 's/^# \{0,1\}//'; exit 0;;
+    -h|--help) sed -n '2,70p' "$0" | sed 's/^# \{0,1\}//'; exit 0;;
     *) echo "unknown flag: $1" >&2; exit 1;;
   esac
 done
@@ -153,6 +168,16 @@ d['config']['XDPoS']['period'] = period
 json.dump(d, open(path, 'w'))
 print('period set to', period, 'in', path)
 " "$OUT" "$PERIOD"
+  fi
+  if [ -n "$TIMESTAMP" ]; then
+    python3 -c "
+import json, sys
+path, ts = sys.argv[1], int(sys.argv[2], 0)
+d = json.load(open(path))
+d['timestamp'] = '0x%x' % ts
+json.dump(d, open(path, 'w'))
+print('timestamp set to', d['timestamp'], 'in', path)
+" "$OUT" "$TIMESTAMP"
   fi
   # Record the role -> address mapping so network-info.sh can label accounts.
   {

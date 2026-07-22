@@ -57,8 +57,16 @@
 #                        run.sh and validator ports, no cross-client clash)
 #   --rpcport N          JSON-RPC port (oldxdc 9645 / geth 9745 / … / xone 10245)
 #   --wsport N           WebSocket port (JSON-RPC port + 1)
-#   --authrpc-port N     authenticated-RPC port (erigon/reth/xone; also
+#   --authrpc-port N     authenticated-RPC port (erigon/reth/xone/geth; also
 #                        env AUTHRPC_PORT). Per-client default as above.
+#                        geth: unlike the others this is a small default
+#                        CHANGE, not just an override knob -- geth always
+#                        starts an (unused-by-XDPoS) Engine API listener
+#                        with no flag to move it off its own hardcoded
+#                        127.0.0.1:8551, a collision landmine on any host
+#                        already running another geth-family process; it is
+#                        now pinned to this per-client-offset default
+#                        (10745) unconditionally, same as every other client.
 #   --torrent-port N     erigon BitTorrent port (also env TORRENT_PORT).
 #   --privapi ADDR:PORT  erigon private API address (also env PRIVAPI).
 #   --mcp-port N         erigon MCP port (also env MCP_PORT).
@@ -142,7 +150,7 @@ while [ $# -gt 0 ]; do
     --staticpeers) STATICPEERS=$2; shift 2;;
     --ethstats)    ETHSTATS=$2; shift 2;;
     --no-ethstats) ETHSTATS=""; shift;;
-    -h|--help)     sed -n '2,84p' "$0" | sed 's/^# \{0,1\}//'; exit 0;;
+    -h|--help)     sed -n '2,91p' "$0" | sed 's/^# \{0,1\}//'; exit 0;;
     *) echo "unknown flag: $1" >&2; exit 1;;
   esac
 done
@@ -482,12 +490,25 @@ if [ "$CLIENT" = erigon ]; then
 elif [ "$CLIENT" = geth ]; then
   # Modern geth: dot-notation flags, sync-only (it can't seal here). --maxpeers
   # keeps its long-standing default of 25 unless --maxpeers/env MAXPEERS overrides it.
+  #
+  # --authrpc.port is a DELIBERATE exception to "defaults unchanged": geth
+  # always starts an Engine API (authrpc) listener regardless -- unused by
+  # XDPoS ("Engine API started but chain not configured for merge yet") --
+  # defaulting to 127.0.0.1:8551 with NO flag to move it. That's a
+  # collision landmine on any shared host running more than one geth-family
+  # process (run.sh's own --mixed node5 already had to work around exactly
+  # this: "commonly already taken by another node ... would otherwise crash
+  # node 5 at startup"). Pinning it to AUTHRPC_PORT's already-computed
+  # per-client-offset default (here: 10745) just brings geth in line with
+  # every OTHER join.sh client, which already gets an explicit, non-default
+  # authrpc port unconditionally.
   [ -n "$MINEADDR" ] && echo "note: --mine ignored (geth join is sync-only)" >&2
   "$XDC" --datadir "$DATADIR" --networkid "$NETWORKID" --syncmode full \
     --bootnodes "$BOOTNODES" --port "$PORT" --nat "extip:${IP}" --identity "$NAME" --maxpeers "${MAXPEERS:-25}" \
     --http --http.corsdomain "*" --http.addr 0.0.0.0 --http.port "$RPCPORT" --http.vhosts "*" \
     --http.api eth,net,web3,txpool,debug,admin,XDPoS \
     --ws --ws.addr 0.0.0.0 --ws.origins "*" --ws.port "$WSPORT" --ws.api eth,net,web3,XDPoS \
+    --authrpc.port "$AUTHRPC_PORT" \
     $ETHSTATS_ARG &
 elif [ "$CLIENT" = besu ]; then
   # besu-xdc (sync-only). Reads the geth-format genesis natively via --genesis-file
