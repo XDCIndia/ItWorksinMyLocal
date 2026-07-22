@@ -33,6 +33,17 @@
 # stop (SIGTERM -> poll 45s -> SIGKILL only behind --force). `wipe` runs
 # `down` first (refusing on a still-running node unless --force, exactly
 # like node.sh wipe) then removes nodes/<name>/ entirely.
+#
+# Concurrency: up/down/wipe for the SAME topology take an exclusive
+# per-topology flock (nodes/.fleet-locks/<name>.lock) held for the whole
+# command. Without this, two concurrent invocations against the same
+# topology (e.g. a stray `up` left running from an earlier session plus a
+# fresh one) can interleave their mkdir/rm -rf on the shared nodes/<name>/
+# tree -- confirmed live in ItWorksinMyLocal#46 Phase 2 acceptance: an
+# orphaned `scenario.sh --matrix 12` run's retry loop wiped a second,
+# healthy, in-progress run's live node data out from under it. A second
+# invocation that can't get the lock fails fast with an actionable message
+# instead of silently racing. status/logs stay lock-free (read-only).
 
 _NETLAB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit 1
 REPO_ROOT="$(cd "$_NETLAB_DIR/.." && pwd)" || exit 1
@@ -230,15 +241,28 @@ cmd_up() {
   else
     local ip; ip=$(detect_ip)
     echo "fleet.sh: starting bootnode on ${ip}:${TOPO_BOOTNODE_PORT}..." >&2
+    # {FLEET_LOCK_FD}>&-: this backgrounded, nohup'd bootnode outlives this
+    # script -- without explicitly closing our lock fd in it (bash
+    # redirections don't set close-on-exec, so a plain `&` would otherwise
+    # leak the open fd, and the flock it holds, into every long-running
+    # child forever), the per-topology lock (see the dispatch below) would
+    # never actually release once this process exits, wedging every future
+    # up/down/wipe for this topology behind a lock nothing is still using.
+    # Confirmed live: without this, a completed `up` left the bootnode (and
+    # every node -- see the matching close on node.sh below) holding the
+    # fd, and the very next `up` for the same topology refused to run.
     nohup "$BOOTNODE_BIN" -nodekey "$REPO_ROOT/bootnode.key" -addr "${ip}:${TOPO_BOOTNODE_PORT}" \
-      >"$BOOTNODE_LOGFILE" 2>&1 &
+      >"$BOOTNODE_LOGFILE" 2>&1 {FLEET_LOCK_FD}>&- &
     echo $! > "$BOOTNODE_PIDFILE"
   fi
 
   # -- sealers --
   for id in "${NODE_IDS[@]}"; do
     [ "${ROLE_OF[$id]}" = sealer ] || continue
-    "$NODE_SH" start "$TOPO_FILE" "$id" --genesis "$GENESIS_FILE" || return 1
+    # {FLEET_LOCK_FD}>&- (see the bootnode comment above): node.sh's own
+    # start backgrounds the actual client process, which would otherwise
+    # inherit our lock fd across node.sh's exec and hold it open forever.
+    "$NODE_SH" start "$TOPO_FILE" "$id" --genesis "$GENESIS_FILE" {FLEET_LOCK_FD}>&- || return 1
   done
   for id in "${NODE_IDS[@]}"; do
     [ "${ROLE_OF[$id]}" = sealer ] || continue
@@ -259,7 +283,7 @@ cmd_up() {
   # -- followers, staggered, gated on peers>=1 --
   for id in "${NODE_IDS[@]}"; do
     [ "${ROLE_OF[$id]}" = sealer ] && continue
-    "$NODE_SH" start "$TOPO_FILE" "$id" --genesis "$GENESIS_FILE" --bootnodes "$sealer_enodes" || return 1
+    "$NODE_SH" start "$TOPO_FILE" "$id" --genesis "$GENESIS_FILE" --bootnodes "$sealer_enodes" {FLEET_LOCK_FD}>&- || return 1
     "$HEALTH_SH" wait-rpc "http://127.0.0.1:${RPC_OF[$id]}" 90 || { echo "fleet.sh: follower $id never came up" >&2; return 1; }
     "$HEALTH_SH" wait-peers "http://127.0.0.1:${RPC_OF[$id]}" 1 60 || echo "fleet.sh: WARNING: follower $id still has 0 peers -- continuing anyway" >&2
     sleep "${TOPO_STAGGERSECONDS:-5}"
@@ -371,6 +395,33 @@ cmd_logs() {
   local follow_args=(); [ "$OPT_FOLLOW" = 1 ] && follow_args=(-f)
   "$NODE_SH" logs "$TOPO_FILE" "$OPT_TARGET" -n "$OPT_LINES" "${follow_args[@]}"
 }
+
+# ---------------------------------------------------------------------------
+# Per-topology exclusive lock for the mutating commands (see header comment).
+# Held for the process's remaining lifetime (released automatically when it
+# exits and the fd closes) -- cmd_up's internal `cmd_down --best-effort`
+# (for --wipe) runs as a plain function call in this same process, so it
+# doesn't need (and must not attempt) its own nested acquisition.
+# ---------------------------------------------------------------------------
+case "$CMD" in
+  up|down|wipe)
+    _fleet_resolve || exit 1
+    LOCK_DIR="$REPO_ROOT/nodes/.fleet-locks"
+    mkdir -p "$LOCK_DIR" || exit 1
+    FLEET_LOCKFILE="$LOCK_DIR/${TOPO_NAME}.lock"
+    # Append (>>), not truncate: a losing contender still opens this same
+    # path before it knows it lost (see below), and a truncating open would
+    # blow away the winner's diagnostic line out from under it. Only the
+    # winner (post-flock) actually rewrites the content, via /dev/fd below.
+    exec {FLEET_LOCK_FD}>>"$FLEET_LOCKFILE" || exit 1
+    if ! flock -n "$FLEET_LOCK_FD"; then
+      echo "fleet.sh: another up/down/wipe for topology '$TOPO_NAME' is already in progress (lock: $FLEET_LOCKFILE); refusing to run concurrently" >&2
+      exit 1
+    fi
+    : >"$FLEET_LOCKFILE"
+    printf 'pid=%s locked=%s\n' "$$" "$(date -u +%FT%TZ)" >&"$FLEET_LOCK_FD" 2>/dev/null
+    ;;
+esac
 
 case "$CMD" in
   up)     cmd_up ;;

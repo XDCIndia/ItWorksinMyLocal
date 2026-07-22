@@ -28,7 +28,15 @@
 #            `lsof` won't show that as a listener, but bind() still fails.
 #            Verified during T1.3's integration test: a fresh oldxdc join
 #            crashed twice with "address already in use" on ports `ss`
-#            reported as completely free.
+#            reported as completely free. Because that borrow is
+#            split-second, a single bind() sample can itself land in the
+#            same transient window and misreport a genuinely-free port as
+#            busy (seen live during T2.4/T2.5 acceptance: port 34104 read
+#            busy once, free on every immediate retry) -- so the port
+#            check is debounced (_port_free_debounced: a few retries with
+#            a short backoff before declaring FAIL), which still catches
+#            a REAL listener (busy on every attempt) but rides out a
+#            one-sample ephemeral-port collision.
 #
 # Uses lib-rpc.sh directly (topology-independent -- see T0.1) rather than
 # lab/lib-lab.sh, so this has no dependency on the fixed lab/ port registry.
@@ -131,6 +139,24 @@ sys.exit(0 if ok else 1)
 " "$1"
 }
 
+# _port_free_debounced <port>: the file header already documents that this
+# sandbox's ephemeral port range (32768-60999) overlaps our 34000+ band, so
+# an unrelated process's OUTBOUND connection can transiently borrow one of
+# our ports for a few hundred ms -- a single bind() sample can catch that
+# split-second window and misreport a port that is not actually reserved
+# by anything as "in use". A GENUINELY held port (another listener bound
+# to it) fails every attempt; a transient ephemeral borrow clears within
+# a couple of retries. So retry a few times with a short backoff and only
+# report busy if every attempt failed.
+_port_free_debounced() {
+  local port="$1" tries="${2:-3}" delay="${3:-0.2}" i
+  for ((i = 0; i < tries; i++)); do
+    _port_free "$port" && return 0
+    sleep "$delay"
+  done
+  return 1
+}
+
 cmd_preflight() {
   [ $# -ge 1 ] || usage
   local topo_file="$1"; shift
@@ -212,11 +238,31 @@ print(' '.join(str(p) for p in sorted(ports)))
 ")
   [ -n "$bootnode_port" ] && ports="$ports $bootnode_port"
 
-  local p busy=""
-  for p in $ports; do
-    if ! _port_free "$p"; then
-      busy="$busy $p"
-    fi
+  # Re-scan only the still-busy ports across several passes: an unrelated
+  # process's ephemeral-port borrow (see header) can hold a given port of
+  # ours for a few seconds at a time (an established connection, not just
+  # a one-sample blip -- confirmed live during T2.4/T2.5 acceptance: port
+  # 34100 read busy on 20 consecutive single-shot samples ~200ms apart,
+  # then cleared), so a handful of quick per-port retries (_port_free_debounced)
+  # isn't always enough on its own. Re-running the FULL scan (not
+  # per-port-sequential debouncing, which multiplies cost across every
+  # port) over up to $port_retry_seconds bounds the worst case while still
+  # riding out a multi-second borrow. A port held by a REAL listener stays
+  # busy across every pass and correctly still fails at the end.
+  local port_retry_seconds="${NETLAB_PREFLIGHT_PORT_RETRY_SECONDS:-20}"
+  local pass_sleep=2
+  local busy="" p elapsed=0
+  for p in $ports; do busy="$busy $p"; done
+  while :; do
+    local still_busy=""
+    for p in $busy; do
+      _port_free_debounced "$p" || still_busy="$still_busy $p"
+    done
+    busy="$still_busy"
+    [ -z "$busy" ] && break
+    [ "$elapsed" -ge "$port_retry_seconds" ] && break
+    sleep "$pass_sleep"
+    elapsed=$((elapsed + pass_sleep))
   done
   if [ -z "$busy" ]; then
     echo "PASS: ports: all $(echo "$ports" | wc -w) resolved ports are free"

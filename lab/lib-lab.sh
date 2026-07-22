@@ -223,6 +223,88 @@ _lab_pid_on_port() {
   lsof -ti "tcp:$1" -sTCP:LISTEN 2>/dev/null | head -1
 }
 
+# _lab_ensure_root_genesis_signers: run.sh's 4 sealers (NUM_NODES=4) are
+# whichever accounts .env's PRIVATE_KEY_1..4 import to. genesis/genesis.json
+# is a tracked file whose baked-in extraData masternode set comes from
+# whatever --signers gen-genesis.sh was last run with (or its own hardcoded
+# default) -- nothing keeps it in sync with .env, which is gitignored and
+# gets swapped wholesale between environments/sessions. A mismatch there is
+# fatal but silent: run.sh happily imports+seals with the .env keys and
+# inits every node on the mismatched genesis, then the chain wedges forever
+# at block 0 because none of the actual sealers are in the authorized
+# masternode set -- exactly the "Blocks stop / stuck at an epoch" failure
+# README.md's own FAQ already documents, and reproduced live in
+# ItWorksinMyLocal#46 Phase 2 acceptance (node1 spinning forever on "Failed
+# to retrieve block author err=recovery failed number=0").
+#
+# lab_start_producer's own genesis-lab-*.json cache (below) patches FROM
+# genesis/genesis.json and preserves its masternode set unchanged, so a
+# stale root genesis silently poisons the lab genesis too, indefinitely
+# (that cache is only regenerated "if missing"). So fix the root cause
+# before touching the cache: verify the 4 addresses baked into
+# genesis/genesis.json's extraData match what .env's PRIVATE_KEY_1..4
+# actually import to, and regenerate genesis/genesis.json (via the repo's
+# own gen-genesis.sh, exactly as setup.sh's dynamic-signer derivation
+# already does) if they don't. A fixed --timestamp keeps this
+# deterministic/assertable. On a genuine rewrite, any cached lab genesis
+# is now equally stale and gets dropped along with the active-config
+# marker so the next lab_start_producer call regenerates everything
+# against the corrected base.
+_lab_ensure_root_genesis_signers() {
+  local root_genesis="$REPO_ROOT/genesis/genesis.json"
+  [ -f "$root_genesis" ] && [ -f "$REPO_ROOT/.env" ] || return 0
+
+  require_oldxdc
+  ensure_bins
+  local xdc="$XDC_BIN"
+
+  set -a
+  # shellcheck disable=SC1091
+  source "$REPO_ROOT/.env"
+  set +a
+
+  local tmp i pk_var pk a want=""
+  tmp=$(mktemp -d) || return 1
+  : > "$tmp/pw"
+  for i in 1 2 3 4; do
+    pk_var="PRIVATE_KEY_$i"; pk="${!pk_var}"
+    if [ -z "$pk" ]; then
+      echo "_lab_ensure_root_genesis_signers: $pk_var not set in .env" >&2
+      rm -rf "$tmp"; return 1
+    fi
+    a=$("$xdc" account import --password "$tmp/pw" --datadir "$tmp/k$i" <(printf '%s' "$pk") 2>/dev/null \
+          | grep -oE 'xdc[0-9a-fA-F]{40}' | head -1 | sed 's/^xdc//' | tr 'A-F' 'a-f')
+    if [ -z "$a" ]; then
+      echo "_lab_ensure_root_genesis_signers: could not derive an address for $pk_var" >&2
+      rm -rf "$tmp"; return 1
+    fi
+    want="$want $a"
+  done
+  rm -rf "$tmp"
+  want=$(printf '%s\n' $want | sort)
+
+  local have
+  have=$(python3 -c "
+import json, sys
+d = json.load(open(sys.argv[1]))
+hexs = d['extraData'][2:]
+rest = hexs[64:]
+addrs = rest[:-130]
+for i in range(0, len(addrs), 40):
+    print(addrs[i:i+40].lower())
+" "$root_genesis" 2>/dev/null | sort)
+
+  [ "$want" = "$have" ] && return 0
+
+  echo "_lab_ensure_root_genesis_signers: $root_genesis's masternode set doesn't match .env's PRIVATE_KEY_1..4 -- regenerating via gen-genesis.sh (same derivation setup.sh uses)" >&2
+  local signers="" w
+  for w in $want; do signers="${signers:+$signers,}$w"; done
+  ( cd "$REPO_ROOT" && ./gen-genesis.sh --signers "$signers" --timestamp 0x0 ) || return 1
+
+  rm -f "$LAB_DIR"/genesis-lab-*.json
+  rm -f "$LAB_RESULTS_DIR/active-config" "$LAB_RESULTS_DIR/genesis-orig-backup.json"
+}
+
 # lab_start_producer: brings up the run.sh 4-node oldxdc net using the lab
 # genesis for the current LAB_SWITCH_BLOCK/LAB_PERIOD/LAB_TIMEOUT_PERIOD env
 # vars (the pinned contract in docs/lab/DESIGN.md Section 5; scenarios
@@ -238,6 +320,9 @@ lab_start_producer() {
   period="${LAB_PERIOD:-1}"
   timeout_period="${LAB_TIMEOUT_PERIOD:-10}"
   config_key="sw${switch_block}-p${period}-t${timeout_period}"
+
+  _lab_ensure_root_genesis_signers || return 1
+
   genesis="$LAB_DIR/genesis-lab-${config_key}.json"
   if [ ! -f "$genesis" ]; then
     echo "lab_start_producer: $genesis missing; generating it..." >&2
