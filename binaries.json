@@ -48,7 +48,7 @@
       }
     },
     "nethermind": {
-      "_comment": "No linux-arm64 build published. Archive is a flat .NET publish dir (./nethermind launcher + ./chainspec/*.json + ./configs/*.json at the archive root, no version-prefixed top dir), so produces path is '.' (the whole extracted dir is NETHERMIND_DIST). NOTE: as of this snapshot the archive does NOT include chainspec/xdc-devnet5151.json (only xdc.json/xdc-testnet.json/xdc-apothem.json/xdc-net5050.json) -- join.sh's existing chainspec check will correctly reject it for devnet 5151 until xdc.network publishes that chainspec; a custom NETHERMIND_DIST build is still required for 5151 today.",
+      "_comment": "No linux-arm64 build published. Archive is a flat .NET publish dir (./nethermind launcher + ./chainspec/*.json + ./configs/*.json at the archive root, no version-prefixed top dir), so produces path is '.' (the whole extracted dir is NETHERMIND_DIST). This archive INCLUDES chainspec/xdc-devnet5151.json (chainId 5151, genesis 0x96f121, XDPoS engine) and its runner config, so join.sh --client nethermind syncs devnet 5151 out of the box. Built from XDCIndia/xdc-nethermind-private with the net5151 follower bypass (PR #246): the legacy chain's non-standard gas schedule can't be recomputed bit-for-bit, so for chainId 5151 the header's gas-derived fields are trusted while state is fully validated -- verified syncing to the live tip.",
       "file": "nethermind-{os}-{arch}.tar.gz",
       "archive": "tar.gz",
       "produces": { "nethermind": "." },
@@ -56,7 +56,7 @@
       "sha256": {
         "darwin-amd64": "bd5e95912d4b01d3952047949f440a49ce56c584e7d0a632f2ca8fbdbb1a1459",
         "darwin-arm64": "2d84a4a04c87d353f5eb78195eaa3db5f230d90fdaba289aadb8a9844126d788",
-        "linux-amd64": "8692e9597376db7519d2d77af576701fe848fa68e311b31c6af6c35279530ba4"
+        "linux-amd64": "04c1ab708c11732a5a310971b827d2fc2e4b905f307f6f1c21f3a7489ce3794b"
       }
     }
   }
