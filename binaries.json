@@ -1,7 +1,7 @@
 {
   "_comment": "Prebuilt-binary manifest for lib.sh:download_bins() / join.sh. baseUrl + file (with {os}/{arch} substituted) form the download URL; archive says how to unpack it; produces maps a logical binary name to its path *inside* the download (\"\" = the download IS the binary, \".\" = the whole extracted directory is the product, e.g. a dist dir). platforms uses {os}-{arch} keys (darwin|linux, amd64|arm64); \"*\" = platform-independent. sha256 keys mirror platforms (or \"*\"), fetched from the upstream <file>.sha256 siblings on xdc.network. Re-run the fetch and bump 'updated' if xdc.network publishes new binaries.",
   "baseUrl": "https://xdc.network/snapshots/bin/",
-  "updated": "2026-07-20",
+  "updated": "2026-07-22",
   "clients": {
     "geth": {
       "file": "geth-{os}-{arch}",
@@ -11,7 +11,7 @@
       "sha256": {
         "darwin-amd64": "12000bdde6ad903d068bd3ee9df1b438cd366b5e1168ec17647f584fa9198f57",
         "darwin-arm64": "b2a686cb12081f766ce16031df9c363df0eb320ea17666a725c06d48b3b887e1",
-        "linux-amd64": "6f30a929a583a9fbf4ef0d91ac02c5eef796661e9791dd75308dc5787e0f1999",
+        "linux-amd64": "17890f1dce07a8072e984c17d3692d3755a3b0da6cbd39c890755e6ff6af8600",
         "linux-arm64": "f56076efc6664a8ee0739b47879be16c53b1a935fb436a1bf43ab5058e399e11"
       }
     },
@@ -22,7 +22,7 @@
       "produces": { "erigon": "" },
       "platforms": ["linux-amd64"],
       "sha256": {
-        "linux-amd64": "8bf60b5c522b54d650c56f5641b23f63b5456949a6b5af9d060c3673a9a2c8d8"
+        "linux-amd64": "25cae0a026154d4401f5f8a2efc9f86c5ee00a9a44523797deeeb30c4200433d"
       }
     },
     "reth": {
@@ -33,7 +33,7 @@
       "sha256": {
         "darwin-amd64": "189f4a1a8f595232a834456722cc17f22571a4ee0339cb4b89b51d2b53526cee",
         "darwin-arm64": "36c35bcd13a5570608f9dfaf733e2486c0c00b830afd7525be82d7a13471107f",
-        "linux-amd64": "5cb2b199bdaeb68293c00c316674a3a095fa0c3846b67f91dc674adac20d22ed",
+        "linux-amd64": "da4253ade637f33a5b852f7af954dc2e8f5653c77b377f2e18c6636203b71f7a",
         "linux-arm64": "425dc422c7f1eecfbd655fdecff8827f208adee73b8060ffdde9507513497630"
       }
     },
@@ -44,7 +44,7 @@
       "produces": { "besu": "bin/besu" },
       "platforms": ["*"],
       "sha256": {
-        "*": "daa7f3f10106b73acb4372ab7c524d8e5308a1653c794337af25e72b354f737c"
+        "*": "7ade4f2f56b8c163d5fc5e86d024fe27ce50891e2e29677973245f4dc3a02820"
       }
     },
     "nethermind": {
