@@ -273,6 +273,20 @@ download_bins() {
       continue
     else
       src_path="$distdir/$relpath"
+      # A launcher nested inside the extracted dist (e.g. besu's bin/besu) resolves
+      # its own APP_HOME from its location and needs sibling dirs (lib/) alongside
+      # it. Copying just the launcher out to $BIN_DIR orphans it from lib/, so it
+      # dies with "Could not find or load main class". Install a thin wrapper at
+      # $BIN_DIR/$name that execs the launcher in place instead, keeping join.sh's
+      # "$BIN_DIR/<name>" entry point working while preserving lib/ resolution.
+      case "$relpath" in
+        */*)
+          dest="$BIN_DIR/$name"
+          abs_src="$(cd "$(dirname "$src_path")" && pwd)/$(basename "$src_path")"
+          printf '#!/bin/sh\nexec "%s" "$@"\n' "$abs_src" > "$dest"
+          chmod +x "$dest"
+          continue ;;
+      esac
     fi
     dest="$BIN_DIR/$name"
     cp -f "$src_path" "$dest" || { echo "could not place $name from $src_path" >&2; return 1; }
