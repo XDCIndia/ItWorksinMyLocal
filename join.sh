@@ -21,8 +21,12 @@
 #                        (overrides --ip; default: derived from ./bootnode.key)
 #   --host IP[:PORT]     alias of --ip
 #   --client C           node client: oldxdc (default) | geth | erigon | besu |
-#                        nethermind | reth. Only oldxdc can seal (--mine); all
-#                        others join sync-only. All clients default to a
+#                        nethermind | reth | all. "all" boots every client at
+#                        once, each in its own datadir (./peer-<client>) with a
+#                        distinct port set, all joining the same network -- a
+#                        one-command cross-client bring-up. Only oldxdc can seal
+#                        (--mine); all others join sync-only. All clients default
+#                        to a
 #                        prebuilt-binary download (binaries.json) for this
 #                        platform, falling back to a source build for
 #                        oldxdc/geth/erigon if unavailable; BIN_SOURCE=build
@@ -127,6 +131,47 @@ fi
 if [ -z "$STATICPEERS" ] && [ -f peers.list ]; then
   STATICPEERS=$(grep -v '^[[:space:]]*#' peers.list | grep enode | paste -sd, -)
   [ -n "$STATICPEERS" ] && echo "Using $(echo "$STATICPEERS" | tr ',' '\n' | grep -c enode) default peer(s) from peers.list"
+fi
+
+# --client all: boot EVERY client at once, each in its own datadir with its
+# per-client port offset (already distinct below), all sharing the same genesis +
+# bootnodes resolved above. Implemented as a fan-out: re-invoke this same script
+# once per client with --client <c>, so each child reuses the full per-client
+# setup (binary resolution, genesis init, ethstats, peer harvest) with zero
+# duplicated logic. Children run concurrently; Ctrl-C / TERM stops them all.
+# A client whose extra inputs are missing (erigon needs --chain; nethermind needs
+# a dist) exits with its own hint and is skipped -- the rest keep syncing.
+if [ "$CLIENT" = all ]; then
+  ALL_CLIENTS="oldxdc geth erigon besu nethermind reth"
+  # Forward the shared, already-resolved network inputs to every child so they all
+  # dial the SAME network (and a child doesn't re-run default resolution).
+  shared=()
+  [ -n "$GENESIS" ]     && shared+=(--genesis "$GENESIS")
+  [ -n "$BOOTNODES" ]   && shared+=(--bootnodes "$BOOTNODES")
+  [ -n "$HOST_IP" ]     && shared+=(--ip "$HOST_IP")
+  [ -n "$STATICPEERS" ] && shared+=(--staticpeers "$STATICPEERS")
+  [ -n "$NETWORKID" ]   && shared+=(--networkid "$NETWORKID")
+  [ -n "$CHAIN" ]       && shared+=(--chain "$CHAIN")
+  [ -n "$MINEADDR" ]    && shared+=(--mine "$MINEADDR")   # only oldxdc seals; others print "ignored"
+  if [ -n "$ETHSTATS" ]; then shared+=(--ethstats "$ETHSTATS"); else shared+=(--no-ethstats); fi
+  all_pids=()
+  trap 'echo "[all] stopping ${#all_pids[@]} client(s)..."; for p in "${all_pids[@]}"; do kill -TERM "$p" 2>/dev/null; done; exit 0' INT TERM
+  for c in $ALL_CLIENTS; do
+    # Per-client datadir suffix so the six chains never share chaindata
+    # (./peer -> ./peer-geth, ./peer-erigon, ...; a custom --datadir is suffixed too).
+    dd="${DATADIR}-${c}"
+    args=(--client "$c" --datadir "$dd" "${shared[@]}")
+    # Distinct ethstats/identity name per client when the user forced one (the
+    # per-client default name already embeds the client, so only needed here).
+    [ -n "$NAME" ] && args+=(--name "${NAME}-${c}")
+    echo "=== [all] launching $c  (datadir $dd) ==="
+    "$0" "${args[@]}" &
+    all_pids+=($!)
+  done
+  echo "[all] launched ${#all_pids[@]} client(s): $ALL_CLIENTS"
+  echo "[all] each syncs in ./${DATADIR#./}-<client>; Ctrl-C stops all"
+  wait
+  exit 0
 fi
 
 # Per-client default ports (offset by client) so oldxdc/geth/erigon/besu/
