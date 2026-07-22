@@ -83,17 +83,20 @@ done
 
 # ---------------------------------------------------------------------------
 # _fleet_resolve: topo.sh print once -> TOPO_* meta vars, NODE_IDS (ordered
-# array), and per-id lookups (ROLE_OF/CLIENT_OF/RPC_OF associative arrays).
+# array), and per-id lookups (ROLE_OF/RPC_OF associative arrays). node.sh
+# reads client (NODE_CLIENT) itself when reporting per-node status/logs, so
+# fleet.sh -- which only ever branches on role and dials by rpc port -- has
+# no need for its own client lookup.
 # Single source of truth -- nothing here re-derives port math or re-checks
 # constraints; topo.sh already did both.
 # ---------------------------------------------------------------------------
 declare -a NODE_IDS
-declare -A ROLE_OF CLIENT_OF RPC_OF
+declare -A ROLE_OF RPC_OF
 
 _fleet_resolve() {
   local out
   out="$("$TOPO_SH" print "$TOPO_FILE")" || return 1
-  NODE_IDS=(); ROLE_OF=(); CLIENT_OF=(); RPC_OF=()
+  NODE_IDS=(); ROLE_OF=(); RPC_OF=()
 
   local assigns
   assigns="$(printf '%s\n' "$out" | python3 -c "
@@ -122,7 +125,6 @@ for k, v in meta.items():
 print('NODE_IDS=(%s)' % ' '.join(shq(r['id']) for r in rows))
 for r in rows:
     print('ROLE_OF[%s]=%s' % (shq(r['id']), shq(r['role'])))
-    print('CLIENT_OF[%s]=%s' % (shq(r['id']), shq(r['client'])))
     print('RPC_OF[%s]=%s' % (shq(r['id']), shq(r['rpc'])))
 ")" || return 1
   eval "$assigns"
