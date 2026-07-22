@@ -68,8 +68,16 @@ case "$CLIENT" in
     CLIENT_TARGETS=""
     NODE_NAME_BIN="xdc-reth"
     ;;
+  all)
+    # Meta-client: join.sh fans "all" out to one child process per real client
+    # (each re-sources lib.sh with its own concrete client). The dispatcher itself
+    # needs no per-client repo / binary setup, so accept it and set no targets.
+    CLIENT=all
+    CLIENT_TARGETS=""
+    NODE_NAME_BIN=""
+    ;;
   *)
-    echo "unknown CLIENT '$CLIENT' (use: oldxdc | geth | erigon | besu | nethermind | reth)" >&2; exit 1;;
+    echo "unknown CLIENT '$CLIENT' (use: oldxdc | geth | erigon | besu | nethermind | reth | all)" >&2; exit 1;;
 esac
 
 # Binaries live under a per-client, per-platform dir so the clients coexist.

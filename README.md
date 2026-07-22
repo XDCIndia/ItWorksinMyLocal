@@ -93,6 +93,22 @@ nethermind still needs a custom `NETHERMIND_DIST` (join.sh says so if missing).
 Six node clients are selectable with `--client` (or `CLIENT=`), joining **devnet
 5151** with `./join.sh --client <name>`. By default every client is fetched as a
 **prebuilt binary** (see [Prebuilt binaries vs local build](#prebuilt-binaries-vs-local-build));
+
+**Boot every client at once** with `--client all`:
+
+```bash
+./join.sh --client all            # all six clients join devnet 5151 together
+```
+
+This fans out to one process per client — each in its own datadir
+(`./peer-oldxdc`, `./peer-geth`, `./peer-erigon`, `./peer-besu`,
+`./peer-nethermind`, `./peer-reth`) with a distinct port set, all dialing the same
+genesis + bootnodes. `Ctrl-C` stops them all. Any shared flag is forwarded
+(`--genesis`, `--ip`/`--bootnodes`, `--mine`, `--ethstats`/`--no-ethstats`, …). A
+client whose extra inputs aren't provided (`erigon` needs `--chain`; `nethermind`
+needs a `NETHERMIND_DIST`) prints its own hint and is skipped while the rest keep
+syncing.
+
 `oldxdc/geth/erigon` build from source when a prebuilt isn't available (or with
 `BIN_SOURCE=build`), while `besu/nethermind/reth` (separate Java/.NET/Rust
 toolchains) are download-only unless you point `join.sh` at your own binary via
