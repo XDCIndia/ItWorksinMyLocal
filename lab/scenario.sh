@@ -6,6 +6,12 @@
 #   ./scenario.sh <id>      run one scenario (e.g. 01, 02, ...)
 #   ./scenario.sh --all     run every scenario found in scenarios/*.sh
 #   ./scenario.sh --list    list discovered scenario ids + descriptions
+#   ./scenario.sh --matrix <id> --clients a,b,c
+#                           run scenario <id> once per client in the list
+#                           (LAB_CLIENTS=<that one client> for each run --
+#                           only meaningful for a scenario that reads
+#                           lab_clients()/$LAB_CLIENTS, e.g. 01), writing
+#                           results/matrix.md (ItWorksinMyLocal#46 T2.5)
 #
 # Scenario file contract (scenarios/NN-name.sh), see docs/lab/DESIGN.md §7:
 #   - the file stem's leading token before the first '-' is its id (e.g.
@@ -45,7 +51,7 @@ source ./lib-assert.sh
 
 SCEN_DIR="$LAB_DIR/scenarios"
 
-_usage() { sed -n '2,16p' "$_SELF" | sed 's/^# \{0,1\}//'; }
+_usage() { sed -n '2,23p' "$_SELF" | sed 's/^# \{0,1\}//'; }
 
 # Every scenarios/*.sh file, in sorted order ("" if the dir is empty/missing).
 _all_scenario_files() {
@@ -155,6 +161,45 @@ _run_all() {
   [ "$fail_count" -eq 0 ]
 }
 
+# _run_matrix <id> <clients-csv>: runs scenario <id> once per client in
+# clients-csv (ItWorksinMyLocal#46 T2.5), exporting LAB_CLIENTS=<that one
+# client> for each run (bash applies a leading VAR=val assignment to a
+# function call's environment for that call only, exactly as it would for
+# an external command) so a scenario that reads lab_clients()/$LAB_CLIENTS
+# (e.g. 01) brings up only that one follower client per row. A scenario
+# that ignores LAB_CLIENTS entirely (e.g. 11, 12) just runs identically
+# every row -- --matrix is generic client-varying infrastructure, not tied
+# to any one scenario. Writes results/matrix.md (id x client -> verdict),
+# same one-line-per-row shape as _run_all's summary.md; exits nonzero if
+# any row FAILed.
+_run_matrix() {
+  local id="$1" clients_csv="$2" file c line pri verdict reason dur fail_count=0
+  file=$(_scenario_file_for_id "$id") || { echo "no scenario with id '$id' in $SCEN_DIR" >&2; exit 1; }
+  [ -n "$clients_csv" ] || { echo "scenario.sh --matrix: --clients a,b,c is required" >&2; exit 1; }
+  mkdir -p "$LAB_RESULTS_DIR" || exit 1
+
+  {
+    echo "# Lab scenario matrix: id=$id"
+    echo
+    echo "Generated: $(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+    echo
+    echo "| client | priority | verdict | reason | duration |"
+    echo "|--------|----------|---------|--------|----------|"
+  } > "$LAB_RESULTS_DIR/matrix.md"
+
+  for c in $(printf '%s' "$clients_csv" | tr ',' ' '); do
+    echo "scenario.sh --matrix: id=$id client=$c ..." >&2
+    line=$(LAB_CLIENTS="$c" _run_one "$file")
+    IFS='|' read -r _ pri verdict reason dur <<<"$line"
+    echo "| $c | $pri | $verdict | ${reason:--} | $dur |" >> "$LAB_RESULTS_DIR/matrix.md"
+    echo "[$id/$c] $verdict ($dur) ${reason:-}"
+    [ "$verdict" = "FAIL" ] && fail_count=$((fail_count + 1))
+  done
+
+  echo "Wrote $LAB_RESULTS_DIR/matrix.md"
+  [ "$fail_count" -eq 0 ]
+}
+
 _list() {
   local files=() f
   while IFS= read -r f; do files+=("$f"); done < <(_all_scenario_files 2>/dev/null)
@@ -183,6 +228,13 @@ case "${1:-}" in
     ;;
   --all)
     _run_all
+    exit $?
+    ;;
+  --matrix)
+    id="$2"
+    [ -n "$id" ] || { echo "usage: $(basename "$0") --matrix <id> --clients a,b,c" >&2; exit 1; }
+    [ "${3:-}" = "--clients" ] || { echo "usage: $(basename "$0") --matrix <id> --clients a,b,c" >&2; exit 1; }
+    _run_matrix "$id" "${4:-}"
     exit $?
     ;;
   *)
