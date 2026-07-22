@@ -178,6 +178,11 @@ if [ "$CLIENT" = all ]; then
     nt=sync; [ -n "$MINEADDR" ] && [ "$c" = oldxdc ] && nt=seal
     dd="${base}/${c}-${nt}"
     args=(--client "$c" --datadir "$dd" "${shared[@]}")
+    # erigon can't join via a --genesis file (its --chain only resolves built-in
+    # names); when the caller didn't pass an explicit --chain, default it to the
+    # net5151 built-in chainspec so `--client all` doesn't fail erigon's own
+    # early validation. Harmless for the other clients (they ignore --chain).
+    [ "$c" = erigon ] && [ -z "$CHAIN" ] && args+=(--chain "${ERIGON_CHAIN:-xdc-net5151}")
     # Distinct ethstats/identity name per client when the user forced one (the
     # per-client default name already embeds the client, so only needed here).
     [ -n "$NAME" ] && args+=(--name "${NAME}-${c}")
