@@ -213,7 +213,18 @@ if [ "$CLIENT" = all ]; then
   # shared ./nodes tree (clear of run.sh's numbered nodes/1..N local net).
   base="${DATADIR:-nodes}"
   all_pids=()
-  trap 'echo "[all] stopping ${#all_pids[@]} client(s)..."; for p in "${all_pids[@]}"; do kill -TERM "$p" 2>/dev/null; done; exit 0' INT TERM
+  # Named function (not an inline single-quoted trap body): shellcheck's
+  # dataflow analysis doesn't associate a `for p in ...` loop assignment
+  # inside a trap's quoted argument string, so it (falsely) flags `p` as
+  # referenced-but-unassigned (SC2154) there. A real function has no such
+  # blind spot -- same behavior, clean lint.
+  _join_stop_all_clients() {
+    echo "[all] stopping ${#all_pids[@]} client(s)..."
+    local p
+    for p in "${all_pids[@]}"; do kill -TERM "$p" 2>/dev/null; done
+    exit 0
+  }
+  trap _join_stop_all_clients INT TERM
   for c in $ALL_CLIENTS; do
     # Each client's chaindata lands in nodes/<client>-<nodetype> so the six chains
     # never share a datadir. Only oldxdc can seal (--mine); the rest join sync-only.
