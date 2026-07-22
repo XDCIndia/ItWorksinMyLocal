@@ -36,9 +36,10 @@
 #                        build / skips the download. besu/nethermind/reth also
 #                        honor OLDXDC_BIN / BESU_BIN / RETH_BIN / NETHERMIND_DIST (or PATH)
 #                        ahead of both. besu & reth read the geth-format
-#                        --genesis natively; erigon converts it; nethermind
+#                        --genesis natively; erigon loads it directly (v3.5.0+); nethermind
 #                        uses its own chainspec.
-#   --chain NAME         erigon only: use a built-in chainspec instead of --genesis
+#   --chain NAME         erigon only: built-in chainspec (xdc | xdc-apothem). Optional
+#                        -- erigon v3.5.0+ loads the --genesis file directly.
 #   --nm-config NAME     nethermind only: chainspec name to load from
 #                        NETHERMIND_DIST/chainspec/NAME.json via --config
 #                        (default: xdc-devnet5151; env override: NM_CONFIG)
@@ -220,14 +221,16 @@ PRIVAPI="${PRIVAPI:-127.0.0.1:$((11645 + O))}"  # erigon private api
 # Validate required inputs BEFORE building (a build can take minutes).
 case "$CLIENT" in
   erigon)
-    # erigon requires a built-in chainspec name: its --chain flag only resolves
-    # built-in names, and a custom/converted genesis file falls back silently
-    # to Ethereum mainnet (see issue #9). Fail loud and early, before any build.
-    if [ -z "$CHAIN" ]; then
-      echo "erigon join requires a built-in chainspec: --chain xdc | xdc-apothem" >&2
-      echo "This erigon-xdc build cannot load a custom/converted genesis file (its --chain" >&2
-      echo "only resolves built-in names; a custom genesis would fall back to Ethereum" >&2
-      echo "mainnet). See issue #9. To join a custom network, use --client geth instead." >&2
+    # erigon-xdc v3.5.0+ CAN load a genesis FILE via --chain <path> (verified: it
+    # writes the custom genesis and computes the correct hash, e.g. net5151
+    # 0x96f121). So --chain is optional now: with no --chain we hand erigon the
+    # --genesis file directly (issue #9 was an older build that only resolved
+    # built-in names). A built-in --chain name (xdc | xdc-apothem) still wins; but
+    # do NOT use the built-in xdc-net5151/xdc-devnet5151 names -- their compiled-in
+    # genesis is stale (0x11b449 != live 0x96f121) and won't peer. Just need a
+    # genesis file when no built-in name is given.
+    if [ -z "$CHAIN" ] && [ ! -f "$GENESIS" ]; then
+      echo "erigon join needs a genesis: pass --genesis <file> (or a built-in --chain xdc | xdc-apothem)." >&2
       exit 1
     fi ;;
   nethermind)
@@ -417,41 +420,13 @@ if [ "$CLIENT" = erigon ]; then
   # through an XDPoSChain bootnode doesn't populate erigon, so masternode enodes
   # are usually needed via --staticpeers.
   [ -n "$MINEADDR" ] && echo "note: --mine ignored (erigon join is sync-only)" >&2
-  if [ -n "$CHAIN" ]; then
-    ERC="$CHAIN"                       # built-in chainspec name
-  else
-    # Convert the XDPoSChain-format genesis to erigon's format (reads the real
-    # xdpos params incl. v2.switchBlock; defaults fill anything missing).
-    mkdir -p "$DATADIR"; ERC="$DATADIR/erigon-genesis.json"
-    python3 - "$GENESIS" "$ERC" <<'PY'
-import json, sys
-g = json.load(open(sys.argv[1])); C = g["config"]
-x = C.get("XDPoS") or C.get("xdpos") or {}
-v2 = x.get("v2", {}); c = v2.get("config") or {}
-def g2(d, *ks, d_=None):
-    for k in ks:
-        if k in d: return d[k]
-    return d_
-ct = g2(c, "certificateThreshold", "certThreshold", d_=0.667)
-xdpos = {"period": x.get("period", 2), "epoch": x.get("epoch", 900), "gap": x.get("gap", 450),
-  "reward": x.get("reward", 0), "rewardCheckpoint": x.get("rewardCheckpoint", x.get("epoch", 900)),
-  "foudationWalletAddr": x.get("foudationWalletAddr", "0x" + "0"*40),
-  "v2": {"switchBlock": v2.get("switchBlock", 0), "certThreshold": ct,
-    "allConfigs": {"0": {"maxMasternodes": g2(c, "maxMasternodes", d_=108), "switchRound": 0,
-      "certificateThreshold": ct, "timeoutSyncThreshold": g2(c, "timeoutSyncThreshold", d_=3),
-      "timeoutPeriod": g2(c, "timeoutPeriod", d_=10), "minePeriod": g2(c, "minePeriod", d_=2)}}}}
-cfg = {"chainName": "join-erigon", "chainId": C["chainId"], "consensus": "xdpos",
-  "homesteadBlock": C.get("homesteadBlock", 0), "eip150Block": C.get("eip150Block", 0),
-  "eip155Block": C.get("eip155Block", 0), "eip158Block": C.get("eip158Block", 0),
-  "byzantiumBlock": C.get("byzantiumBlock", 0), "xdpos": xdpos}
-gen = {"config": cfg, "nonce": g.get("nonce", "0x0"), "timestamp": g["timestamp"],
-  "extraData": g["extraData"], "gasLimit": g["gasLimit"], "difficulty": g.get("difficulty", "0x1"),
-  "coinbase": g.get("coinbase", "0x" + "0"*40), "mixHash": g.get("mixHash", "0x" + "0"*64),
-  "alloc": g["alloc"]}
-json.dump(gen, open(sys.argv[2], "w"))
-PY
-    echo "  converted $GENESIS -> $ERC (erigon genesis format)"
-  fi
+  # erigon-xdc v3.5.0+ reads the geth-format --genesis directly via --chain <file>
+  # (verified: net5151 -> 0x96f121, full fork schedule, synced to tip). So hand it
+  # the ORIGINAL genesis file, not a stripped conversion (the old conversion
+  # dropped london/eip1559/cancun fork blocks -> wrong schedule). A built-in
+  # --chain NAME still wins, for xdc | xdc-apothem.
+  ERC="${CHAIN:-$GENESIS}"
+  [ -n "$CHAIN" ] && echo "  erigon built-in chain=$CHAIN" || echo "  erigon genesis-file chain=$ERC (loads directly)"
   echo "  erigon chain=$ERC ports authrpc:$AUTHRPC_PORT torrent:$TORRENT_PORT privapi:$PRIVAPI mcp:$MCP_PORT"
   BN_ARG=""; [ -n "$BOOTNODES" ] && BN_ARG="--bootnodes $BOOTNODES"
   SP_ARG=""; [ -n "$STATICPEERS" ] && SP_ARG="--staticpeers $STATICPEERS"
