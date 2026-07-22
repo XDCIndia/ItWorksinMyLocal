@@ -480,6 +480,15 @@ elif [ "$CLIENT" = reth ]; then
   [ -n "$BOOTNODES" ] || { echo "reth join needs peers: set DEFAULT_BOOTNODES in network.env or pass --bootnodes" >&2; exit 1; }
   mkdir -p "$DATADIR"
   RETH_ES=""; [ -n "$full" ] && RETH_ES="--ethstats ${ES_NAME}:${ES_SECRET}@wss://${ES_HOSTPORT}"
+  # net5151's legacy producer uses a non-standard gas schedule reth's EVM can't
+  # reproduce bit-for-bit, so from block 1800 (V1->V2 switch) reth's own state root
+  # diverges from the header and it rejects every post-switch block as invalid,
+  # freezing at 1799. As a SYNC-ONLY FOLLOWER, trust the header's gas-derived
+  # fields via reth's opt-in state-root bypass (needs a v2-fix build, PR #241
+  # fix/comeback-v2-net5151 -> point RETH_BIN at it). Same follower stance as besu
+  # skipV1Validation / nethermind #246. NEVER set this on a validator.
+  export XDC_ENABLE_STATE_ROOT_BYPASS="${XDC_ENABLE_STATE_ROOT_BYPASS:-1}"
+  echo "  reth follower: XDC_ENABLE_STATE_ROOT_BYPASS=$XDC_ENABLE_STATE_ROOT_BYPASS (crosses the V1->V2 gas-divergence at 1800)"
   "$CLIENT_BIN" node --chain "$GENESIS" --datadir "$DATADIR" \
     --port "$PORT" --discovery.port "$PORT" \
     --disable-discv5-discovery --disable-dns-discovery --trusted-only \
