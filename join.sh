@@ -34,7 +34,7 @@
 #                        oldxdc/geth/erigon if unavailable; BIN_SOURCE=build
 #                        (or per-client BIN_SOURCE_<client>=build) forces a
 #                        build / skips the download. besu/nethermind/reth also
-#                        honor BESU_BIN / RETH_BIN / NETHERMIND_DIST (or PATH)
+#                        honor OLDXDC_BIN / BESU_BIN / RETH_BIN / NETHERMIND_DIST (or PATH)
 #                        ahead of both. besu & reth read the geth-format
 #                        --genesis natively; erigon converts it; nethermind
 #                        uses its own chainspec.
@@ -278,8 +278,21 @@ case "$CLIENT" in
       exit 1
     fi ;;
   *)
-    ensure_bins
-    XDC="$XDC_BIN" ;;
+    # oldxdc/geth/erigon build from the XDPoS source via ensure_bins. BUT the
+    # current OLDXDC-master build produces an INCOMPATIBLE genesis for net5151
+    # (0x3b622c) vs the live chain (0x96f121), so oldxdc gets 0 peers and never
+    # leaves block 0 (issue #33). The
+    # masternodes run XDPoSChain v2.7.0-devnet, which computes 0x96f121 from the
+    # SAME genesis-5151.json and syncs. So let an operator point --client oldxdc at
+    # that binary via OLDXDC_BIN (mirrors BESU_BIN/RETH_BIN); otherwise fall back to
+    # the source build (works for geth/erigon; oldxdc needs a v2.7.0-devnet build).
+    if [ "$CLIENT" = oldxdc ] && [ -n "$OLDXDC_BIN" ] && [ -x "$OLDXDC_BIN" ]; then
+      XDC="$OLDXDC_BIN"
+      echo "Using OLDXDC_BIN=$OLDXDC_BIN ($("$XDC" version 2>/dev/null | awk '/^Version/{print $2; exit}'))"
+    else
+      ensure_bins
+      XDC="$XDC_BIN"
+    fi ;;
 esac
 
 # If no explicit --bootnodes, derive the enode from ./bootnode.key at the given
