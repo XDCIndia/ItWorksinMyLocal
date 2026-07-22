@@ -87,7 +87,7 @@ case "$CLIENT" in
     NODE_NAME_BIN=""
     ;;
   *)
-    echo "unknown CLIENT '$CLIENT' (use: oldxdc | geth | erigon | besu | nethermind | reth | all)" >&2; exit 1;;
+    echo "unknown CLIENT '$CLIENT' (use: oldxdc | geth | erigon | besu | nethermind | reth | xone | all)" >&2; exit 1;;
 esac
 
 # Binaries live under a per-client, per-platform dir so the clients coexist.
