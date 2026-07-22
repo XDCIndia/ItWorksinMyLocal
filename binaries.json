@@ -58,6 +58,16 @@
         "darwin-arm64": "2d84a4a04c87d353f5eb78195eaa3db5f230d90fdaba289aadb8a9844126d788",
         "linux-amd64": "8692e9597376db7519d2d77af576701fe848fa68e311b31c6af6c35279530ba4"
       }
+    },
+    "xone": {
+      "_comment": "xone-native (XDCIndia/xOneGo), the go-ethereum-derived XDPoS reference client. Only linux-amd64 published so far; other platforms fall back to a source build (lib.sh). NOTE: use `xone --version` (not the `version` subcommand, which boots a node).",
+      "file": "xone-{os}-{arch}",
+      "archive": "none",
+      "produces": { "xone": "" },
+      "platforms": ["linux-amd64"],
+      "sha256": {
+        "linux-amd64": "45cb62ceeb610fa66f755a5db6a3b16eeaebd7c891b01c78ef759a34c55b07ad"
+      }
     }
   }
 }
