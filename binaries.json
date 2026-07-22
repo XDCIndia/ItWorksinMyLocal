@@ -33,7 +33,7 @@
       "sha256": {
         "darwin-amd64": "189f4a1a8f595232a834456722cc17f22571a4ee0339cb4b89b51d2b53526cee",
         "darwin-arm64": "36c35bcd13a5570608f9dfaf733e2486c0c00b830afd7525be82d7a13471107f",
-        "linux-amd64": "da4253ade637f33a5b852f7af954dc2e8f5653c77b377f2e18c6636203b71f7a",
+        "linux-amd64": "e05bc7ec0f1ce10b69c7e49b0149f90d3c46d361acb846de73ae648a36b45fa3",
         "linux-arm64": "425dc422c7f1eecfbd655fdecff8827f208adee73b8060ffdde9507513497630"
       }
     },
