@@ -35,8 +35,6 @@
 # Uses inline python3 for the JSON parse/validate/resolve (already a hard
 # dependency across this repo -- lab/lib-lab.sh, gen-genesis.sh, etc).
 
-set -u
-
 _NETLAB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit 1
 REPO_ROOT="$(cd "$_NETLAB_DIR/.." && pwd)" || exit 1
 
