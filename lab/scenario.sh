@@ -21,16 +21,22 @@
 #
 # This runner sources scenario files one at a time (so each file's SCEN_*
 # metadata is captured before the next file can overwrite it), calls
-# lab_teardown before and after each run for isolation, and -- when run
-# with --all -- writes results/summary.md (id, priority, verdict, reason,
-# duration). An empty scenarios/ directory is not an error: it just means
-# there's nothing to run yet.
+# lab_teardown AND topo_down (ItWorksinMyLocal#46 T2.1 -- idempotent,
+# no-op if no netlab topology is up) before and after each run for
+# isolation, and -- when run with --all -- writes results/summary.md (id,
+# priority, verdict, reason, duration). An empty scenarios/ directory is
+# not an error: it just means there's nothing to run yet.
 
 _SELF_DIR="$(cd "$(dirname "$0")" && pwd)" || exit 1
 _SELF="$_SELF_DIR/$(basename "$0")"
 cd "$_SELF_DIR" || exit 1
 # shellcheck source=lib-lab.sh
 source ./lib-lab.sh
+# ItWorksinMyLocal#46 T2.1: topo_up/topo_down/topo_rpc/topo_nodes/topo_stop,
+# so any scenario -- and this file's own generic teardown below -- can
+# drive a netlab topology.
+# shellcheck source=lib-topo.sh
+source ./lib-topo.sh
 
 SCEN_DIR="$LAB_DIR/scenarios"
 
@@ -79,6 +85,7 @@ _run_one() {
   fn="scen_${id}"
 
   lab_teardown >/dev/null 2>&1
+  topo_down >/dev/null 2>&1  # idempotent (T2.1): no-op if no topology is up
 
   if ! declare -F "$fn" >/dev/null 2>&1; then
     printf '%s|%s|FAIL|no function %s() defined in %s|0s\n' "$id" "${SCEN_PRIORITY:-?}" "$fn" "$file"
@@ -103,6 +110,7 @@ _run_one() {
   printf '%s|%s|%s|%s|%ss\n' "$id" "${SCEN_PRIORITY:-?}" "$verdict" "$reason" "$dur"
 
   lab_teardown >/dev/null 2>&1
+  topo_down >/dev/null 2>&1  # idempotent (T2.1): no-op if no topology is up
 }
 
 _run_all() {
