@@ -22,7 +22,7 @@
 #   --host IP[:PORT]     alias of --ip
 #   --client C           node client: oldxdc (default) | geth | erigon | besu |
 #                        nethermind | reth | all. "all" boots every client at
-#                        once, each in its own datadir (./peer-<client>) with a
+#                        once, each in its own datadir (nodes/<client>-<type>) with a
 #                        distinct port set, all joining the same network -- a
 #                        one-command cross-client bring-up. Only oldxdc can seal
 #                        (--mine); all others join sync-only. All clients default
@@ -44,7 +44,8 @@
 #                        needs these to peer with an XDPoS net; its discv4 doesn't
 #                        discover peers through an XDPoSChain bootnode)
 #   --networkid N        network id (default: chainId from the genesis)
-#   --datadir DIR        where to store this peer's data (default ./peer)
+#   --datadir DIR        where to store this peer's data (default
+#                        nodes/<client>-<nodetype>, e.g. nodes/geth-sync)
 #   --name NAME          node identity shown to peers/ethstats (default <host>-sync)
 #   --port N             p2p port (per-client default: oldxdc 30313 / geth 30323
 #                        / erigon 30333 -- clear of run.sh, no cross-client clash)
@@ -64,8 +65,14 @@ _interupt() { echo "Shutdown $child_proc"; kill -TERM $child_proc 2>/dev/null; e
 trap _interupt INT TERM
 
 cd "$(dirname "$0")" || exit 1
+# Absolute path to THIS script, resolved after the cd above, so the --client all
+# fan-out can re-invoke it reliably however it was started -- `./join.sh`,
+# `bash join.sh` (where $0 is a bare "join.sh" not on PATH), or an absolute path.
+SELF="$PWD/$(basename "$0")"
 
-GENESIS=""; BOOTNODES=""; NETWORKID=""; DATADIR="./peer"; NAME=""; HOST_IP=""; CHAIN=""
+# DATADIR empty here means "use the default convention" (nodes/<client>-<type>),
+# computed once the client is known; an explicit --datadir always wins.
+GENESIS=""; BOOTNODES=""; NETWORKID=""; DATADIR=""; NAME=""; HOST_IP=""; CHAIN=""
 MINEADDR=""; STATICPEERS=""
 # Ports are left empty here and defaulted PER CLIENT after --client is known, so
 # oldxdc/geth/erigon joins each get a distinct set (clear of run.sh) and can run
@@ -97,7 +104,7 @@ while [ $# -gt 0 ]; do
     --staticpeers) STATICPEERS=$2; shift 2;;
     --ethstats)    ETHSTATS=$2; shift 2;;
     --no-ethstats) ETHSTATS=""; shift;;
-    -h|--help)     sed -n '2,40p' "$0" | sed 's/^# \{0,1\}//'; exit 0;;
+    -h|--help)     sed -n '2,62p' "$0" | sed 's/^# \{0,1\}//'; exit 0;;
     *) echo "unknown flag: $1" >&2; exit 1;;
   esac
 done
@@ -154,24 +161,38 @@ if [ "$CLIENT" = all ]; then
   [ -n "$CHAIN" ]       && shared+=(--chain "$CHAIN")
   [ -n "$MINEADDR" ]    && shared+=(--mine "$MINEADDR")   # only oldxdc seals; others print "ignored"
   if [ -n "$ETHSTATS" ]; then shared+=(--ethstats "$ETHSTATS"); else shared+=(--no-ethstats); fi
+  # Base directory for the per-client chaindata: a custom --datadir wins, else the
+  # shared ./nodes tree (clear of run.sh's numbered nodes/1..N local net).
+  base="${DATADIR:-nodes}"
   all_pids=()
   trap 'echo "[all] stopping ${#all_pids[@]} client(s)..."; for p in "${all_pids[@]}"; do kill -TERM "$p" 2>/dev/null; done; exit 0' INT TERM
   for c in $ALL_CLIENTS; do
-    # Per-client datadir suffix so the six chains never share chaindata
-    # (./peer -> ./peer-geth, ./peer-erigon, ...; a custom --datadir is suffixed too).
-    dd="${DATADIR}-${c}"
+    # Each client's chaindata lands in nodes/<client>-<nodetype> so the six chains
+    # never share a datadir. Only oldxdc can seal (--mine); the rest join sync-only.
+    nt=sync; [ -n "$MINEADDR" ] && [ "$c" = oldxdc ] && nt=seal
+    dd="${base}/${c}-${nt}"
     args=(--client "$c" --datadir "$dd" "${shared[@]}")
     # Distinct ethstats/identity name per client when the user forced one (the
     # per-client default name already embeds the client, so only needed here).
     [ -n "$NAME" ] && args+=(--name "${NAME}-${c}")
     echo "=== [all] launching $c  (datadir $dd) ==="
-    "$0" "${args[@]}" &
+    bash "$SELF" "${args[@]}" &
     all_pids+=($!)
   done
   echo "[all] launched ${#all_pids[@]} client(s): $ALL_CLIENTS"
-  echo "[all] each syncs in ./${DATADIR#./}-<client>; Ctrl-C stops all"
+  echo "[all] each syncs in ${base}/<client>-<nodetype>; Ctrl-C stops all"
   wait
   exit 0
+fi
+
+# Default datadir: nodes/<client>-<nodetype>, so every client's chaindata lives
+# under ./nodes (clear of run.sh's numbered nodes/1..N local net) and different
+# clients never share a datadir. nodetype is "seal" when this client will mine
+# (oldxdc + --mine), else "sync". An explicit --datadir always wins.
+if [ -z "$DATADIR" ]; then
+  NODETYPE=sync
+  [ -n "$MINEADDR" ] && case "$CLIENT" in oldxdc) NODETYPE=seal;; esac
+  DATADIR="nodes/${CLIENT}-${NODETYPE}"
 fi
 
 # Per-client default ports (offset by client) so oldxdc/geth/erigon/besu/
