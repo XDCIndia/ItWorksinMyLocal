@@ -20,10 +20,13 @@ A quick, plain-English cheat-sheet. All are run from this folder, e.g. `./setup.
 Runs the whole flow end to end: generate keys → derive who the validators are →
 build the genesis with them → wipe old data → launch the network.
 - `./setup.sh` — reuse the keys already in `.env`
-- `./setup.sh --new` — generate brand-new keys first
+- `./setup.sh --new` — generate brand-new keys first; also builds the modern
+  go-ethereum client and ends with the **mixed topology** running: nodes 1-4
+  are the legacy oldxdc sealers as before, plus node 5 — modern geth, syncing
+  the same chain from genesis as a read-only follower (`run.sh --mixed`)
 - `./setup.sh --new 4` — generate N new keys
-- `./setup.sh --client geth` — build the modern go-ethereum client (`oldxdc` is
-  the default; `geth` is build-only for now — its run profile is TODO)
+- `./setup.sh --client geth` — build-only: just the modern go-ethereum client,
+  no network launch (`oldxdc` is the implicit default for everything else)
 
 ### `gen-address.sh` — make new accounts
 Prints, for each account, a **private key** (its secret password) and an
@@ -44,6 +47,14 @@ balances). Everything has sensible defaults; override with flags:
 Starts the local bootnode (the "phone book") and 4 mining nodes using the
 existing `.env` keys and `genesis.json`. Rebuilds the programs only if they're
 missing or you set `REBUILD=1`.
+- `./run.sh --mixed` (or `MIXED=1 ./run.sh`) — also starts node 5: modern
+  go-ethereum, initialised from the same genesis, syncing (not mining) from
+  block 0 alongside the 4 legacy sealers. Expects the modern geth binary to
+  already be built (`./setup.sh --client geth`, or `./setup.sh --new` builds
+  both); node 5 is not built by `run.sh` itself.
+- `BASE_P2P_PORT` / `BASE_RPC_PORT` / `BASE_WS_PORT` — move the whole node
+  1-5 port range off its defaults (30303-30307 / 8545-8549 / 8555-8559) if
+  something else on the host already uses them.
 
 ### `network-info.sh` — review the network
 Reads the current files and prints a friendly report: chain id, block time, the

@@ -8,6 +8,24 @@ _interupt() {
 trap _interupt INT TERM
 
 cd "$(dirname "$0")" || exit 1
+
+# --mixed (or MIXED=1 in the environment/.env): also launch a 5th node --
+# modern go-ethereum, sync-only (no --mine), joining from genesis alongside
+# the 4 legacy oldxdc sealers below. Default is unchanged (4 legacy sealers
+# only).
+MIXED="${MIXED:-0}"
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --mixed) MIXED=1; shift;;
+    -h|--help)
+      echo "usage: ./run.sh [--mixed]"
+      echo "  --mixed   also start node 5: modern geth, sync-only, from genesis"
+      echo "            (same as MIXED=1 ./run.sh)"
+      exit 0;;
+    *) echo "usage: ./run.sh [--mixed]" >&2; exit 1;;
+  esac
+done
+
 source ./lib.sh
 require_oldxdc
 
@@ -20,15 +38,34 @@ set +a
 Bin_NAME=XDC
 NUM_NODES=4
 
+# Base ports for the whole local net (nodes 1-4 use BASE+1..BASE+4, and when
+# --mixed is set node 5 uses BASE+5) -- override to move the entire topology
+# off a set of ports already in use on a shared host, e.g.:
+#   BASE_P2P_PORT=31302 BASE_RPC_PORT=9544 BASE_WS_PORT=9554 ./run.sh --mixed
+BASE_P2P_PORT="${BASE_P2P_PORT:-30302}"
+BASE_RPC_PORT="${BASE_RPC_PORT:-8544}"
+BASE_WS_PORT="${BASE_WS_PORT:-8554}"
+
 # Ensure platform-native binaries exist (builds from XDPoSChain if needed).
 ensure_bins
 XDC="$XDC_BIN"
+
+# Modern geth binary for node 5 (--mixed only). Never built here -- setup.sh
+# (or an explicit `CLIENT=geth ./lib.sh`-style build) must have produced it
+# already; resolve it via lib.sh's per-client BIN_DIR unless overridden.
+MODERN_GETH_BIN="${MODERN_GETH_BIN:-$_LIB_DIR/bin/geth/$PLATFORM/geth}"
+if [ "$MIXED" = 1 ] && [ ! -x "$MODERN_GETH_BIN" ]; then
+  echo "run.sh --mixed: modern geth binary not found at $MODERN_GETH_BIN" >&2
+  echo "  build it first, e.g.:  (CLIENT=geth; source ./lib.sh; ensure_bins)" >&2
+  echo "  or set MODERN_GETH_BIN=/path/to/geth" >&2
+  exit 1
+fi
 
 # Machine identity: hostname + LAN IP (advertised to peers so this works across
 # machines on the same network, not just localhost).
 HOST=$(hostname -s)
 IP=$(detect_ip)
-echo "Machine: host=$HOST ip=$IP platform=$PLATFORM"
+echo "Machine: host=$HOST ip=$IP platform=$PLATFORM mixed=$MIXED"
 
 # Import keys + init on first run, otherwise read the existing accounts.
 declare -a WALLETS
@@ -54,6 +91,41 @@ else
   done
 fi
 
+# Node 5 (--mixed only): modern geth, sync-only follower, inited from the
+# SAME genesis file as nodes 1-4. Its chaindata lives under nodes/5/XDC (the
+# modern go-ethereum fork keeps the legacy "XDC" datadir subdirectory name),
+# same layout join.sh already assumes for this client.
+if [ "$MIXED" = 1 ] && [ ! -d ./nodes/5/XDC/chaindata ]; then
+  echo "Initialising node 5 (modern geth) from ./genesis/genesis.json ..."
+  "$MODERN_GETH_BIN" --datadir ./nodes/5 init ./genesis/genesis.json
+fi
+
+# Genesis-hash agreement check (--mixed only): modern geth and legacy oldxdc
+# must compute the SAME genesis hash from the same genesis.json, or geth will
+# be rejected at the eth/XDPoS handshake (0 peers, never syncs). Compare them
+# up front so a mismatch is obvious immediately rather than discovered as a
+# silent "node 5 stuck at peers=0".
+if [ "$MIXED" = 1 ]; then
+  # --port 0 --nodiscover (+ a throwaway --authrpc.port for geth): these are
+  # one-shot local reads of the already-inited genesis block, not real nodes
+  # -- keep them off the network entirely so they can't collide with any
+  # port already in use on the host (including the P2P ports nodes 1-4/5
+  # are about to bind below).
+  LEGACY_GENESIS_HASH=$("$XDC" --datadir ./nodes/1 --port 0 --nodiscover --exec 'eth.getBlock(0).hash' console 2>/dev/null | tail -1 | tr -d '"')
+  MODERN_GENESIS_HASH=$("$MODERN_GETH_BIN" --datadir ./nodes/5 --port 0 --nodiscover --authrpc.port 0 --exec 'eth.getBlock(0).hash' console 2>/dev/null | tail -1 | tr -d '"')
+  echo "Genesis hash (legacy XDC,   node1): ${LEGACY_GENESIS_HASH:-<unavailable>}"
+  echo "Genesis hash (modern geth,  node5): ${MODERN_GENESIS_HASH:-<unavailable>}"
+  if [ -n "$LEGACY_GENESIS_HASH" ] && [ -n "$MODERN_GENESIS_HASH" ]; then
+    if [ "$LEGACY_GENESIS_HASH" = "$MODERN_GENESIS_HASH" ]; then
+      echo "Genesis hashes MATCH -- node 5 can peer with the legacy sealers."
+    else
+      echo "WARNING: genesis hashes DO NOT MATCH -- node 5 will be rejected at handshake (0 peers) and never sync." >&2
+    fi
+  else
+    echo "WARNING: could not read one or both genesis hashes (see above) -- comparison inconclusive." >&2
+  fi
+fi
+
 VERBOSITY=3
 GASPRICE="1"
 STATS_SECRET="xdc_openscan_stats_2026"
@@ -73,9 +145,9 @@ child_proc=$!
 echo Starting the nodes ...
 for i in $(seq 1 $NUM_NODES); do
   n=$(printf '%02d' $i)
-  P2P_PORT=$((30302 + i))   # node1 -> 30303 ... node4 -> 30306
-  WS_PORT=$((8554 + i))     # 8555 .. 8558
-  RPC_PORT=$((8544 + i))    # 8545 .. 8548
+  P2P_PORT=$((BASE_P2P_PORT + i))   # node1 -> BASE+1 ... node4 -> BASE+4 (default 30303..30306)
+  WS_PORT=$((BASE_WS_PORT + i))     # default 8555..8558
+  RPC_PORT=$((BASE_RPC_PORT + i))   # default 8545..8548
   NODE_NAME="${Bin_NAME}-v${VERSION}-${HOST}-MasterNode-${n}"
   NODE_IDENTITY="${HOST}-MasterNode-${n}"
   ETHSTATS="${NODE_NAME}:${STATS_SECRET}@stats.xdcindia.com:443"
@@ -89,5 +161,28 @@ for i in $(seq 1 $NUM_NODES); do
     --ethstats "${ETHSTATS}" &
   child_proc="$child_proc $!"
 done
+
+if [ "$MIXED" = 1 ]; then
+  echo "Starting node 5 (modern geth, sync-only follower) ..."
+  P2P_PORT5=$((BASE_P2P_PORT + 5))   # default 30307
+  WS_PORT5=$((BASE_WS_PORT + 5))     # default 8559
+  RPC_PORT5=$((BASE_RPC_PORT + 5))   # default 8549
+  # Modern geth always starts an authrpc (Engine API) listener even though
+  # XDPoS doesn't use it here; it defaults to 127.0.0.1:8551, which is
+  # commonly already taken by another node on a shared host and would
+  # otherwise crash node 5 at startup ("address already in use"). Give it
+  # its own offset, well clear of the BASE+1..BASE+5 range used above.
+  AUTHRPC_PORT5=$((BASE_RPC_PORT + 55))
+  NODE5_IDENTITY="${HOST}-ModernGeth-05"
+  ETHSTATS5="itlocal-modern-geth-${HOST}-05:${STATS_SECRET}@stats.xdcindia.com:443"
+  "$MODERN_GETH_BIN" --datadir ./nodes/5 --networkid "${networkid}" --syncmode full \
+    --bootnodes "$BOOTNODE_ENODE" --port "$P2P_PORT5" --nat "extip:${IP}" \
+    --http --http.addr 0.0.0.0 --http.port "$RPC_PORT5" --http.vhosts "*" --http.corsdomain "*" \
+    --http.api eth,net,web3,txpool,debug,admin,XDPoS \
+    --ws --ws.addr 0.0.0.0 --ws.origins "*" --ws.port "$WS_PORT5" --ws.api eth,net,web3,XDPoS \
+    --authrpc.port "$AUTHRPC_PORT5" \
+    --identity "${NODE5_IDENTITY}" --ethstats "${ETHSTATS5}" &
+  child_proc="$child_proc $!"
+fi
 
 wait

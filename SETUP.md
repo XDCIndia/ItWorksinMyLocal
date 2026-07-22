@@ -71,7 +71,10 @@ after that it starts in about **20–30 seconds**.
 2. **Builds the rulebook** (the "genesis") that says who's allowed to create blocks.
 3. **Clears any old data** so you start clean.
 4. **Starts everything** — the 4 nodes plus a small "phone book" service
-   (the *bootnode*) that helps them find each other.
+   (the *bootnode*) that helps them find each other, plus a 5th node running
+   the modern go-ethereum client that just listens in and copies the same
+   blocks (it never creates any) — a quick way to see a different program
+   agreeing with the 4 nodes above.
 
 ---
 

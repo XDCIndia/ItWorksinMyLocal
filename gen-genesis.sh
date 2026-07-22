@@ -17,13 +17,43 @@
 #   --signers a,b,c           masternode/sealer addresses (>=1)
 #   --reward N                block reward (default 5000)
 #   --v2block N               v2 consensus switch block (default 2700)
-#   --epoch N                 blocks per epoch (default 900)
+#   --epoch N                 blocks per epoch (default 900). WARNING: legacy
+#                             oldxdc hardcodes its own internal checkpoint
+#                             constant (EpocBlockRandomize=900), decoupled
+#                             from this genesis field -- any --epoch other
+#                             than 900 freezes the chain at the first
+#                             checkpoint attempt ("Block sealing failed:
+#                             can't get block validator: this block is not
+#                             checkpoint block", repeating forever). Keep it
+#                             at 900 (the default) unless/until that legacy
+#                             constant is fixed; see lab/gen-lab-genesis.sh's
+#                             "finding F1" comment, discovered the same way.
 #   --gap N                   blocks before checkpoint (default 450)
+#   --period N                block time in seconds (leave unset to keep
+#                             puppeth's own default, 2). Post-processed like
+#                             --skip-v1-validation; doesn't affect the
+#                             genesis hash. Useful for reaching the
+#                             (mandatory, see --epoch above) 900-block
+#                             checkpoint faster in a test, e.g. --period 1.
 #   --foundation ADDR         foundation wallet
 #   --foundation-owners a,b   foundation multisig confirmers
 #   --team-owners a,b         team multisig confirmers
 #   --swap ADDR               swap wallet (55m fund)
 #   --prefund a,b             pre-funded accounts
+#   --skip-v1-validation B    true|false: post-process config.XDPoS.SkipV1Validation
+#                             (default: leave puppeth's own default, false, alone).
+#                             Setting true disables the v1 double-validation
+#                             "blocksigner" system transactions (calls to the
+#                             0x...89 contract each masternode submits per
+#                             block) -- needed for a mixed legacy+modern-geth
+#                             network: the modern go-ethereum XDC fork (as of
+#                             v1.17.4-xdc.7) computes a different gas cost for
+#                             those transactions than legacy oldxdc does
+#                             (observed: legacy 340232 vs modern 354632, a
+#                             consistent +3600/tx), which desyncs a modern
+#                             geth follower with "invalid gas used" a few
+#                             blocks after genesis. This does not change the
+#                             genesis hash (config isn't part of the header).
 #   --out FILE                output path (default genesis/genesis.json)
 
 NETWORK=localdpos
@@ -39,6 +69,8 @@ FOUNDATION_OWNERS=F7dC23CF42AE8Bf1225e9D411E566eA1484554dd,5cDdE6F2bE1e5E4647491
 TEAM_OWNERS=5cDdE6F2bE1e5E464749104aF42753D6c8Bff42C,F7dC23CF42AE8Bf1225e9D411E566eA1484554dd
 SWAP=b49a187961E310fBEa9071975fAe9F497fD3A938
 PREFUND=29E07C0905FECcD3b4a35A0C3Ea86c48cbEa893E
+SKIP_V1_VALIDATION=""
+PERIOD=""
 OUT=genesis/genesis.json
 
 while [ $# -gt 0 ]; do
@@ -56,6 +88,8 @@ while [ $# -gt 0 ]; do
     --team-owners) TEAM_OWNERS=$2; shift 2;;
     --swap) SWAP=$2; shift 2;;
     --prefund) PREFUND=$2; shift 2;;
+    --skip-v1-validation) SKIP_V1_VALIDATION=$2; shift 2;;
+    --period) PERIOD=$2; shift 2;;
     --out) OUT=$2; shift 2;;
     -h|--help) sed -n '2,40p' "$0" | sed 's/^# \{0,1\}//'; exit 0;;
     *) echo "unknown flag: $1" >&2; exit 1;;
@@ -100,6 +134,26 @@ rm -rf "$HOME/.puppeth/$NETWORK" "$NETWORK.json"
 if [ -f "$NETWORK.json" ]; then
   mkdir -p "$(dirname "$OUT")"
   cp "$NETWORK.json" "$OUT"
+  if [ -n "$SKIP_V1_VALIDATION" ]; then
+    python3 -c "
+import json, sys
+path, flag = sys.argv[1], sys.argv[2].strip().lower() in ('1', 'true', 'yes')
+d = json.load(open(path))
+d['config']['XDPoS']['SkipV1Validation'] = flag
+json.dump(d, open(path, 'w'))
+print('SkipV1Validation set to', flag, 'in', path)
+" "$OUT" "$SKIP_V1_VALIDATION"
+  fi
+  if [ -n "$PERIOD" ]; then
+    python3 -c "
+import json, sys
+path, period = sys.argv[1], int(sys.argv[2])
+d = json.load(open(path))
+d['config']['XDPoS']['period'] = period
+json.dump(d, open(path, 'w'))
+print('period set to', period, 'in', path)
+" "$OUT" "$PERIOD"
+  fi
   # Record the role -> address mapping so network-info.sh can label accounts.
   {
     echo "NETWORK=$NETWORK"
