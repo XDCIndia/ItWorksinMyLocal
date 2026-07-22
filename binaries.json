@@ -22,7 +22,7 @@
       "produces": { "erigon": "" },
       "platforms": ["linux-amd64"],
       "sha256": {
-        "linux-amd64": "25cae0a026154d4401f5f8a2efc9f86c5ee00a9a44523797deeeb30c4200433d"
+        "linux-amd64": "6618bd4fa9697c33e446f973b74d6cf47e96ffe468204fcaf42f6c8ed8dbe9df"
       }
     },
     "reth": {
