@@ -21,10 +21,12 @@
 #                        (overrides --ip; default: derived from ./bootnode.key)
 #   --host IP[:PORT]     alias of --ip
 #   --client C           node client: oldxdc (default) | geth | erigon | besu |
-#                        nethermind | reth | all. "all" boots every client at
-#                        once, each in its own datadir (nodes/<client>-<type>) with a
-#                        distinct port set, all joining the same network -- a
-#                        one-command cross-client bring-up. Only oldxdc can seal
+#                        nethermind | reth | xone | all. xone is the go-ethereum-
+#                        derived XDPoS reference client (XDCIndia/xOneGo). "all"
+#                        boots every client at once, each in its own datadir
+#                        (nodes/<client>-<type>) with a distinct 100-wide port
+#                        block, all joining the same network -- a one-command
+#                        cross-client bring-up. Only oldxdc can seal
 #                        (--mine); all others join sync-only. All clients default
 #                        to a
 #                        prebuilt-binary download (binaries.json) for this
@@ -49,10 +51,11 @@
 #   --name NAME          node identity shown to peers/ethstats (default
 #                        <client>-v<ver>-<host>-<nodetype>; <host> comes from
 #                        MACHINE in network.env/env, else the hostname)
-#   --port N             p2p port (per-client default: oldxdc 30313 / geth 30323
-#                        / erigon 30333 -- clear of run.sh, no cross-client clash)
-#   --rpcport N          JSON-RPC port (oldxdc 8595 / geth 8605 / erigon 8615)
-#   --wsport N           WebSocket port (oldxdc 8596 / geth 8606 / erigon 8616)
+#   --port N             p2p port (per-client default: oldxdc 31413 / geth 31513
+#                        / erigon 31613 / … / xone 32013 -- 100 apart, clear of
+#                        run.sh and validator ports, no cross-client clash)
+#   --rpcport N          JSON-RPC port (oldxdc 9645 / geth 9745 / … / xone 10245)
+#   --wsport N           WebSocket port (JSON-RPC port + 1)
 #   --mine KEY           also mine, unlocking this address (oldxdc only; needs a
 #                        validator key in .env). Ignored by geth/erigon.
 #   --ethstats SPEC      ethstats target (ON by default, same as run.sh). SPEC
@@ -106,7 +109,7 @@ while [ $# -gt 0 ]; do
     --staticpeers) STATICPEERS=$2; shift 2;;
     --ethstats)    ETHSTATS=$2; shift 2;;
     --no-ethstats) ETHSTATS=""; shift;;
-    -h|--help)     sed -n '2,62p' "$0" | sed 's/^# \{0,1\}//'; exit 0;;
+    -h|--help)     sed -n '2,67p' "$0" | sed 's/^# \{0,1\}//'; exit 0;;
     *) echo "unknown flag: $1" >&2; exit 1;;
   esac
 done
@@ -151,7 +154,7 @@ fi
 # A client whose extra inputs are missing (erigon needs --chain; nethermind needs
 # a dist) exits with its own hint and is skipped -- the rest keep syncing.
 if [ "$CLIENT" = all ]; then
-  ALL_CLIENTS="oldxdc geth erigon besu nethermind reth"
+  ALL_CLIENTS="oldxdc geth erigon besu nethermind reth xone"
   # Forward the shared, already-resolved network inputs to every child so they all
   # dial the SAME network (and a child doesn't re-run default resolution).
   shared=()
@@ -198,17 +201,21 @@ NODETYPE=sync
 # clients never share a datadir. An explicit --datadir always wins.
 [ -z "$DATADIR" ] && DATADIR="nodes/${CLIENT}-${NODETYPE}"
 
-# Per-client default ports (offset by client) so oldxdc/geth/erigon/besu/
-# nethermind/reth joins never clash with each other or with a running ./run.sh
-# (30301, 30303-6, 8545-8, 8555-8).
-case "$CLIENT" in geth) O=10;; erigon) O=20;; besu) O=30;; nethermind) O=40;; reth) O=50;; *) O=0;; esac
-PORT="${PORT:-$((30313 + O))}"
-RPCPORT="${RPCPORT:-$((8595 + O))}"
-WSPORT="${WSPORT:-$((8596 + O))}"
-AUTHRPC_PORT="${AUTHRPC_PORT:-$((8651 + O))}"
-TORRENT_PORT="${TORRENT_PORT:-$((42079 + O))}"
-MCP_PORT="${MCP_PORT:-$((8653 + O))}"
-PRIVAPI="${PRIVAPI:-127.0.0.1:$((9095 + O))}"
+# Per-client default ports: a 100-wide block per client so all seven join clients
+# run side by side with no cross-client clash, in a high band kept clear of
+# run.sh's local net (30301, 30303-6, 8545-58), any XDPoS validator ports
+# (85xx / 91xx / 99xx / 310xx), and the previous join defaults (83xx/85-86xx/
+# 30313+) -- so a `--client all` fan-out won't collide with those or a second run.
+case "$CLIENT" in
+  geth) O=100;; erigon) O=200;; besu) O=300;; nethermind) O=400;; reth) O=500;; xone) O=600;; *) O=0;;
+esac
+PORT="${PORT:-$((31413 + O))}"                  # p2p     31413..32013
+RPCPORT="${RPCPORT:-$((9645 + O))}"             # http    9645..10245
+WSPORT="${WSPORT:-$((RPCPORT + 1))}"            # ws      http+1
+AUTHRPC_PORT="${AUTHRPC_PORT:-$((10645 + O))}"  # authrpc 10645..11245
+TORRENT_PORT="${TORRENT_PORT:-$((42579 + O))}"  # erigon torrent
+MCP_PORT="${MCP_PORT:-$((10653 + O))}"          # erigon mcp
+PRIVAPI="${PRIVAPI:-127.0.0.1:$((11645 + O))}"  # erigon private api
 
 # Validate required inputs BEFORE building (a build can take minutes).
 case "$CLIENT" in
@@ -341,9 +348,18 @@ if [ -z "$NAME" ]; then
     erigon)     VER=$("$XDC" --version 2>/dev/null | head -1 | awk '{print $NF}') ;;
     besu|reth)  VER=$("$CLIENT_BIN" --version 2>/dev/null | head -1 | awk '{print $NF}') ;;
     nethermind) VER=$("$CLIENT_BIN" --version 2>/dev/null | grep -oiE '[0-9]+\.[0-9]+[^ ]*' | head -1) ;;
+    # xone MUST use --version: its `version` SUBCOMMAND launches a full node
+    # (unknown-subcommand -> node boot), which would hang here. "xone v1.0.0 (…)".
+    xone)       VER=$("$XDC" --version 2>/dev/null | awk '{print $2}' | sed 's/^v//') ;;
     *)          VER=$("$XDC" version 2>/dev/null | awk '/^Version:/{print $2; exit}') ;;
   esac
   NAME="${CLIENT}-v${VER:-0}-${HOST}-${NODETYPE}"
+  # Append the node's IP, then its coinbase if this node mines (--mine). Keeps the
+  # <client>-name-type base and extends it, so each node is identifiable on the
+  # dashboard by where it runs and (for sealers) which address it mints to. IP
+  # dots -> dashes to stay one clean token; coinbase shortened to 0x+8 hex.
+  NAME="${NAME}-${IP//./-}"
+  [ -n "$MINEADDR" ] && NAME="${NAME}-${MINEADDR:0:10}"
 fi
 # ethstats/identity names must not contain URL-breaking characters -- some client
 # --version strings (notably besu's "besu/vX/os/jvm") contain '/', which breaks the
@@ -493,6 +509,21 @@ elif [ "$CLIENT" = nethermind ]; then
     --JsonRpc.Port "$RPCPORT" --JsonRpc.WebSocketsPort "$WS_PORT" --JsonRpc.Host 127.0.0.1 \
     --Network.StaticPeers "$BOOTNODES" \
     $NM_ES ) &
+elif [ "$CLIENT" = xone ]; then
+  # xone-native (XDCIndia/xOneGo): go-ethereum-derived XDPoS client with
+  # single-dash flags. Sync-only join here -- it recognises XDPoS from the genesis
+  # (config-driven) and inits from -override.genesis on a fresh datadir. Sealing
+  # needs a raw -miner.key, which a sync join doesn't carry, so --mine is noted.
+  [ -n "$MINEADDR" ] && echo "note: --mine ignored (xone join is sync-only; sealing needs -miner.key)" >&2
+  mkdir -p "$DATADIR"
+  XONE_ES=""; [ -n "$full" ] && XONE_ES="-ethstats $full"
+  "$XDC" -override.genesis "$GENESIS" -networkid "$NETWORKID" -syncmode full \
+    -datadir "$DATADIR" -port "$PORT" -discovery.port "$PORT" -nat "extip:${IP}" \
+    -bootnodes "$BOOTNODES" \
+    -http -http.addr 0.0.0.0 -http.port "$RPCPORT" -http.vhosts "*" \
+    -http.api eth,net,web3,admin,debug,txpool,XDPoS \
+    -authrpc.port "$AUTHRPC_PORT" \
+    $XONE_ES &
 else
   # oldxdc (XDPoSChain): classic flags; --mine unlocks a validator to also seal.
   MINE_FLAGS=""

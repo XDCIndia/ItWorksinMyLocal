@@ -68,6 +68,16 @@ case "$CLIENT" in
     CLIENT_TARGETS=""
     NODE_NAME_BIN="xdc-reth"
     ;;
+  xone)
+    # xone-native (XDCIndia/xOneGo): the go-ethereum-derived XDPoS client, the
+    # reference mainnet-parity node. Prebuilt is downloaded (binaries.json xone);
+    # a source build is the fallback when present. Uses single-dash flags.
+    CLIENT=xone
+    XDPOS_REPO="${XDPOS_REPO:-https://github.com/XDCIndia/xOneGo}"
+    XDPOS_DIR="${XDPOS_DIR:-$_LIB_DIR/../xOneGo}"
+    CLIENT_TARGETS="xone"
+    NODE_NAME_BIN="xone"
+    ;;
   all)
     # Meta-client: join.sh fans "all" out to one child process per real client
     # (each re-sources lib.sh with its own concrete client). The dispatcher itself
