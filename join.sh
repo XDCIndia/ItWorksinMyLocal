@@ -57,6 +57,22 @@
 #                        run.sh and validator ports, no cross-client clash)
 #   --rpcport N          JSON-RPC port (oldxdc 9645 / geth 9745 / … / xone 10245)
 #   --wsport N           WebSocket port (JSON-RPC port + 1)
+#   --authrpc-port N     authenticated-RPC port (erigon/reth/xone; also
+#                        env AUTHRPC_PORT). Per-client default as above.
+#   --torrent-port N     erigon BitTorrent port (also env TORRENT_PORT).
+#   --privapi ADDR:PORT  erigon private API address (also env PRIVAPI).
+#   --mcp-port N         erigon MCP port (also env MCP_PORT).
+#                        The four flags above (and their env vars) let two
+#                        instances of the SAME client run side by side --
+#                        otherwise they'd collide on the per-client default.
+#   --maxpeers N         cap the max peer count (also env MAXPEERS). Passed
+#                        through per client: oldxdc/geth/erigon --maxpeers,
+#                        besu --max-peers, reth --max-peers, nethermind
+#                        --Network.MaxActivePeers, xone -maxpeers. Omitted
+#                        (client's own default applies) unless given --
+#                        geth's own default of 25 is unchanged either way.
+#   --etherbase ADDR     oldxdc --mine only: block-reward address (also env
+#                        ETHERBASE). Omitted (client default) unless given.
 #   --mine KEY           also mine, unlocking this address (oldxdc only; needs a
 #                        validator key in .env). Ignored by geth/erigon.
 #   --ethstats SPEC      ethstats target (ON by default, same as run.sh). SPEC
@@ -84,7 +100,17 @@ MINEADDR=""; STATICPEERS=""
 # oldxdc/geth/erigon joins each get a distinct set (clear of run.sh) and can run
 # side by side without conflict. Any explicit flag below wins.
 PORT=""; RPCPORT=""; WSPORT=""
-AUTHRPC_PORT=""; TORRENT_PORT=""; PRIVAPI=""; MCP_PORT=""
+# AUTHRPC/TORRENT/PRIVAPI/MCP default PER CLIENT below too, but (unlike PORT/
+# RPCPORT/WSPORT above) they also honor a pre-set env var of the same name --
+# needed so two instances of the SAME client (e.g. netlab/ running N oldxdc
+# nodes) can each get a distinct authrpc/torrent/privapi/mcp port without a
+# --flag per instance. A bare `AUTHRPC_PORT=""` here would silently discard
+# that env value, so use the "${VAR:-}" no-op-if-set form instead.
+AUTHRPC_PORT="${AUTHRPC_PORT:-}"; TORRENT_PORT="${TORRENT_PORT:-}"
+PRIVAPI="${PRIVAPI:-}"; MCP_PORT="${MCP_PORT:-}"
+# MAXPEERS/ETHERBASE: unset by default (client's own default applies / no
+# --etherbase passed) unless a flag or env var provides one.
+MAXPEERS="${MAXPEERS:-}"; ETHERBASE="${ETHERBASE:-}"
 # ethstats reporting is ON by default (same endpoint as run.sh); --no-ethstats
 # disables it, --ethstats SPEC overrides the target.
 ETHSTATS="xdc_openscan_stats_2026@stats.xdcindia.com:443"
@@ -106,11 +132,17 @@ while [ $# -gt 0 ]; do
     --port)        PORT=$2; shift 2;;
     --rpcport)     RPCPORT=$2; shift 2;;
     --wsport)      WSPORT=$2; shift 2;;
+    --authrpc-port) AUTHRPC_PORT=$2; shift 2;;
+    --torrent-port) TORRENT_PORT=$2; shift 2;;
+    --privapi)     PRIVAPI=$2; shift 2;;
+    --mcp-port)    MCP_PORT=$2; shift 2;;
+    --maxpeers)    MAXPEERS=$2; shift 2;;
+    --etherbase)   ETHERBASE=$2; shift 2;;
     --mine)        MINEADDR=$2; shift 2;;
     --staticpeers) STATICPEERS=$2; shift 2;;
     --ethstats)    ETHSTATS=$2; shift 2;;
     --no-ethstats) ETHSTATS=""; shift;;
-    -h|--help)     sed -n '2,67p' "$0" | sed 's/^# \{0,1\}//'; exit 0;;
+    -h|--help)     sed -n '2,84p' "$0" | sed 's/^# \{0,1\}//'; exit 0;;
     *) echo "unknown flag: $1" >&2; exit 1;;
   esac
 done
@@ -166,6 +198,8 @@ if [ "$CLIENT" = all ]; then
   [ -n "$NETWORKID" ]   && shared+=(--networkid "$NETWORKID")
   [ -n "$CHAIN" ]       && shared+=(--chain "$CHAIN")
   [ -n "$MINEADDR" ]    && shared+=(--mine "$MINEADDR")   # only oldxdc seals; others print "ignored"
+  [ -n "$MAXPEERS" ]    && shared+=(--maxpeers "$MAXPEERS")
+  [ -n "$ETHERBASE" ]   && shared+=(--etherbase "$ETHERBASE")   # only the oldxdc --mine child uses it
   if [ -n "$ETHSTATS" ]; then shared+=(--ethstats "$ETHSTATS"); else shared+=(--no-ethstats); fi
   # Base directory for the per-client chaindata: a custom --datadir wins, else the
   # shared ./nodes tree (clear of run.sh's numbered nodes/1..N local net).
@@ -436,8 +470,9 @@ if [ "$CLIENT" = erigon ]; then
   BN_ARG=""; [ -n "$BOOTNODES" ] && BN_ARG="--bootnodes $BOOTNODES"
   SP_ARG=""; [ -n "$STATICPEERS" ] && SP_ARG="--staticpeers $STATICPEERS"
   [ -z "$STATICPEERS" ] && echo "  note: no --staticpeers given; erigon may not discover XDPoS peers via the bootnode alone" >&2
+  MP_ARG=""; [ -n "$MAXPEERS" ] && MP_ARG="--maxpeers $MAXPEERS"
   "$XDC" --datadir "$DATADIR" --chain "$ERC" --discv4 \
-    --port "$PORT" --nat "extip:${IP}" $BN_ARG $SP_ARG \
+    --port "$PORT" --nat "extip:${IP}" $BN_ARG $SP_ARG $MP_ARG \
     --http --http.addr 0.0.0.0 --http.port "$RPCPORT" --http.vhosts "*" \
     --http.corsdomain "*" --http.api eth,net,web3,erigon,debug,txpool \
     --ws --ws.port "$WSPORT" \
@@ -445,10 +480,11 @@ if [ "$CLIENT" = erigon ]; then
     --private.api.addr "$PRIVAPI" --mcp.port "$MCP_PORT" \
     $ETHSTATS_ARG &
 elif [ "$CLIENT" = geth ]; then
-  # Modern geth: dot-notation flags, sync-only (it can't seal here).
+  # Modern geth: dot-notation flags, sync-only (it can't seal here). --maxpeers
+  # keeps its long-standing default of 25 unless --maxpeers/env MAXPEERS overrides it.
   [ -n "$MINEADDR" ] && echo "note: --mine ignored (geth join is sync-only)" >&2
   "$XDC" --datadir "$DATADIR" --networkid "$NETWORKID" --syncmode full \
-    --bootnodes "$BOOTNODES" --port "$PORT" --nat "extip:${IP}" --identity "$NAME" --maxpeers 25 \
+    --bootnodes "$BOOTNODES" --port "$PORT" --nat "extip:${IP}" --identity "$NAME" --maxpeers "${MAXPEERS:-25}" \
     --http --http.corsdomain "*" --http.addr 0.0.0.0 --http.port "$RPCPORT" --http.vhosts "*" \
     --http.api eth,net,web3,txpool,debug,admin,XDPoS \
     --ws --ws.addr 0.0.0.0 --ws.origins "*" --ws.port "$WSPORT" --ws.api eth,net,web3,XDPoS \
@@ -463,6 +499,7 @@ elif [ "$CLIENT" = besu ]; then
   mkdir -p "$DATADIR"
   python3 -c "import json,sys;print(json.dumps([e for e in sys.argv[1].split(',') if e]))" "$BOOTNODES" > "$DATADIR/static-nodes.json"
   BESU_ES=""; [ -n "$full" ] && BESU_ES="--ethstats=$full"
+  MP_ARG=""; [ -n "$MAXPEERS" ] && MP_ARG="--max-peers=$MAXPEERS"
   "$CLIENT_BIN" \
     --genesis-file="$GENESIS" --data-path="$DATADIR" --network-id="$NETWORKID" \
     --sync-mode=FULL --data-storage-format=BONSAI \
@@ -471,7 +508,7 @@ elif [ "$CLIENT" = besu ]; then
     --rpc-http-enabled=true --rpc-http-host=127.0.0.1 --rpc-http-port="$RPCPORT" \
     --rpc-http-apis=ETH,NET,WEB3,ADMIN,DEBUG,TXPOOL \
     --engine-rpc-enabled=false --min-gas-price=0 --auto-log-bloom-caching-enabled=false \
-    $BESU_ES &
+    $MP_ARG $BESU_ES &
 elif [ "$CLIENT" = reth ]; then
   # reth-xdc (sync-only). Reads the geth-format genesis natively via --chain <file>.
   # Peers via trusted-only (its discv4/v5 doesn't traverse an XDPoS bootnode), and
@@ -480,6 +517,7 @@ elif [ "$CLIENT" = reth ]; then
   [ -n "$BOOTNODES" ] || { echo "reth join needs peers: set DEFAULT_BOOTNODES in network.env or pass --bootnodes" >&2; exit 1; }
   mkdir -p "$DATADIR"
   RETH_ES=""; [ -n "$full" ] && RETH_ES="--ethstats ${ES_NAME}:${ES_SECRET}@wss://${ES_HOSTPORT}"
+  MP_ARG=""; [ -n "$MAXPEERS" ] && MP_ARG="--max-peers $MAXPEERS"
   # reth now achieves strict net5151 state parity natively: it applies the
   # TIPSigning 0x89 wipe and the net5151 calldata-gas / basefee-floor corrections,
   # so its own state root matches the header across the V1->V2 switch at 1800 with
@@ -492,7 +530,7 @@ elif [ "$CLIENT" = reth ]; then
     --nat "extip:${IP}" --trusted-peers "$BOOTNODES" \
     --http --http.addr 127.0.0.1 --http.port "$RPCPORT" --http.api eth,net,web3,admin,debug \
     --authrpc.addr 127.0.0.1 --authrpc.port "$AUTHRPC_PORT" \
-    $RETH_ES &
+    $MP_ARG $RETH_ES &
 elif [ "$CLIENT" = nethermind ]; then
   # nethermind-xdc (sync-only). Loads its own Parity-style chainspec that ships in
   # the dist ($NETHERMIND_DIST/chainspec/$NM_CONFIG.json) via --config; it does
@@ -510,13 +548,14 @@ elif [ "$CLIENT" = nethermind ]; then
   NM_DATADIR="$(cd "$DATADIR" && pwd)"
   WS_PORT=$((RPCPORT + 1))
   NM_ES=""; [ -n "$full" ] && NM_ES="--EthStats.Enabled true --EthStats.Name $ES_NAME --EthStats.Secret $ES_SECRET --EthStats.Server wss://${ES_HOSTPORT}/api"
+  MP_ARG=""; [ -n "$MAXPEERS" ] && MP_ARG="--Network.MaxActivePeers $MAXPEERS"
   ( cd "$NETHERMIND_DIST" && ./nethermind \
     --config "$NM_CONFIG" \
     --Init.BaseDbPath "$NM_DATADIR" \
     --Network.P2PPort "$PORT" --Network.DiscoveryPort "$PORT" \
     --JsonRpc.Port "$RPCPORT" --JsonRpc.WebSocketsPort "$WS_PORT" --JsonRpc.Host 127.0.0.1 \
     --Network.StaticPeers "$BOOTNODES" \
-    $NM_ES ) &
+    $MP_ARG $NM_ES ) &
 elif [ "$CLIENT" = xone ]; then
   # xone-native (XDCIndia/xOneGo): go-ethereum-derived XDPoS client with
   # single-dash flags. Sync-only join here -- it recognises XDPoS from the genesis
@@ -525,22 +564,26 @@ elif [ "$CLIENT" = xone ]; then
   [ -n "$MINEADDR" ] && echo "note: --mine ignored (xone join is sync-only; sealing needs -miner.key)" >&2
   mkdir -p "$DATADIR"
   XONE_ES=""; [ -n "$full" ] && XONE_ES="-ethstats $full"
+  MP_ARG=""; [ -n "$MAXPEERS" ] && MP_ARG="-maxpeers $MAXPEERS"
   "$XDC" -override.genesis "$GENESIS" -networkid "$NETWORKID" -syncmode full \
     -datadir "$DATADIR" -port "$PORT" -discovery.port "$PORT" -nat "extip:${IP}" \
-    -bootnodes "$BOOTNODES" \
+    -bootnodes "$BOOTNODES" $MP_ARG \
     -http -http.addr 0.0.0.0 -http.port "$RPCPORT" -http.vhosts "*" \
     -http.api eth,net,web3,admin,debug,txpool,XDPoS \
     -authrpc.port "$AUTHRPC_PORT" \
     $XONE_ES &
 else
   # oldxdc (XDPoSChain): classic flags; --mine unlocks a validator to also seal.
+  # --maxpeers/--etherbase are additive: omitted (client default) unless given.
   MINE_FLAGS=""
   if [ -n "$MINEADDR" ]; then
     touch .pwd
     MINE_FLAGS="--unlock $MINEADDR --password ./.pwd --mine --gasprice 1"
+    [ -n "$ETHERBASE" ] && MINE_FLAGS="$MINE_FLAGS --etherbase $ETHERBASE"
   fi
+  MP_ARG=""; [ -n "$MAXPEERS" ] && MP_ARG="--maxpeers $MAXPEERS"
   "$XDC" --datadir "$DATADIR" --networkid "$NETWORKID" --syncmode full \
-    --bootnodes "$BOOTNODES" --port "$PORT" --nat "extip:${IP}" --identity "$NAME" \
+    --bootnodes "$BOOTNODES" --port "$PORT" --nat "extip:${IP}" --identity "$NAME" $MP_ARG \
     --rpc --rpccorsdomain "*" --rpcaddr 0.0.0.0 --rpcport "$RPCPORT" --rpcvhosts "*" \
     --ws --wsaddr 0.0.0.0 --wsorigins "*" --wsport "$WSPORT" \
     --rpcapi admin,db,eth,debug,miner,net,shh,txpool,personal,web3,XDPoS \
