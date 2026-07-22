@@ -56,7 +56,7 @@
       "sha256": {
         "darwin-amd64": "bd5e95912d4b01d3952047949f440a49ce56c584e7d0a632f2ca8fbdbb1a1459",
         "darwin-arm64": "2d84a4a04c87d353f5eb78195eaa3db5f230d90fdaba289aadb8a9844126d788",
-        "linux-amd64": "04c1ab708c11732a5a310971b827d2fc2e4b905f307f6f1c21f3a7489ce3794b"
+        "linux-amd64": "ef6e436319d791039e153da48dce5aaa7a0a22cf02bb163189ef3031bf220d94"
       }
     }
   }
