@@ -37,6 +37,11 @@ source ./lib-lab.sh
 # drive a netlab topology.
 # shellcheck source=lib-topo.sh
 source ./lib-topo.sh
+# T2.3: assert_genesis_parity/assert_lockstep/assert_hash_agreement/
+# assert_survives_epoch, so any scenario can use named assertions instead
+# of open-coding its own PASS/FAIL wait-and-compare logic.
+# shellcheck source=lib-assert.sh
+source ./lib-assert.sh
 
 SCEN_DIR="$LAB_DIR/scenarios"
 
