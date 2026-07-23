@@ -14,8 +14,8 @@
 #                                       # to stdout: a few "# key=value"
 #                                       # topology-level comment lines
 #                                       # (name/chainId/epoch/v2block/period/
-#                                       # reward/gap/skipV1Validation/
-#                                       # portBase/staggerSeconds/
+#                                       # reward/gap/skipV1Validation/ethstats/
+#                                       # peering/portBase/staggerSeconds/
 #                                       # bootnode_port/node_count/
 #                                       # sealer_count), then a TSV header +
 #                                       # one row per resolved (post {A..B}
@@ -154,6 +154,20 @@ gap = require_int("gap", required=False, default=450)
 port_base = require_int("portBase")
 stagger_seconds = require_int("staggerSeconds", required=False, default=5)
 skip_v1_validation = bool(topo.get("skipV1Validation", False))
+
+# ethstats (ItWorksinMyLocal#62 harness fix A): opt-in, topology-level.
+# false/omitted (default) -> node.sh passes --no-ethstats to every node in
+# this topology, same as always. true -> node.sh instead lets join.sh's own
+# ON-by-default ethstats reporting through, under the name
+# "xdclabs-<topoName>-<nodeId>", so the fleet shows up on
+# stats.xdcindia.com. Meant for soak/persistent topologies (legacy-4,
+# mixed-5, all-clients), NOT for the mint-iter* gate topologies (which are
+# wiped/rebuilt every gate iteration and would just flap on the public
+# dashboard) -- see netlab/TOPOLOGY.md. A per-run override independent of
+# this field also exists: NETLAB_ETHSTATS=1 in the environment forces
+# reporting on regardless of what this field says (node.sh's own concern,
+# not validated here).
+ethstats = bool(topo.get("ethstats", False))
 
 # peering (ItWorksinMyLocal#46 T3.2): "hub" (default) keeps D5's original
 # model -- followers dial ONLY the sealers, never each other. "mesh" lets
@@ -456,6 +470,7 @@ meta = [
     ("reward", reward),
     ("gap", gap),
     ("skipV1Validation", "true" if skip_v1_validation else "false"),
+    ("ethstats", "true" if ethstats else "false"),
     ("peering", peering),
     ("portBase", port_base),
     ("staggerSeconds", stagger_seconds),

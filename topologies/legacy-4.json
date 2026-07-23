@@ -9,6 +9,7 @@
   "gap": 450,
   "portBase": 34000,
   "staggerSeconds": 5,
+  "ethstats": true,
   "nodes": [
     { "id": "node1", "client": "oldxdc", "role": "sealer", "keyRef": "PRIVATE_KEY_1" },
     { "id": "node2", "client": "oldxdc", "role": "sealer", "keyRef": "PRIVATE_KEY_2" },

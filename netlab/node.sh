@@ -261,10 +261,30 @@ cmd_start() {
     }
   fi
 
+  # ethstats reporting (ItWorksinMyLocal#62 harness fix A): OFF by default --
+  # a topology opts in via its own "ethstats": true field (topo.sh print's
+  # TOPO_ETHSTATS meta), or any topology can be forced on ad-hoc via
+  # NETLAB_ETHSTATS=1 in the environment, without editing the JSON. When
+  # enabled, this node reports to stats.xdcindia.com (join.sh's own default
+  # ETHSTATS target/secret, xdc_openscan_stats_2026 -- unchanged, not
+  # duplicated here) under the name "xdclabs-<TOPO_NAME>-<NODE_ID>" so the
+  # whole fleet is identifiable (and groupable) on the public dashboard;
+  # when disabled, --no-ethstats is passed exactly as before. Soak/
+  # persistent topologies (legacy-4, mixed-5, all-clients) ship with
+  # "ethstats": true; the mint-iter* gate topologies deliberately do NOT --
+  # mint-iter runs churn (wiped/rebuilt every gate iteration) and would
+  # just flap on the public stats page. See netlab/TOPOLOGY.md.
+  local node_name="${TOPO_NAME}-${NODE_ID}"
+  local ethstats_flag=(--no-ethstats)
+  if [ "${TOPO_ETHSTATS:-false}" = "true" ] || [ "${NETLAB_ETHSTATS:-0}" = "1" ]; then
+    node_name="xdclabs-${TOPO_NAME}-${NODE_ID}"
+    ethstats_flag=()
+  fi
+
   local args=(--genesis "$GENESIS_FILE" --client "$NODE_CLIENT" --datadir "$NODE_DIR"
     --networkid "$TOPO_CHAINID" --port "$NODE_P2P" --rpcport "$NODE_RPC" --wsport "$NODE_WS"
     --authrpc-port "$NODE_AUTHRPC" --torrent-port "$NODE_TORRENT" --mcp-port "$NODE_MCP" --privapi "$NODE_PRIVAPI"
-    --bootnodes "$bootnodes" --name "${TOPO_NAME}-${NODE_ID}" --no-ethstats)
+    --bootnodes "$bootnodes" --name "$node_name" "${ethstats_flag[@]}")
   [ -n "$NODE_MAXPEERS" ] && args+=(--maxpeers "$NODE_MAXPEERS")
   if [ "$NODE_ROLE" = sealer ]; then
     args+=(--mine "$seal_addr" --etherbase "$seal_addr")
