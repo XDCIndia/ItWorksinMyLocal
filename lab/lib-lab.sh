@@ -336,8 +336,28 @@ lab_start_producer() {
   # the other half of this same bug (a stale backup being reapplied to
   # runs that never touched the genesis at all).
   local root_genesis="$REPO_ROOT/genesis/genesis.json"
-  if [ -f "$root_genesis" ] && [ ! -f "$LAB_RESULTS_DIR/genesis-orig-backup.json" ]; then
-    cp "$root_genesis" "$LAB_RESULTS_DIR/genesis-orig-backup.json" || return 1
+  local backup="$LAB_RESULTS_DIR/genesis-orig-backup.json"
+  local active_marker="$LAB_RESULTS_DIR/active-config"
+  # A backup file with NO matching active-config marker is ORPHANED --
+  # active-config is set/cleared in lockstep with a live overlay (see
+  # below and lab_teardown), so its absence means whatever overlay that
+  # backup belonged to was already restored (or never completed -- e.g. an
+  # even older, already-fixed version of this same bug), and this backup
+  # is leftover debris, not a live snapshot to preserve. Confirmed live
+  # (ItWorksinMyLocal#46 T3.3 residual, round 2): an ancient
+  # genesis-orig-backup.json that predated this whole session -- with no
+  # active-config alongside it -- got silently REUSED here (the `[ ! -f
+  # backup ]` guard alone saw it as "already backed up, skip") instead of
+  # being recognised as stale, so THIS run's fresh, correctly-ordered
+  # backup step was skipped entirely, and teardown later restored that
+  # ancient, wrong snapshot over a genuinely clean tracked genesis. Discard
+  # an orphan before deciding whether a fresh backup is needed.
+  if [ -f "$backup" ] && [ ! -f "$active_marker" ]; then
+    echo "lab_start_producer: discarding an orphaned $backup (no matching active-config -- stale, not reusing it)" >&2
+    rm -f "$backup"
+  fi
+  if [ -f "$root_genesis" ] && [ ! -f "$backup" ]; then
+    cp "$root_genesis" "$backup" || return 1
   fi
 
   _lab_ensure_root_genesis_signers || return 1
@@ -349,7 +369,7 @@ lab_start_producer() {
       "$LAB_DIR/gen-lab-genesis.sh" || return 1
   fi
 
-  local active_marker="$LAB_RESULTS_DIR/active-config" prev_config=""
+  local prev_config=""
   [ -f "$active_marker" ] && prev_config=$(cat "$active_marker")
   if [ "$prev_config" != "$config_key" ]; then
     echo "lab_start_producer: (re)initialising nodes/ for config '$config_key'" >&2
