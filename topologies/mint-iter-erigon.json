@@ -1,0 +1,19 @@
+{
+  "name": "mint-iter-erigon",
+  "description": "ItWorksinMyLocal#62 per-client determination (erigon): mint-iter-scale (3 oldxdc sealers, the trusted quorum) + 1 independent oldxdc observer ('obs1') + 1 erigon node in role=follower ('erig1' -- NOT role=proposer: topo.sh categorically rejects role=proposer for client=erigon, since netlab/node.sh + join.sh wire no sealing-flag path for it -- join.sh:579 explicitly says '--mine ignored (erigon join is sync-only)'). This topology exists ONLY to answer the honest, narrower question mintlab.sh's static erigon row never actually tests: can erigon at least reach S2 (follows-at-tip, clean, no swallowed validation) against a live oldxdc XDPoS quorum from a genesis file, using the harness's own deployed binary (bin/erigon, erigon-xdc v3.5.0 built from main -- NOT the feat/xdpos-v1-producer-spike branch that carries the (unmerged) V1/V2 producer path validated separately on net5050, see XDCIndia/erigon-xdc#300/#320). Same chain shape as mint-iter.json (period=1, epoch=900, reward=5000, gap=450) so results are directly comparable; v2block fixed at 1800 (V1-focus) since S2-follow is the question, not the V1->V2 switch itself.",
+  "chainId": 34094,
+  "epoch": 900,
+  "v2block": 1800,
+  "period": 1,
+  "reward": 5000,
+  "gap": 450,
+  "portBase": 34395,
+  "staggerSeconds": 5,
+  "nodes": [
+    { "id": "node1", "client": "oldxdc", "role": "sealer", "keyRef": "PRIVATE_KEY_1" },
+    { "id": "node2", "client": "oldxdc", "role": "sealer", "keyRef": "PRIVATE_KEY_2" },
+    { "id": "node3", "client": "oldxdc", "role": "sealer", "keyRef": "PRIVATE_KEY_3" },
+    { "id": "obs1", "client": "oldxdc", "role": "follower" },
+    { "id": "erig1", "client": "erigon", "role": "follower" }
+  ]
+}
