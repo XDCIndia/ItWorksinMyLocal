@@ -423,14 +423,26 @@ ensure_bins() {
 # Prints a comma-separated enode list on stdout ("" if none). Logs to stderr.
 harvest_peers() {
   local genesis="$1" bootnode="$2" nid="$3"
-  local xdc="$_LIB_DIR/bin/oldxdc/$PLATFORM/XDC"
-  [ -x "$xdc" ] || xdc="$_LIB_DIR/bin/geth/$PLATFORM/geth"
-  [ -x "$xdc" ] || { echo "harvest: no oldxdc/geth binary to discover peers" >&2; return 1; }
+  # Prefer geth: this function's client invocation below uses the modern
+  # dot-notation flags (--http.addr/--http.port/--http.api), which the classic
+  # oldxdc (XDPoSChain) binary does NOT understand (it takes --rpc/--rpcaddr/
+  # --rpcport/--rpcapi instead) -- with oldxdc first and its own stdout/stderr
+  # discarded, it silently fails argument parsing on every call and this always
+  # returns empty (found investigating erigon peers=0 on public networks, #55).
+  # geth is a safe default since it's built via ensure_bins for every join.
+  local xdc="$_LIB_DIR/bin/geth/$PLATFORM/geth"
+  [ -x "$xdc" ] || xdc="$_LIB_DIR/bin/oldxdc/$PLATFORM/XDC"
+  [ -x "$xdc" ] || { echo "harvest: no geth/oldxdc binary to discover peers" >&2; return 1; }
   local dd rp=8799; dd=$(mktemp -d)
   "$xdc" --datadir "$dd" init "$genesis" >/dev/null 2>&1
   echo "Harvesting peers from bootnode via $(basename "$xdc") discovery ..." >&2
+  # geth always opens an authrpc (Engine API) listener too, defaulting to 8551;
+  # with output discarded to /dev/null this crashed silently on ANY host already
+  # running a geth/xone node on the default port (e.g. a long-running mainnet
+  # join) -- so pin it to a harvest-only port well clear of every other join.sh
+  # default range (found investigating erigon peers=0 on public networks, #55).
   "$xdc" --datadir "$dd" --networkid "$nid" --syncmode full --bootnodes "$bootnode" \
-    --port 30399 --nat "extip:$(detect_ip)" --maxpeers 25 \
+    --port 30399 --nat "extip:$(detect_ip)" --maxpeers 25 --authrpc.port 18799 \
     --http --http.addr 127.0.0.1 --http.port "$rp" --http.api admin,net >/dev/null 2>&1 &
   local hpid=$! enodes=""
   for _ in $(seq 1 30); do
@@ -439,7 +451,12 @@ harvest_peers() {
       | python3 -c "import sys,json
 try: ps=json.load(sys.stdin).get('result',[]) or []
 except Exception: ps=[]
-out=['enode://%s@%s'%(p.get('id',''),(p.get('network') or {}).get('remoteAddress','')) for p in ps if p.get('id') and (p.get('network') or {}).get('remoteAddress')]
+# admin_peers already returns the full enode:// URL per peer (its 'id' field is
+# a truncated/different node ID, NOT the raw pubkey -- reconstructing 'enode://
+# ID@remoteAddress' from it produced an invalid (too-short) public key that
+# erigon's --staticpeers then rejected outright; found investigating erigon
+# peers=0 on public networks, #55). Just use the enode field it already gives.
+out=[p['enode'] for p in ps if p.get('enode')]
 print(','.join(out))" 2>/dev/null)
     [ -n "$enodes" ] && break
     sleep 2
