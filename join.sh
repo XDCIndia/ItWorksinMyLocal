@@ -543,6 +543,25 @@ elif [ "$CLIENT" = nethermind ]; then
   NM_DATADIR="$(cd "$DATADIR" && pwd)"
   WS_PORT=$((RPCPORT + 1))
   NM_ES=""; [ -n "$full" ] && NM_ES="--EthStats.Enabled true --EthStats.Name $ES_NAME --EthStats.Secret $ES_SECRET --EthStats.Server wss://${ES_HOSTPORT}/api"
+  # net5151: disable nethermind peer persistence. With it ON, the DB-loaded copies
+  # of the validator node IDs register in the peer pool BEFORE the static-config
+  # entries, so those nodes never land in _staticPeers; once the validators drop
+  # nethermind as UselessPeer (they do, on the legacy XDPoS base), nethermind never
+  # reconnects -- 0 peers, "Waiting for peers..." forever, stalled behind tip.
+  # IsPeersPersistenceOn is NOT exposed as a CLI arg in this build, so patch it into
+  # the dist config before launch (idempotent). Verified live: nethermind then holds
+  # the validators and stays on-tip. Underlying nethermind fix: xdc-nethermind #249.
+  python3 - "$NETHERMIND_DIST/configs/$NM_CONFIG.json" <<'PY'
+import json, sys
+p = sys.argv[1]
+try:
+    cfg = json.load(open(p))
+    cfg.setdefault("Network", {})["IsPeersPersistenceOn"] = False
+    json.dump(cfg, open(p, "w"), indent=2)
+    print("  nethermind: set Network.IsPeersPersistenceOn=false in %s" % p)
+except Exception as e:
+    sys.stderr.write("  warning: could not patch nethermind config %s: %s\n" % (p, e))
+PY
   ( cd "$NETHERMIND_DIST" && ./nethermind \
     --config "$NM_CONFIG" \
     --Init.BaseDbPath "$NM_DATADIR" \
