@@ -26,17 +26,6 @@
 #            incident diagnosed at the OS level, see
 #            xone-5551-recovery-playbook)
 #   - ports: every resolved port (p2p/rpc/ws/authrpc/torrent/mcp/privapi
-#
-# ENFORCEMENT (T3.1): any real shortfall above is a hard FAIL and preflight
-# exits nonzero -- fleet.sh's `up` treats that as fatal and aborts before
-# starting a single process (see fleet.sh's own header). `--force` does NOT
-# turn a FAIL into a PASS or hide it: every FAIL: line above still prints
-# exactly as measured, but preflight exits 0 anyway so an operator who has
-# deliberately decided a shortfall is acceptable (e.g. a resource-capped dev
-# box that's fine running a 2-node smoke topology) can proceed. This is an
-# explicit, visible operator override of a resource check, not a masked
-# scenario verdict -- it never touches disk/ram/cores/port THRESHOLDS
-# themselves and never silently downgrades a FAIL to a PASS/SKIP.
 #            for every node, plus the topology's bootnode port) is checked
 #            with a REAL bind() attempt, not just a passive listening-socket
 #            scan -- this sandbox's ephemeral port range (32768-60999, see
@@ -56,6 +45,17 @@
 #            a short backoff before declaring FAIL), which still catches
 #            a REAL listener (busy on every attempt) but rides out a
 #            one-sample ephemeral-port collision.
+#
+# ENFORCEMENT (T3.1): any real shortfall above is a hard FAIL and preflight
+# exits nonzero -- fleet.sh's `up` treats that as fatal and aborts before
+# starting a single process (see fleet.sh's own header). `--force` does NOT
+# turn a FAIL into a PASS or hide it: every FAIL: line above still prints
+# exactly as measured, but preflight exits 0 anyway so an operator who has
+# deliberately decided a shortfall is acceptable (e.g. a resource-capped dev
+# box that's fine running a 2-node smoke topology) can proceed. This is an
+# explicit, visible operator override of a resource check, not a masked
+# scenario verdict -- it never touches disk/ram/cores/port THRESHOLDS
+# themselves and never silently downgrades a FAIL to a PASS/SKIP.
 #
 # Uses lib-rpc.sh directly (topology-independent -- see T0.1) rather than
 # lab/lib-lab.sh, so this has no dependency on the fixed lab/ port registry.
