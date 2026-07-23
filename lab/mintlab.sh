@@ -7,6 +7,22 @@
 # Usage:
 #   ./mintlab.sh                    # every client, in the default order
 #   ./mintlab.sh geth xone reth     # just these, in this order
+#   ./mintlab.sh --v2 geth          # V2-focus mint-iter variant (below), just geth
+#
+# --v2 (ItWorksinMyLocal#62 round-2 "blocked-harness" fix / mint-iter V2
+# variant): dispatches scenario 15 with MINT_V2BLOCK=900 (the smallest
+# epoch-aligned V1->V2 switch topo.sh allows) and S15_V2_TIMEOUT=${S15_V2_TIMEOUT:-1800}
+# (a 30-minute default budget -- override by exporting S15_V2_TIMEOUT
+# yourself before calling --v2) so scenario 15's own G6b pass actually
+# waits for the fleet to cross the switch and scans STRICTLY ABOVE it for
+# a real post-switch mint -- the only way this harness can honestly
+# promote a client past S5 (V1-mint) to S6/S7. Without --v2 (the default),
+# scenario 15's G6 never moves past its near-genesis window regardless of
+# MINT_V2BLOCK, so S6/S7 are unreachable no matter how long you wait --
+# this was the exact gap ItWorksinMyLocal#62 round 2 hit and reported as
+# "blocked-harness" for geth. Results go to a SEPARATE file,
+# lab/results/mint-graph-v2.md, so a --v2 run never clobbers the default
+# (fast, V1-focus) mint-graph.md a plain ./mintlab.sh run produced.
 #
 # This is deliberately NOT the full autonomous loop the umbrella issue
 # describes ("fleet-up -> gates G1-G7 -> on fail: diagnose, classify
@@ -63,6 +79,20 @@ declare -A _STATIC_BLOCKER=(
   [nethermind]="confirmed S0 live this session (topo.sh validate rejects a mint-iter-shaped topology for ANY nethermind node, proposer or plain follower, at any chainId != 5151 -- no genesis->chainspec converter exists); even where a converter existed, S3+ is separately blocked by xdc-nethermind-private#224 (InitBlockProducer() => NotSupportedException) -- see xdc-nethermind-private#250, blocked-upstream"
 )
 
+# --v2 (mint-iter V2 variant, ItWorksinMyLocal#62 round-2 fix -- see header):
+# must be the first arg if present. Sets MINT_V2BLOCK/S15_V2_TIMEOUT for
+# every scenario-15 invocation below (unless the caller already exported
+# either one, in which case that value wins) and redirects output to a
+# separate mint-graph-v2.md.
+_V2_MODE=0
+if [ "${1:-}" = "--v2" ]; then
+  _V2_MODE=1
+  shift
+  export MINT_V2BLOCK="${MINT_V2BLOCK:-900}"
+  export S15_V2_TIMEOUT="${S15_V2_TIMEOUT:-1800}"
+  echo "mintlab.sh: --v2 mode -- MINT_V2BLOCK=$MINT_V2BLOCK S15_V2_TIMEOUT=${S15_V2_TIMEOUT}s (scenario 15 will wait for + scan strictly above the switch, see lab/scenarios/15-topo-mint-rotation.sh)" >&2
+fi
+
 CLIENTS=("$@")
 if [ "${#CLIENTS[@]}" -eq 0 ]; then
   # shellcheck disable=SC2206  # word-splitting the default order is intentional here
@@ -70,13 +100,14 @@ if [ "${#CLIENTS[@]}" -eq 0 ]; then
 fi
 
 RESULTS_MD="$RESULTS_DIR/mint-graph.md"
-SCRATCH="$RESULTS_DIR/.mint-graph.md.building.$$"
+[ "$_V2_MODE" -eq 1 ] && RESULTS_MD="$RESULTS_DIR/mint-graph-v2.md"
+SCRATCH="$RESULTS_DIR/.$(basename "$RESULTS_MD").building.$$"
 rm -f "$SCRATCH"
 
 {
-  echo "# Mint-enablement graph (ItWorksinMyLocal#62)"
+  echo "# Mint-enablement graph (ItWorksinMyLocal#62)$( [ "$_V2_MODE" -eq 1 ] && printf ' -- V2-focus variant (MINT_V2BLOCK=%s, S15_V2_TIMEOUT=%ss)' "$MINT_V2BLOCK" "$S15_V2_TIMEOUT" )"
   echo
-  echo "Generated: $(date -u +'%Y-%m-%dT%H:%M:%SZ') by mintlab.sh"
+  echo "Generated: $(date -u +'%Y-%m-%dT%H:%M:%SZ') by mintlab.sh$( [ "$_V2_MODE" -eq 1 ] && echo " --v2" )"
   echo
   echo "\`S0 boots -> S1 syncs -> S2 follows-at-tip(clean) -> S3 authorized-as-signer -> S4 scheduled-for-turn -> S5 V1-mint-accepted -> S6 V2-mint-accepted -> S7 fair-share\`"
   echo

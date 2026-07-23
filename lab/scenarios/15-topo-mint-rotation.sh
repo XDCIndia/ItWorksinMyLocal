@@ -59,6 +59,18 @@
 # is not fully honest if the exact build under test (e.g. a locally
 # patched *_BIN override) is left for a reviewer to reconstruct later.
 #
+# V2-focus mode (ItWorksinMyLocal#62 round-2 "blocked-harness" fix): by
+# default (S15_V2_TIMEOUT=0) G6 only ever scans the near-genesis window
+# [_S15_SETTLE+1 .. _S15_SETTLE+_S15_TURN_WINDOW] -- fine for S5 (V1 mint)
+# evidence, but that window never moves with MINT_V2BLOCK, so a run cannot
+# ever produce real S6/S7 evidence this way no matter what MINT_V2BLOCK is
+# set to. Set S15_V2_TIMEOUT to a wall-clock budget (and MINT_V2BLOCK=900,
+# the smallest epoch-aligned switch topo.sh allows) to make this run ALSO
+# wait for the reference to cross the switch and scan a SECOND window
+# strictly ABOVE v2block for a genuine post-switch mint (G6b below) -- the
+# only way this scenario can honestly promote a client past S5. Example:
+#   MINT_V2BLOCK=900 S15_V2_TIMEOUT=1800 CAND_CLIENT=geth ./scenario.sh 15
+#
 # In addition to scenario.sh's usual "id|priority|verdict|reason|duration"
 # line, this file also emits one machine-parseable line per run:
 #   MINT_GRAPH_STATE: client=<c> state=<S0-S7> blocker="<text>"
@@ -81,9 +93,35 @@ _S15_V2BLOCK="${MINT_V2BLOCK:-1800}"
 export MINT_V2BLOCK="$_S15_V2BLOCK"
 
 _S15_SETTLE="${S15_SETTLE:-15}"            # blocks to let the net settle before gating
-_S15_TURN_WINDOW="${S15_TURN_WINDOW:-40}"  # blocks scanned for G5 turn-order + G6 mint gate
-_S15_MINT_TIMEOUT="${S15_MINT_TIMEOUT:-900}"   # wall-clock seconds to wait out the G6 scan window
+_S15_TURN_WINDOW="${S15_TURN_WINDOW:-40}"  # blocks scanned for G5 turn-order + G6a (pre-switch) mint gate
+_S15_MINT_TIMEOUT="${S15_MINT_TIMEOUT:-900}"   # wall-clock seconds to wait out the G6a scan window
 _S15_SHARE_WINDOW="${S15_SHARE_WINDOW:-60}"    # blocks scanned for G7, only if G6 found a mint
+
+# G6b / V2-focus opt-in (ItWorksinMyLocal#62 round-2 "blocked-harness"
+# finding): the G6a window above [_S15_SETTLE+1 .. _S15_SETTLE+
+# _S15_TURN_WINDOW] never moves with MINT_V2BLOCK -- a caller could set
+# MINT_V2BLOCK=900 wanting to test the V2 switch and this scenario would
+# still only ever wait for/scan blocks ~[16..55], nowhere near the switch,
+# every single time. That is the diagnosed root cause: MINT_V2BLOCK
+# controls WHEN the genesis switches V1->V2, but nothing previously made
+# this scenario's own gate evaluation window follow it there.
+#
+# S15_V2_TIMEOUT (default 0 = off, byte-for-byte the old behavior/runtime):
+# wall-clock seconds budgeted to (a) wait for the reference to reach
+# MINT_V2BLOCK + S15_V2_WINDOW, then (b) scan [MINT_V2BLOCK+1 ..
+# MINT_V2BLOCK+S15_V2_WINDOW] -- STRICTLY ABOVE v2block, never straddling
+# it -- for cand1's first mint there. This is a SEPARATE pass from G6a, run
+# in ADDITION to it (never instead of): an early V1 mint (G6a, proves S5)
+# and a later V2 mint (G6b, proves S6) are different evidence: a giant
+# single window starting near genesis would always find the early V1 mint
+# first and never actually exercise the post-switch case, which is exactly
+# how this bug hid before. A dedicated "V2-focus" run sets both
+# MINT_V2BLOCK=900 (smallest epoch-aligned switch topo.sh allows) and
+# S15_V2_TIMEOUT to a budget long enough for the fleet to actually mint
+# that many blocks (e.g. 900 blocks at period=1s is comfortably reachable
+# in a 20-30 minute budget; pad generously, it also covers G6a above).
+_S15_V2_TIMEOUT="${S15_V2_TIMEOUT:-0}"
+_S15_V2_WINDOW="${S15_V2_WINDOW:-40}"      # blocks scanned strictly above v2block, once reached
 
 # Known, honest per-client blockers for a G6 SKIP -- see join.sh's own
 # per-client sealing-attempt notes for the full detail; keep this in sync
@@ -289,25 +327,60 @@ scen_15() {
   g5_rc=$?
   echo "$g5_out" >&2
 
-  # ---- G6: THE MINT GATE -- did cand1 actually mint a block in the window? ----
-  echo "scen_15: G6 -- scanning obs1 (independent oldxdc observer) for cand1's first minted block in [$turn_from..$turn_to] (timeout ${_S15_MINT_TIMEOUT}s) ..." >&2
+  # ---- G6a: THE MINT GATE, pre-switch window -- did cand1 actually mint a
+  # block in the near-genesis window? (unchanged from every prior round) ----
+  echo "scen_15: G6a -- scanning obs1 (independent oldxdc observer) for cand1's first minted block in [$turn_from..$turn_to] (pre-switch window, timeout ${_S15_MINT_TIMEOUT}s) ..." >&2
   local mint_h
   mint_h=$(_s15_scan_for_mint "${URL[obs1]}" "$turn_from" "$turn_to" "$cand_norm" "$_S15_MINT_TIMEOUT") || mint_h=""
+  [ -n "$mint_h" ] && echo "scen_15: G6a -- candidate observed minting block $mint_h (pre-switch, per obs1)" >&2
+
+  # ---- G6b: THE MINT GATE, V2-focus opt-in -- STRICTLY ABOVE v2block ----
+  # (ItWorksinMyLocal#62 round-2 "blocked-harness" fix): only runs when the
+  # caller explicitly budgets S15_V2_TIMEOUT>0. Runs REGARDLESS of whether
+  # G6a already found an early V1 mint above -- a mint below the switch
+  # (S5 evidence) never substitutes for one above it (S6 evidence), and a
+  # single window starting near genesis would always find the early one
+  # first and never actually reach/prove the post-switch case (exactly how
+  # this bug went undetected: MINT_V2BLOCK could be set to anything and
+  # this scenario's own scan window never moved to follow it).
+  local v2_mint_h=""
+  if [ "$_S15_V2_TIMEOUT" -gt 0 ] 2>/dev/null; then
+    local v2_from=$((_S15_V2BLOCK + 1)) v2_to=$((_S15_V2BLOCK + _S15_V2_WINDOW))
+    echo "scen_15: G6b (V2-focus) -- waiting up to ${_S15_V2_TIMEOUT}s for the reference to cross the V1->V2 switch (v2block=$_S15_V2BLOCK) and reach block $v2_to ..." >&2
+    if lab_wait_block "$ref" "$v2_to" "$_S15_V2_TIMEOUT"; then
+      echo "scen_15: G6b -- reference past the switch; scanning obs1 for cand1's mint in [$v2_from..$v2_to] (strictly ABOVE v2block=$_S15_V2BLOCK) ..." >&2
+      v2_mint_h=$(_s15_scan_for_mint "${URL[obs1]}" "$v2_from" "$v2_to" "$cand_norm" 60) || v2_mint_h=""
+      if [ -n "$v2_mint_h" ]; then
+        echo "scen_15: G6b -- candidate observed minting block $v2_mint_h (post-switch, per obs1)" >&2
+      else
+        echo "scen_15: G6b -- reference reached $v2_to but no cand1 mint found in [$v2_from..$v2_to]" >&2
+      fi
+    else
+      echo "scen_15: G6b -- reference never reached block $v2_to within ${_S15_V2_TIMEOUT}s -- switch not (yet) reached this run, no V2 evidence possible" >&2
+    fi
+  fi
+
+  # A post-switch mint strictly dominates a pre-switch one as evidence (it
+  # implies S5 AND S6 in one run) -- prefer it as the height carried
+  # forward into assert_mint_accepted/G7 below whenever G6b actually found
+  # one; otherwise fall back to G6a's pre-switch mint (S5 only).
+  [ -n "$v2_mint_h" ] && mint_h="$v2_mint_h"
 
   if [ -z "$mint_h" ]; then
     # Honest SKIP (ItWorksinMyLocal#62 section 4 / scenario 14 precedent):
     # G1-G4 all genuinely passed above -- the harness/topology is healthy --
-    # but no mint was observed for cand1's client in this window, which is
+    # but no mint was observed for cand1's client in either window, which is
     # the EXPECTED outcome for a client this framework doesn't yet have a
     # verified sealing path for.
     local blocker="${_S15_BLOCKER[$cand_client]:-no known sealing path for client '$cand_client' in this harness yet (ItWorksinMyLocal#62)}"
     [ "$g5_rc" -ne 0 ] && blocker="$blocker; G5 turn-order also shows cand1 absent from the rotation (consistent with it never sealing): $g5_out"
+    [ "$_S15_V2_TIMEOUT" -gt 0 ] 2>/dev/null && blocker="$blocker; G6b (V2-focus, v2block=$_S15_V2BLOCK) also found nothing"
     _s15_emit_state S3 "$blocker"
-    echo "SKIP:cand1 ($cand_client) never minted a block in [$turn_from..$turn_to] -- $blocker"
+    echo "SKIP:cand1 ($cand_client) never minted a block in [$turn_from..$turn_to]$( [ "$_S15_V2_TIMEOUT" -gt 0 ] 2>/dev/null && printf ' or [%s..%s]' "$((_S15_V2BLOCK + 1))" "$((_S15_V2BLOCK + _S15_V2_WINDOW))" ) -- $blocker"
     return 2
   fi
 
-  echo "scen_15: G6 -- candidate observed minting block $mint_h (per obs1); running assert_mint_accepted (the full 5-condition gate) ..." >&2
+  echo "scen_15: G6 -- candidate observed minting block $mint_h ($( [ -n "$v2_mint_h" ] && echo "post-switch, " )per obs1); running assert_mint_accepted (the full 5-condition gate) ..." >&2
   local witnesses_csv="node2=${URL[node2]},node3=${URL[node3]},obs1=${URL[obs1]}"
   local hashnodes_csv="" logn_csv=""
   for id in $ids; do

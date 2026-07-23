@@ -183,7 +183,32 @@ _ensure_signer_account() {
 
   local addr
   if [ -d "$NODE_DIR/keystore" ] && [ -n "$(ls -A "$NODE_DIR/keystore" 2>/dev/null)" ]; then
-    addr=$("$xdc" account list --datadir "$NODE_DIR" 2>/dev/null | head -n 1 | grep -oE '\{[0-9a-fA-Fxdc]+\}' | tr -d '{}')
+    # Read the address straight out of the existing V3 keystore JSON file
+    # instead of shelling out to `<xdc> account list --datadir "$NODE_DIR"`.
+    # That subcommand still opens the full node/chain-db instance lock, so
+    # it FAILS outright ("Fatal: Failed to create the protocol stack:
+    # datadir already used by another process") in exactly the common case
+    # this branch exists for: re-deriving an address this node.sh already
+    # knows AFTER the node itself has started (fleet.sh's own post-start
+    # status/logs calls are fine -- they don't call `addr` -- but
+    # scenario 15 does call `node.sh addr` again, on an already-running
+    # cand1/node1/node2/node3, to learn each signer's address for its own
+    # gates; every such call hit this lock and hard-failed the whole
+    # scenario before G1 could even run -- verified live,
+    # ItWorksinMyLocal#62). A keystore file's own "address" field is
+    # plaintext (no decryption needed to read it, unlike the private key
+    # itself), so this is both correct and immune to any datadir lock.
+    local keyfile
+    keyfile=$(ls -1 "$NODE_DIR/keystore" 2>/dev/null | head -n 1)
+    addr=$(python3 -c "
+import json
+import sys
+
+try:
+    print(json.load(open(sys.argv[1])).get('address', ''))
+except Exception:
+    pass
+" "$NODE_DIR/keystore/$keyfile" 2>/dev/null)
   else
     addr=$("$xdc" account import --password "$REPO_ROOT/.pwd" --datadir "$NODE_DIR" <(echo "$key") 2>/dev/null \
       | grep -oE '\{[0-9a-fA-Fxdc]+\}' | tr -d '{}')
