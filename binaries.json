@@ -44,7 +44,7 @@
       "produces": { "besu": "bin/besu" },
       "platforms": ["*"],
       "sha256": {
-        "*": "7ade4f2f56b8c163d5fc5e86d024fe27ce50891e2e29677973245f4dc3a02820"
+        "*": "246e50302e3573e734e71330f70bdce63400d61bd7558e48702e30b3e987cb36"
       }
     },
     "nethermind": {
