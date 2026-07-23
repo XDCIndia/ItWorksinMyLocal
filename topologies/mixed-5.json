@@ -9,7 +9,6 @@
   "gap": 450,
   "portBase": 34100,
   "staggerSeconds": 5,
-  "skipV1Validation": true,
   "nodes": [
     { "id": "node1", "client": "oldxdc", "role": "sealer", "keyRef": "PRIVATE_KEY_1" },
     { "id": "node2", "client": "oldxdc", "role": "sealer", "keyRef": "PRIVATE_KEY_2" },

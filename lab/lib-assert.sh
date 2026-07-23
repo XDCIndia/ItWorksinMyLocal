@@ -156,3 +156,43 @@ assert_survives_epoch() {
     _assert_fail "survives-epoch: $name never reached block $target (epoch=$epoch, margin=$margin, head=$(lab_block_number "$url" 2>/dev/null || echo '?')) within ${timeout}s"
   fi
 }
+
+# ---------------------------------------------------------------------------
+# assert_no_validation_bypass <name> <logfile>
+#
+# Scans a node's own log for known "swallowed consensus mismatch" markers
+# instead of trusting a final hash-agreement PASS at face value.
+# ItWorksinMyLocal#46's gate review found scenario 12's mixed-5 node5
+# (modern-geth) logging "BlockChain: A.94 auto-recover on ValidateState
+# mismatch during bulk sync block=N err=\"invalid gas used ...\"" -- i.e.
+# the follower DID detect a genuine per-block consensus divergence from
+# the oldxdc producer (the v1 blocksigner gas-cost mismatch #34/this
+# scenario exists to surface) and silently patched over it instead of
+# rejecting the block, then went on to agree with the producer's hash at
+# every later checkpoint anyway. Every assertion above (genesis parity,
+# lockstep, hash agreement, survives-epoch) is blind to this: they only
+# ever look at CURRENT chain state, never at whether the node arrived at
+# that state by validating every block or by quietly recovering from a
+# rejected one. DESIGN.md section 1 defines this lab's whole purpose as
+# "a follower that rejects a valid block... = a porting bug" -- a follower
+# that silently ACCEPTS an invalid one via an internal auto-recover path
+# is the same bug wearing a PASS. Call this for every follower's log
+# alongside (not instead of) the hash-based assertions; a FAIL here means
+# the run's PASS, if any, is not real parity and must not be reported as
+# one. Pattern is the exact upstream wording seen in the field; extend it
+# if a client's phrasing differs.
+# ---------------------------------------------------------------------------
+assert_no_validation_bypass() {
+  [ $# -ge 2 ] || { _assert_fail "assert_no_validation_bypass: usage: assert_no_validation_bypass <name> <logfile>"; return 1; }
+  local name="$1" logfile="$2" hit
+  if [ ! -f "$logfile" ]; then
+    _assert_fail "no-validation-bypass: $name -- log file not found ($logfile); cannot confirm no mismatch was swallowed"
+    return 1
+  fi
+  hit=$(grep -m1 -iE 'auto-recover on ValidateState mismatch|ValidateState mismatch' "$logfile" 2>/dev/null)
+  if [ -n "$hit" ]; then
+    _assert_fail "no-validation-bypass: $name's log shows a swallowed consensus mismatch instead of a rejected block: ${hit}"
+  else
+    _assert_pass "no-validation-bypass: $name's log shows no swallowed ValidateState mismatch"
+  fi
+}

@@ -149,6 +149,40 @@ sys.exit(1)
 }
 
 # ---------------------------------------------------------------------------
+# topo_log <topology.json> <nodeId> -> absolute path to that node's
+# node.log (nodes/<name>/<id>/node.log -- see netlab/node.sh's
+# NODE_LOGFILE). Lets scenario code inspect a node's own log for signals
+# no RPC/hash comparison can see (e.g. lib-assert.sh's
+# assert_no_validation_bypass, added for ItWorksinMyLocal#46's gate
+# finding that a follower can silently auto-recover from a genuine
+# consensus mismatch and still hash-agree afterward).
+# ---------------------------------------------------------------------------
+topo_log() {
+  [ $# -ge 2 ] || { echo "topo_log: usage: topo_log <topology.json> <nodeId>" >&2; return 1; }
+  local topo_file="$1" node_id="$2" abs out
+  abs=$(_topo_abspath "$topo_file") || return 1
+  out=$("$_TOPO_TOPO_SH" print "$abs") || return 1
+  printf '%s\n' "$out" | python3 -c "
+import sys
+
+node_id = sys.argv[1]
+header = None
+for line in sys.stdin:
+    line = line.rstrip('\n')
+    if line.startswith('# ') or not line:
+        continue
+    if header is None:
+        header = line.split('\t')
+        continue
+    row = dict(zip(header, line.split('\t')))
+    if row.get('id') == node_id:
+        print(row['datadir'])
+        sys.exit(0)
+sys.exit(1)
+" "$node_id" | { read -r datadir; [ -n "$datadir" ] || { echo "topo_log: no such node id '$node_id' in $abs" >&2; return 1; }; printf '%s/%s/node.log\n' "$REPO_ROOT" "$datadir"; }
+}
+
+# ---------------------------------------------------------------------------
 # topo_nodes <topology.json> [role] -> node ids, one per line, declaration
 # order, optionally filtered to role=sealer|follower.
 # ---------------------------------------------------------------------------

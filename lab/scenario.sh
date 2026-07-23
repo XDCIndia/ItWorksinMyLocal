@@ -49,6 +49,62 @@ source ./lib-topo.sh
 # shellcheck source=lib-assert.sh
 source ./lib-assert.sh
 
+# Belt-and-braces cleanup trap (ItWorksinMyLocal#46 gate finding: teardown
+# was inline-only in _run_one, so interrupting a run -- e.g. Ctrl-C or a
+# SIGTERM from an external harness, exactly what happened to the last
+# --matrix invocation -- skipped the post-run lab_teardown/topo_down and
+# left a topology up plus a stale nodes/.fleet-locks/*.lock + active-
+# topologies entry behind for the NEXT run to discover and clean up
+# instead of this one. Both calls are already idempotent/best-effort (see
+# their own headers) and safe to invoke redundantly on a normal exit path
+# (_run_one's explicit calls just make this a no-op there), so trapping
+# here is a pure safety net, not a behavior change to any scenario.
+# Scenarios 01-11 never call topo_up, so topo_down stays a no-op for them
+# either way.
+#
+# INT/TERM get their OWN handler that runs cleanup and then re-raises the
+# same signal with its disposition restored to default, instead of just
+# trapping it: a bare `trap cleanup INT TERM` (tried first, caught by this
+# same verification pass -- see the gate re-run notes) replaces bash's
+# default "terminate" action with "run this trap and keep going", so
+# Ctrl-C/SIGTERM would run teardown and then the script would carry on
+# running the very scenario it was just told to stop -- worse than the
+# no-trap baseline, not a fix. Re-raising after cleanup preserves the
+# conventional 128+signum exit status and actually stops the process.
+#
+# The BASHPID == $$ guard below is load-bearing, not decoration: bash
+# traps (EXIT included) are inherited into every subshell -- and this
+# codebase forks one for practically every "$(...)" command substitution
+# (lab_wait_block's polling loop alone does several per iteration). Without
+# the guard, THIS SAME re-run's first attempt tore its own live mixed-5
+# topology down ~90s in with no signal, no error, and no scenario
+# involvement at all: some routine command substitution deep in a helper
+# function exited normally, inherited the bare `trap ... EXIT`, and that
+# alone fired lab_teardown/topo_down mid-scenario (visible as every node
+# logging a clean "Blockchain manager stopped" shutdown while scen_12 was
+# still blocked in lab_wait_block polling a producer that had just been
+# stopped out from under it). $$ stays the ORIGINAL top-level shell's pid
+# in every subshell (that's what makes it useful here); $BASHPID is the
+# actual running process's pid, so it only matches $$ in that one original
+# process -- exactly the scope teardown must be confined to.
+_scenario_sh_cleanup_done=0
+_scenario_sh_cleanup_on_exit() {
+  [ "$BASHPID" = "$$" ] || return 0
+  [ "$_scenario_sh_cleanup_done" = 1 ] && return 0
+  _scenario_sh_cleanup_done=1
+  lab_teardown >/dev/null 2>&1
+  topo_down >/dev/null 2>&1
+}
+_scenario_sh_on_signal() {
+  local sig="$1"
+  _scenario_sh_cleanup_on_exit
+  trap - "$sig"
+  kill "-$sig" "$$"
+}
+trap _scenario_sh_cleanup_on_exit EXIT
+trap '_scenario_sh_on_signal INT'  INT
+trap '_scenario_sh_on_signal TERM' TERM
+
 SCEN_DIR="$LAB_DIR/scenarios"
 
 _usage() { sed -n '2,23p' "$_SELF" | sed 's/^# \{0,1\}//'; }
@@ -178,6 +234,23 @@ _run_matrix() {
   [ -n "$clients_csv" ] || { echo "scenario.sh --matrix: --clients a,b,c is required" >&2; exit 1; }
   mkdir -p "$LAB_RESULTS_DIR" || exit 1
 
+  # Build the new matrix in a scratch file and only replace the committed
+  # results/matrix.md with it once every client row has completed (mv is
+  # atomic on the same filesystem). Previously this wrote the header
+  # straight into matrix.md up front (truncating it), so ANY interruption
+  # mid-run -- Ctrl-C, a harness timeout/kill, a crashed client -- left
+  # matrix.md holding just that bare header, destroying whatever rows a
+  # prior successful run had recorded there (ItWorksinMyLocal#46 gate
+  # finding: exactly what happened to the last --matrix run, which force-
+  # stopped partway through and zeroed out the file). The scratch file is
+  # deliberately left behind as results/matrix.partial-<id>.md if the run
+  # doesn't finish, so an interrupted attempt is visible as its own
+  # artifact instead of silently vanishing OR silently clobbering the last
+  # good result.
+  local scratch="$LAB_RESULTS_DIR/.matrix.md.building.$$"
+  local partial="$LAB_RESULTS_DIR/matrix.partial-$id.md"
+  rm -f "$scratch"
+
   {
     echo "# Lab scenario matrix: id=$id"
     echo
@@ -185,17 +258,20 @@ _run_matrix() {
     echo
     echo "| client | priority | verdict | reason | duration |"
     echo "|--------|----------|---------|--------|----------|"
-  } > "$LAB_RESULTS_DIR/matrix.md"
+  } > "$scratch"
 
   for c in $(printf '%s' "$clients_csv" | tr ',' ' '); do
     echo "scenario.sh --matrix: id=$id client=$c ..." >&2
     line=$(LAB_CLIENTS="$c" _run_one "$file")
     IFS='|' read -r _ pri verdict reason dur <<<"$line"
-    echo "| $c | $pri | $verdict | ${reason:--} | $dur |" >> "$LAB_RESULTS_DIR/matrix.md"
+    echo "| $c | $pri | $verdict | ${reason:--} | $dur |" >> "$scratch"
+    cp "$scratch" "$partial" 2>/dev/null || true  # live progress only -- never touches matrix.md
     echo "[$id/$c] $verdict ($dur) ${reason:-}"
     [ "$verdict" = "FAIL" ] && fail_count=$((fail_count + 1))
   done
 
+  mv "$scratch" "$LAB_RESULTS_DIR/matrix.md"
+  rm -f "$partial"
   echo "Wrote $LAB_RESULTS_DIR/matrix.md"
   [ "$fail_count" -eq 0 ]
 }

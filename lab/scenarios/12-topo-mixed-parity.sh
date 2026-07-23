@@ -25,8 +25,34 @@
 # known stall. A PASS would actually be suspicious here (it would mean
 # either the modern-geth binary got fixed -- update this comment and #34 --
 # or an assertion silently isn't exercising the real sync path).
+#
+# Gate-review addendum (ItWorksinMyLocal#46 re-run, post gate-flagged
+# masked-pass finding): topologies/mixed-5.json used to set
+# skipV1Validation:true -- forbidden by docs/lab/DESIGN.md and now a hard
+# error in topo.sh validate (see netlab/topo.sh) -- which suppressed the
+# #34 stall at the genesis-config level. With that removed, node5 does
+# NOT actually halt: its xdcSyncer detects the exact #34 gas-cost mismatch
+# on real blocks and logs "BlockChain: A.94 auto-recover on ValidateState
+# mismatch during bulk sync ... invalid gas used" -- then silently
+# recovers and keeps going, still ending up hash-agreeing with the
+# producer at every later checkpoint. A verdict built only on
+# assert_lockstep/assert_hash_agreement would call that a clean PASS; it
+# would be wrong, because the follower demonstrably did NOT validate that
+# block the way the producer did -- it detected the divergence and
+# swallowed it. assert_no_validation_bypass (lab/lib-assert.sh) makes that
+# swallowed mismatch part of the verdict instead of a footnote a human has
+# to grep node5/node.log for: any occurrence FAILs the run regardless of
+# what the final hashes say. Given this, the honest expectation for this
+# scenario stays a FAIL -- either the "stalls a few blocks in" kind (if a
+# future modern-geth build stops auto-recovering and genuinely halts
+# instead) or the "auto-recovered instead of rejecting" kind this run
+# actually hits. A PASS is still suspicious for exactly the reason above:
+# it would mean node5 validated the v1 blocksigner tx correctly with no
+# auto-recover log line anywhere, i.e. the underlying #34 mismatch is
+# actually gone -- update this comment and #34 if that is ever what
+# happens.
 
-export SCEN_DESC="topo-mixed-parity: mixed-5 via the netlab framework (topo_up/lib-assert) -- honest FAIL expected against modern-geth's known V1 stall (#34)"
+export SCEN_DESC="topo-mixed-parity: mixed-5 via the netlab framework (topo_up/lib-assert) -- honest FAIL expected against modern-geth's known V1 stall / auto-recover masking (#34)"
 export SCEN_PRIORITY="P1"
 export SCEN_PROFILE="real"
 export SCEN_MODE="OBSERVE"
@@ -52,10 +78,11 @@ scen_12() {
     return 1
   fi
 
-  local node1 node5
+  local node1 node5 node5_log
   node1=$(topo_rpc "$_S12_TOPO" node1) || { echo "scen_12: FAIL - could not resolve node1 rpc"; return 1; }
   node5=$(topo_rpc "$_S12_TOPO" node5) || { echo "scen_12: FAIL - could not resolve node5 rpc"; return 1; }
-  echo "scen_12: node1(sealer, reference)=$node1 node5(modern-geth follower)=$node5" >&2
+  node5_log=$(topo_log "$_S12_TOPO" node5) || { echo "scen_12: FAIL - could not resolve node5 log path"; return 1; }
+  echo "scen_12: node1(sealer, reference)=$node1 node5(modern-geth follower)=$node5 node5_log=$node5_log" >&2
 
   # ---- 1. genesis parity across every resolved node in the topology ----
   # fleet.sh already generates ONE genesis for every node, but this is
@@ -86,21 +113,27 @@ scen_12() {
   assert_survives_epoch "node5=$node5" "$_S12_EPOCH" "$_S12_MARGIN" $((_S12_TARGET * 3 + 300))
   local survive_rc=$?
   if [ "$survive_rc" -ne 0 ]; then
+    assert_no_validation_bypass "node5" "$node5_log" >&2 || true
     echo "scen_12: FAIL (EXPECTED) - node5 did not survive past epoch $_S12_EPOCH -- known modern-geth V1 difficulty stall (#34); this is the harness working correctly, not a framework bug"
     return 1
   fi
 
-  # Only reached if node5 actually made it past the checkpoint (i.e. the
-  # #34 stall got fixed upstream) -- assert lockstep + multi-way hash
-  # agreement at a spread of checkpoints spanning genesis->epoch->target.
+  # node5 reached the checkpoint -- but reaching it is NOT the same as
+  # having validated every block honestly along the way (see the file
+  # header's gate-review addendum). Check node5's own log for a swallowed
+  # ValidateState mismatch BEFORE trusting the hash-based assertions
+  # below: a follower that auto-recovered from a genuine divergence and
+  # then hash-agrees at every checkpoint anyway is exactly the masked-pass
+  # failure mode this file exists to not reproduce.
   local cp all_ok=0
+  assert_no_validation_bypass "node5" "$node5_log" || all_ok=1
   for cp in 1 5 50 "$_S12_EPOCH" $((_S12_EPOCH + 1)) "$_S12_TARGET"; do
     assert_lockstep "node1=$node1" "node5=$node5" "$cp" 60 || all_ok=1
     assert_hash_agreement "$cp" "node1=$node1" "node5=$node5" || all_ok=1
   done
   [ "$all_ok" -eq 0 ] \
-    || { echo "scen_12: FAIL - lockstep/hash-agreement mismatch at one or more checkpoints (see PASS/FAIL lines above)"; return 1; }
+    || { echo "scen_12: FAIL - lockstep/hash-agreement/validation-bypass check failed at one or more checkpoints (see PASS/FAIL lines above)"; return 1; }
 
-  echo "scen_12: PASS - mixed-5 topology fully synced in lockstep past epoch $_S12_EPOCH (unexpected but genuine: update the #34 stall note)"
+  echo "scen_12: PASS - mixed-5 topology fully synced in lockstep past epoch $_S12_EPOCH with no swallowed validation mismatch (unexpected but genuine: update the #34 stall note)"
   return 0
 }

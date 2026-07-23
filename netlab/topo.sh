@@ -127,6 +127,23 @@ port_base = require_int("portBase")
 stagger_seconds = require_int("staggerSeconds", required=False, default=5)
 skip_v1_validation = bool(topo.get("skipV1Validation", False))
 
+# docs/lab/DESIGN.md's "Documented risks & forbidden knobs" section is
+# explicit: "Forbidden: SkipV1Validation / SkipV2Validation -- they disable
+# the validation the lab exists to compare." This lab is a
+# validation-parity harness (DESIGN.md section 1) -- a topology that ships
+# with this genesis flag set true doesn't demonstrate parity, it just turns
+# off whichever check the flag guards. Hard-error here (not just document
+# it) so a topology JSON can't silently reintroduce the masked-pass finding
+# ItWorksinMyLocal#46 was gated on (scenario 12's mixed-5 PASS resting on
+# this exact flag).
+if skip_v1_validation:
+    err("skipV1Validation: true is forbidden (docs/lab/DESIGN.md, "
+        "'Documented risks & forbidden knobs') -- it disables the V1 "
+        "blocksigner/difficulty validation this lab exists to exercise; "
+        "set it to false (or omit the field -- false is the default) and "
+        "let any real V1 divergence surface as a scenario result instead "
+        "of being masked out of the genesis")
+
 if epoch is not None and epoch != 900:
     err("epoch must be 900 (legacy oldxdc hardcodes EpocBlockRandomize=900 "
         "independent of this genesis field; any other value freezes the "
