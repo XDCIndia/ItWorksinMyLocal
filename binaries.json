@@ -59,7 +59,7 @@
       }
     },
     "besu": {
-      "_comment": "Java, platform-independent \u2014 now SELF-CONTAINED: the archive bundles a Temurin JRE 21 under jre/ and the bin/besu launcher is patched to use $APP_HOME/jre, so NO host Java is required (the previous dist needed host Java >=21). Archive contains bin/besu (launcher) + jre/ (bundled runtime) + lib/*.jar. Built on the 7ade4f2f v00.0-develop base (net5151-working; supersedes the broken v26.7 246e5030 that failed net5151 block-1, see ItWorksinMyLocal #51). Public mainnet/apothem still need the client-side fork-id fix (issue #69) to peer; net5151 syncs.",
+      "_comment": "Java, platform-independent \u2014 now SELF-CONTAINED: the archive bundles a Temurin JRE 21 (real conf/security, not the Ubuntu-JDK /etc symlink) under jre/ and the bin/besu launcher is patched to use $APP_HOME/jre, so NO host Java is required (the previous dist needed host Java >=21). Archive contains bin/besu (launcher) + jre/ (bundled runtime) + lib/*.jar. Built on the 7ade4f2f v00.0-develop base (net5151-working; supersedes the broken v26.7 246e5030 that failed net5151 block-1, see ItWorksinMyLocal #51). Public mainnet/apothem still need the client-side fork-id fix (issue #69) to peer; net5151 syncs.",
       "file": "besu-latest.tar.gz",
       "archive": "tar.gz",
       "produces": {
@@ -69,7 +69,7 @@
         "*"
       ],
       "sha256": {
-        "*": "000bbc7697ec4ac3316b22d58ffa6ee15feeddb3a7ddb6c3845ec7aed72b3c5e"
+        "*": "c35692dc9bec35858471e15aadba72d54e2282a0f43d9e9306f056412221edd1"
       }
     },
     "nethermind": {
