@@ -139,11 +139,27 @@ case "${NETWORK:-}" in
   mainnet|xinfin|xdc)
     [ -z "$GENESIS" ]   && GENESIS="genesis/genesis-mainnet.json"
     [ -z "$NETWORKID" ] && NETWORKID=50
-    NM_CONFIG="${NM_CONFIG/xdc-devnet5151/xdc-mainnet}"
+    # erigon-only: prefer its built-in "xdc" chainspec over loading the vendored
+    # genesis FILE. The public genesis's `coinbase` field is "xdc"-prefixed
+    # (XDC's address display format), which erigon-xdc's genesis-file JSON parser
+    # cannot unmarshal (it falls through to "chain name is not recognized: ...",
+    # same underlying parser gap as besu-xdc's coinbase rejection -- see #55). Its
+    # compiled-in "xdc" chainspec has no such parsing step and verifies to the
+    # SAME genesis hash (0x4a9d74...) as the vendored file, so this sidesteps the
+    # bug entirely. An explicit --chain still wins; other clients ignore $CHAIN.
+    [ -z "$CHAIN" ]     && CHAIN="xdc"
+    # nethermind's dist ships chainspec/xdc.json for mainnet (chainId 50) -- there
+    # is no xdc-mainnet.json, so map to the actual bundled name (see the
+    # nethermind chainspec directory listing referenced in issue #55).
+    NM_CONFIG="${NM_CONFIG/xdc-devnet5151/xdc}"
     PUB_BOOTNODES_FILE="bootnodes/mainnet.list" ;;
   testnet|apothem)
     [ -z "$GENESIS" ]   && GENESIS="genesis/genesis-testnet.json"
     [ -z "$NETWORKID" ] && NETWORKID=51
+    # erigon-only: same reasoning as mainnet above; xdc-apothem verifies to the
+    # SAME genesis hash (0xbdea51...) as the vendored genesis-testnet.json file.
+    [ -z "$CHAIN" ]     && CHAIN="xdc-apothem"
+    # matches chainspec/xdc-testnet.json in the nethermind dist.
     NM_CONFIG="${NM_CONFIG/xdc-devnet5151/xdc-testnet}"
     PUB_BOOTNODES_FILE="bootnodes/testnet.list" ;;
   ""|devnet5151|5151|devnet) : ;;
@@ -174,10 +190,18 @@ if [ -z "$HOST_IP" ] && [ -z "$BOOTNODES" ] && [ -n "$DEFAULT_HOST" ]; then
   HOST_IP="${DEFAULT_HOST}:${DEFAULT_BOOTNODE_PORT:-30301}"
   echo "No --ip/--bootnodes given; using default host $HOST_IP (from network.env)"
 fi
-if [ -z "$STATICPEERS" ] && [ -f peers.list ]; then
-  STATICPEERS=$(grep -v '^[[:space:]]*#' peers.list | grep enode | paste -sd, -)
-  [ -n "$STATICPEERS" ] && echo "Using $(echo "$STATICPEERS" | tr ',' '\n' | grep -c enode) default peer(s) from peers.list"
-fi
+# peers.list is devnet-5151-specific (its own header says so); do NOT use it as
+# a --staticpeers default for a public --network mainnet/testnet join, or erigon
+# ends up dialing the wrong chain's masternodes (chainId mismatch -> 0 peers)
+# instead of falling through to harvest_peers below, which resolves the REAL
+# public peers from the network (see #55).
+case "${NETWORK:-}" in
+  ""|devnet5151|5151|devnet)
+    if [ -z "$STATICPEERS" ] && [ -f peers.list ]; then
+      STATICPEERS=$(grep -v '^[[:space:]]*#' peers.list | grep enode | paste -sd, -)
+      [ -n "$STATICPEERS" ] && echo "Using $(echo "$STATICPEERS" | tr ',' '\n' | grep -c enode) default peer(s) from peers.list"
+    fi ;;
+esac
 
 # --client all: boot EVERY client at once, each in its own datadir with its
 # per-client port offset (already distinct below), all sharing the same genesis +
@@ -211,11 +235,19 @@ if [ "$CLIENT" = all ]; then
     nt=sync; [ -n "$MINEADDR" ] && [ "$c" = oldxdc ] && nt=seal
     dd="${base}/${c}-${nt}"
     args=(--client "$c" --datadir "$dd" "${shared[@]}")
-    # erigon can't join via a --genesis file (its --chain only resolves built-in
-    # names); when the caller didn't pass an explicit --chain, default it to the
-    # net5151 built-in chainspec so `--client all` doesn't fail erigon's own
-    # early validation. Harmless for the other clients (they ignore --chain).
-    [ "$c" = erigon ] && [ -z "$CHAIN" ] && args+=(--chain "${ERIGON_CHAIN:-xdc-net5151}")
+    # erigon-xdc v3.5.0+ CAN load a genesis FILE via --chain <path> (see the
+    # comment near ERC= below), so for a public --network join we just let it
+    # fall through to the already-resolved $GENESIS (genesis-mainnet/testnet.json)
+    # like the single-client path does. Only default to the net5151 built-in
+    # chainspec name when NOT targeting a public network (--network unset or
+    # devnet5151) -- that's what `--client all` with no --network needs so
+    # erigon's own early validation doesn't fail. Harmless for the other clients
+    # (they ignore --chain).
+    if [ "$c" = erigon ] && [ -z "$CHAIN" ]; then
+      case "${NETWORK:-}" in
+        ""|devnet5151|5151|devnet) args+=(--chain "${ERIGON_CHAIN:-xdc-net5151}") ;;
+      esac
+    fi
     # Distinct ethstats/identity name per client when the user forced one (the
     # per-client default name already embeds the client, so only needed here).
     [ -n "$NAME" ] && args+=(--name "${NAME}-${c}")
