@@ -127,6 +127,18 @@ port_base = require_int("portBase")
 stagger_seconds = require_int("staggerSeconds", required=False, default=5)
 skip_v1_validation = bool(topo.get("skipV1Validation", False))
 
+# peering (ItWorksinMyLocal#46 T3.2): "hub" (default) keeps D5's original
+# model -- followers dial ONLY the sealers, never each other. "mesh" lets
+# fleet.sh also hand each follower every EARLIER-started follower's own
+# enode as an additional bootnode (still staggered, still one at a time),
+# so followers can peer with each other too -- useful for exercising a
+# follower's own peer-management/eviction behavior under a denser graph,
+# not just its sync-from-sealer path. Neither value changes how SEALERS
+# peer with each other (always through the topology's own bootnode).
+peering = topo.get("peering", "hub")
+if peering not in ("hub", "mesh"):
+    err("field 'peering' must be 'hub' or 'mesh' (got %r)" % peering)
+
 # docs/lab/DESIGN.md's "Documented risks & forbidden knobs" section is
 # explicit: "Forbidden: SkipV1Validation / SkipV2Validation -- they disable
 # the validation the lab exists to compare." This lab is a
@@ -254,6 +266,37 @@ if errors:
     sys.exit(1)
 
 # ---------------------------------------------------------------------------
+# Role-based maxpeers defaults (ItWorksinMyLocal#46 T3.1): a node whose JSON
+# entry didn't set its own "maxpeers" gets one derived from its ROLE instead
+# of silently falling through to whatever the client binary itself defaults
+# to (e.g. geth's compiled-in 25) -- which knows nothing about how many
+# OTHER nodes this particular topology actually has.
+#
+# A sealer dials every other sealer through the shared bootnode AND accepts
+# a dial from every follower (hub peering, the default) or from every other
+# follower too (mesh peering -- see the "peering" field below): its cap must
+# hold the whole topology's resolved node count, not a fixed number, or a
+# large topology can starve a SEALER's peer slots and reproduce the exact
+# peer-starvation regression (scenario 13, all-clients-soak) at the sealer
+# end instead of the follower end. MAXPEERS_SLACK leaves room for a human
+# operator's own manual admin_addPeer / a debugging RPC client on top of the
+# topology's own node count.
+#
+# A follower, by contrast, only ever needs a small, FIXED number of slots
+# (a handful of sealers in hub mode, plus -- in mesh mode -- a handful of
+# other followers): capping it independent of N keeps a follower from
+# becoming a peer-storm sink candidate itself as the topology grows.
+#
+# Either default is just that -- a default. An explicit per-node "maxpeers"
+# in the topology JSON always wins (checked below).
+MAXPEERS_SLACK = 5
+FOLLOWER_MAXPEERS_CAP = 15
+sealer_maxpeers_default = len(resolved) + MAXPEERS_SLACK
+for n in resolved:
+    if n["maxpeers"] == "":
+        n["maxpeers"] = sealer_maxpeers_default if n["role"] == "sealer" else FOLLOWER_MAXPEERS_CAP
+
+# ---------------------------------------------------------------------------
 # Port math (netlab/TOPOLOGY.md "Port math"): portBase + i*20 per resolved
 # node (i = zero-based position after expansion, in declaration order); the
 # bootnode gets the port just past the last node's block.
@@ -288,6 +331,7 @@ meta = [
     ("reward", reward),
     ("gap", gap),
     ("skipV1Validation", "true" if skip_v1_validation else "false"),
+    ("peering", peering),
     ("portBase", port_base),
     ("staggerSeconds", stagger_seconds),
     ("bootnode_port", bootnode_port),

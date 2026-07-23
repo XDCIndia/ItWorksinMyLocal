@@ -5,6 +5,7 @@
 #   health.sh wait-peers  <url> <minPeers> [timeout_s=60]
 #   health.sh wait-block  <url> <N> [timeout_s=120]
 #   health.sh preflight   <topology.json> [--min-disk-gb N] [--min-ram-gb N]
+#                                          [--min-cores N] [--force]
 #
 # wait-* are the gates fleet.sh (T1.5) chains between bring-up steps: "wait
 # for a sealer's RPC to answer", "wait for a follower to reach peers>=1
@@ -17,6 +18,13 @@
 #   - disk:  free space on the filesystem holding the repo, against
 #            --min-disk-gb (default 5)
 #   - ram:   available memory, against --min-ram-gb (default 2)
+#   - cores: online CPU count, against --min-cores (default 2) -- a
+#            topology's sealers+followers all end up runnable on the SAME
+#            box; too few cores is exactly how a shared dev host starves
+#            block production under a heavy follower's sync load (T3.1;
+#            the same class of problem 5551's mainnet-fast-follower
+#            incident diagnosed at the OS level, see
+#            xone-5551-recovery-playbook)
 #   - ports: every resolved port (p2p/rpc/ws/authrpc/torrent/mcp/privapi
 #            for every node, plus the topology's bootnode port) is checked
 #            with a REAL bind() attempt, not just a passive listening-socket
@@ -37,6 +45,17 @@
 #            a short backoff before declaring FAIL), which still catches
 #            a REAL listener (busy on every attempt) but rides out a
 #            one-sample ephemeral-port collision.
+#
+# ENFORCEMENT (T3.1): any real shortfall above is a hard FAIL and preflight
+# exits nonzero -- fleet.sh's `up` treats that as fatal and aborts before
+# starting a single process (see fleet.sh's own header). `--force` does NOT
+# turn a FAIL into a PASS or hide it: every FAIL: line above still prints
+# exactly as measured, but preflight exits 0 anyway so an operator who has
+# deliberately decided a shortfall is acceptable (e.g. a resource-capped dev
+# box that's fine running a 2-node smoke topology) can proceed. This is an
+# explicit, visible operator override of a resource check, not a masked
+# scenario verdict -- it never touches disk/ram/cores/port THRESHOLDS
+# themselves and never silently downgrades a FAIL to a PASS/SKIP.
 #
 # Uses lib-rpc.sh directly (topology-independent -- see T0.1) rather than
 # lab/lib-lab.sh, so this has no dependency on the fixed lab/ port registry.
@@ -78,20 +97,19 @@ cmd_wait_rpc() {
 }
 
 # ---------------------------------------------------------------------------
-# wait-peers
+# wait-peers -- uses lab_peer_count (net_peerCount), NOT admin_peers: erigon
+# never enables the `admin` RPC namespace (see lib-rpc.sh's lab_peer_count
+# header), so an admin_peers-based gate would misreport a perfectly healthy
+# erigon follower as stuck at 0 peers forever -- exactly the false-FAIL
+# ItWorksinMyLocal#46 T3.3's all-clients-soak scenario exists to NOT
+# reproduce. net_peerCount is answered by every client this framework can
+# bring up (the "net" RPC namespace, unlike "admin", is universal).
 # ---------------------------------------------------------------------------
 cmd_wait_peers() {
   [ $# -ge 2 ] || usage
   local url="$1" min="$2" timeout="${3:-60}" waited=0 n
   while :; do
-    n=$(lab_rpc_call "$url" admin_peers "[]" 2>/dev/null | python3 -c "
-import json, sys
-try:
-    d = json.load(sys.stdin)
-except Exception:
-    d = None
-print(len(d) if isinstance(d, list) else 0)
-" 2>/dev/null)
+    n=$(lab_peer_count "$url" 2>/dev/null) || n=0
     [ -n "$n" ] || n=0
     if [ "$n" -ge "$min" ] 2>/dev/null; then
       echo "OK: $url has $n peer(s) (>= $min, waited ${waited}s)"
@@ -160,11 +178,13 @@ _port_free_debounced() {
 cmd_preflight() {
   [ $# -ge 1 ] || usage
   local topo_file="$1"; shift
-  local min_disk_gb=5 min_ram_gb=2
+  local min_disk_gb=5 min_ram_gb=2 min_cores=2 force=0
   while [ $# -gt 0 ]; do
     case "$1" in
       --min-disk-gb) min_disk_gb=$2; shift 2;;
       --min-ram-gb)  min_ram_gb=$2; shift 2;;
+      --min-cores)   min_cores=$2; shift 2;;
+      --force)       force=1; shift;;
       *) echo "health.sh preflight: unknown flag: $1" >&2; return 1;;
     esac
   done
@@ -201,6 +221,23 @@ cmd_preflight() {
     fi
   else
     echo "FAIL: ram: could not read /proc/meminfo MemAvailable" >&2
+    fail=1
+  fi
+
+  # -- cores --
+  local cores
+  cores=$(nproc 2>/dev/null) || cores=""
+  [ -n "$cores" ] || cores=$(getconf _NPROCESSORS_ONLN 2>/dev/null) || cores=""
+  [ -n "$cores" ] || cores=$(awk '/^processor/{c++} END{print c+0}' /proc/cpuinfo 2>/dev/null)
+  if [ -n "$cores" ] && [ "$cores" -gt 0 ] 2>/dev/null; then
+    if [ "$cores" -ge "$min_cores" ]; then
+      echo "PASS: cores: $cores online (>= $min_cores)"
+    else
+      echo "FAIL: cores: only $cores online (need >= $min_cores)" >&2
+      fail=1
+    fi
+  else
+    echo "FAIL: cores: could not determine the online CPU count" >&2
     fail=1
   fi
 
@@ -274,10 +311,16 @@ print(' '.join(str(p) for p in sorted(ports)))
   if [ "$fail" -eq 0 ]; then
     echo "PREFLIGHT OK"
     return 0
-  else
-    echo "PREFLIGHT FAILED" >&2
-    return 1
   fi
+  if [ "$force" -eq 1 ]; then
+    # --force: every FAIL: line above already printed the real measured
+    # shortfall -- this does not change any of them, it only decides that a
+    # shortfall isn't fatal. Still exits 0 so `fleet.sh up --force` proceeds.
+    echo "PREFLIGHT FAILED but continuing: --force overrode the FAIL(s) above" >&2
+    return 0
+  fi
+  echo "PREFLIGHT FAILED" >&2
+  return 1
 }
 
 case "$CMD" in

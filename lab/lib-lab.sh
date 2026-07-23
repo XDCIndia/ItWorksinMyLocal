@@ -321,6 +321,45 @@ lab_start_producer() {
   timeout_period="${LAB_TIMEOUT_PERIOD:-10}"
   config_key="sw${switch_block}-p${period}-t${timeout_period}"
 
+  mkdir -p "$LAB_RESULTS_DIR" || return 1
+
+  # Back up the CURRENTLY-TRACKED genesis/genesis.json BEFORE anything else
+  # in this function can touch it (ItWorksinMyLocal#46 T3.3 residual fix).
+  # _lab_ensure_root_genesis_signers (next) rewrites this exact file in
+  # place whenever .env's PRIVATE_KEY_1..4 don't match its baked-in
+  # masternode set -- the common case, since .env is gitignored and gets
+  # swapped per environment/session while the tracked genesis is committed
+  # once. Taking the backup AFTER that call (the previous order here)
+  # captured the ALREADY-MUTATED file, not the git-tracked original -- so
+  # lab_teardown's restore put back the wrong snapshot, permanently, with
+  # no way back except `git checkout`. See lab_teardown's own comment for
+  # the other half of this same bug (a stale backup being reapplied to
+  # runs that never touched the genesis at all).
+  local root_genesis="$REPO_ROOT/genesis/genesis.json"
+  local backup="$LAB_RESULTS_DIR/genesis-orig-backup.json"
+  local active_marker="$LAB_RESULTS_DIR/active-config"
+  # A backup file with NO matching active-config marker is ORPHANED --
+  # active-config is set/cleared in lockstep with a live overlay (see
+  # below and lab_teardown), so its absence means whatever overlay that
+  # backup belonged to was already restored (or never completed -- e.g. an
+  # even older, already-fixed version of this same bug), and this backup
+  # is leftover debris, not a live snapshot to preserve. Confirmed live
+  # (ItWorksinMyLocal#46 T3.3 residual, round 2): an ancient
+  # genesis-orig-backup.json that predated this whole session -- with no
+  # active-config alongside it -- got silently REUSED here (the `[ ! -f
+  # backup ]` guard alone saw it as "already backed up, skip") instead of
+  # being recognised as stale, so THIS run's fresh, correctly-ordered
+  # backup step was skipped entirely, and teardown later restored that
+  # ancient, wrong snapshot over a genuinely clean tracked genesis. Discard
+  # an orphan before deciding whether a fresh backup is needed.
+  if [ -f "$backup" ] && [ ! -f "$active_marker" ]; then
+    echo "lab_start_producer: discarding an orphaned $backup (no matching active-config -- stale, not reusing it)" >&2
+    rm -f "$backup"
+  fi
+  if [ -f "$root_genesis" ] && [ ! -f "$backup" ]; then
+    cp "$root_genesis" "$backup" || return 1
+  fi
+
   _lab_ensure_root_genesis_signers || return 1
 
   genesis="$LAB_DIR/genesis-lab-${config_key}.json"
@@ -329,14 +368,8 @@ lab_start_producer() {
     LAB_SWITCH_BLOCK="$switch_block" LAB_PERIOD="$period" LAB_TIMEOUT_PERIOD="$timeout_period" \
       "$LAB_DIR/gen-lab-genesis.sh" || return 1
   fi
-  mkdir -p "$LAB_RESULTS_DIR" || return 1
 
-  local root_genesis="$REPO_ROOT/genesis/genesis.json"
-  if [ -f "$root_genesis" ] && [ ! -f "$LAB_RESULTS_DIR/genesis-orig-backup.json" ]; then
-    cp "$root_genesis" "$LAB_RESULTS_DIR/genesis-orig-backup.json" || return 1
-  fi
-
-  local active_marker="$LAB_RESULTS_DIR/active-config" prev_config=""
+  local prev_config=""
   [ -f "$active_marker" ] && prev_config=$(cat "$active_marker")
   if [ "$prev_config" != "$config_key" ]; then
     echo "lab_start_producer: (re)initialising nodes/ for config '$config_key'" >&2
@@ -452,15 +485,67 @@ lab_start_follower() {
   )
 }
 
+# _lab_reap_orphan_producer: find+SIGTERM any run.sh/bootnode process that
+# belongs to THIS repo (cwd == REPO_ROOT, or -- for a relative-path
+# bootnode invocation -- cwd-scoped the same way) but is no longer
+# reachable via producer.pid -- e.g. because an external harness SIGKILLed
+# the scenario.sh/run.sh ancestor directly (SIGKILL can't be trapped, so
+# run.sh's own "kill child_proc on INT/TERM" cleanup in its own trap never
+# runs and its bootnode+sealer children are orphaned, reparented to init),
+# or because producer.pid was itself lost/cleared (e.g. a results/ wipe)
+# while run.sh was still alive. Confirmed live (ItWorksinMyLocal#46
+# T3.3/regression-gate finding): exactly such an orphan -- a run.sh with
+# every one of its 4 sealers already dead but its OWN bootnode still
+# running -- sat blocked forever in run.sh's bare `wait` (bash's `wait`
+# with no args blocks on EVERY backgrounded job of that shell, so one
+# still-alive bootnode alone is enough to wedge the wrapper permanently),
+# holding the bootnode's UDP/TCP port for good and leaving the NEXT
+# lab_start_producer attempt on the same box to contend with a leftover
+# process nothing in lab_teardown's pidfile-only bookkeeping could find.
+# Best-effort/idempotent like the rest of lab_stop: a no-op when nothing
+# matches, always returns success either way (called from lab_stop, whose
+# own contract is the same).
+_lab_reap_orphan_producer() {
+  local pid cwd cmd
+  for pid in $(pgrep -f '(^|/)run\.sh([[:space:]]|$)' 2>/dev/null); do
+    cwd=$(readlink -f "/proc/$pid/cwd" 2>/dev/null) || continue
+    [ "$cwd" = "$REPO_ROOT" ] || continue
+    echo "lab_stop: reaping orphaned run.sh (pid $pid -- stale/missing producer.pid, or a hard-killed ancestor left it running)" >&2
+    kill -TERM "$pid" 2>/dev/null
+  done
+  for pid in $(pgrep -f 'bootnode .*-nodekey' 2>/dev/null); do
+    cmd=$(tr '\0' ' ' < "/proc/$pid/cmdline" 2>/dev/null)
+    cwd=$(readlink -f "/proc/$pid/cwd" 2>/dev/null)
+    case "$cmd" in
+      *"-nodekey $REPO_ROOT/bootnode.key"*) : ;;
+      *'-nodekey ./bootnode.key'*) [ "$cwd" = "$REPO_ROOT" ] || continue ;;
+      *) continue ;;
+    esac
+    echo "lab_stop: reaping orphaned bootnode (pid $pid)" >&2
+    kill -TERM "$pid" 2>/dev/null
+  done
+  return 0
+}
+
 # lab_stop <client|producer|node1..node4>: SIGTERMs that follower's join.sh
 # wrapper (which itself traps and cleans up its child), the whole producer
 # wrapper (run.sh, which cleans up bootnode + all 4 sealers), or a single
-# producer sealer found by the OS process listening on its RPC port.
+# producer sealer found by the OS process listening on its RPC port. Also
+# reaps any run.sh/bootnode orphan left behind by an earlier hard-killed or
+# state-lost run (see _lab_reap_orphan_producer) so a stale pidfile (or a
+# missing one) never leaves the box dirty.
 lab_stop() {
   local target="$1" pidfile pid port
   case "$target" in
     producer)
       pidfile="$LAB_RESULTS_DIR/producer.pid"
+      if [ -f "$pidfile" ]; then
+        pid=$(cat "$pidfile")
+        kill -TERM "$pid" 2>/dev/null
+        rm -f "$pidfile"
+      fi
+      _lab_reap_orphan_producer
+      return 0
       ;;
     node1|node2|node3|node4)
       port=$(_lab_producer_rpc_port "$target") || return 1
@@ -481,10 +566,10 @@ lab_stop() {
 }
 
 # lab_teardown: stops the producer and every configured follower
-# (best-effort), restores the original genesis/genesis.json if lab_start_
-# producer backed one up, and clears the active-config marker. Always
-# succeeds (best-effort cleanup) so callers can use it freely between/after
-# scenarios. Leaves results/ in place.
+# (best-effort), restores the original genesis/genesis.json ONLY if a
+# lab_start_producer run actually left it overlaid, and clears the
+# active-config marker. Always succeeds (best-effort cleanup) so callers
+# can use it freely between/after scenarios. Leaves results/ in place.
 lab_teardown() {
   local c
   for c in $(lab_clients); do lab_stop "$c" >/dev/null 2>&1; done
@@ -492,9 +577,28 @@ lab_teardown() {
   for i in 1 2 3 4; do lab_stop "node${i}" >/dev/null 2>&1; done
   lab_stop producer >/dev/null 2>&1
 
-  if [ -f "$LAB_RESULTS_DIR/genesis-orig-backup.json" ]; then
+  # Restore the tracked genesis/genesis.json ONLY when active-config is
+  # set -- i.e. lab_start_producer (this run, or an earlier one that
+  # crashed before its own teardown ran) actually staged an overlay, which
+  # is exactly what active-config tracks (ItWorksinMyLocal#46 T3.3 residual
+  # fix). NOT "whenever genesis-orig-backup.json happens to exist on disk":
+  # that file is written ONCE ever by lab_start_producer and, before this
+  # fix, was never deleted afterward -- so scenario.sh's blanket
+  # before/after lab_teardown call (every scenario, including every
+  # netlab/ scenario like 12/13/14 that NEVER calls lab_start_producer at
+  # all) kept unconditionally overwriting genesis/genesis.json with
+  # whatever backup happened to still be sitting in lab/results/ from a
+  # completely unrelated, possibly hours-old session. Confirmed live:
+  # running scenario 13 alone (which only ever touches
+  # nodes/all-clients/genesis.json, never the tracked one) left
+  # genesis/genesis.json modified in the working tree afterward. Deleting
+  # the backup once consumed here closes the other half of the same bug --
+  # without it, that same stale snapshot gets silently reapplied by every
+  # SUBSEQUENT teardown too, not just once.
+  if [ -f "$LAB_RESULTS_DIR/active-config" ] && [ -f "$LAB_RESULTS_DIR/genesis-orig-backup.json" ]; then
     cp "$LAB_RESULTS_DIR/genesis-orig-backup.json" "$REPO_ROOT/genesis/genesis.json" 2>/dev/null \
       && echo "lab_teardown: restored original genesis/genesis.json" >&2
+    rm -f "$LAB_RESULTS_DIR/genesis-orig-backup.json"
   fi
   rm -f "$LAB_RESULTS_DIR/active-config" "$LAB_RESULTS_DIR/partition.state"
   return 0

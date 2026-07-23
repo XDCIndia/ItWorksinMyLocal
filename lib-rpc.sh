@@ -76,6 +76,24 @@ print(b.get('hash', '') if b else '')
 " "$block"
 }
 
+# lab_peer_count <url>: decimal peer count via net_peerCount -- UNIVERSAL
+# across every client this framework can bring up, including erigon, whose
+# join.sh profile never enables the `admin` RPC namespace (--http.api
+# eth,net,web3,erigon,debug,txpool -- no admin) and so never answers
+# admin_peers at all (docs/lab/DESIGN.md §3's client registry). Anything
+# that needs a peer-count check that must work identically across EVERY
+# follower client -- not just the admin-capable ones (oldxdc/geth/besu/
+# reth/xone; see lab/lib-topo.sh's topo_partition) -- should call this
+# instead of admin_peers (ItWorksinMyLocal#46 T3.3: an admin_peers-based
+# check would misreport a perfectly healthy erigon follower as
+# peer-starved, which is exactly the kind of false-FAIL this lab's honesty
+# rule exists to prevent).
+lab_peer_count() {
+  local url="$1" hex
+  hex=$(lab_rpc_call "$url" net_peerCount "[]") || return 1
+  printf '%d\n' "$hex"
+}
+
 # lab_wait_block <url> <N> [timeout_s]: blocks until head >= N, or returns
 # nonzero after timeout_s (default 120).
 lab_wait_block() {
