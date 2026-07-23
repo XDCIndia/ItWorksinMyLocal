@@ -18,6 +18,11 @@
 #                        (genesis/genesis-<net>.json) + public bootnodes
 #                        (bootnodes/<net>.list, from XinFinOrg/XinFin-Node) by
 #                        default. Works with --client <c> or --client all.
+#   --syncmode MODE      snap | fast | full. Default: snap for --network
+#                        mainnet/testnet (bounds disk to recent state), full for
+#                        devnet5151. Mapped per client (geth/xone --syncmode, besu
+#                        --sync-mode, nethermind --Sync.SnapSync/FastSync; erigon +
+#                        reth snap/stage-sync by default so they ignore it).
 #   --genesis FILE       the target network's genesis.json (overrides --network;
 #                        defaults to DEFAULT_GENESIS in network.env -- devnet 5151)
 #   --ip IP[:PORT]       just give the target machine's IP -- connects to its
@@ -109,7 +114,7 @@ SELF="$PWD/$(basename "$0")"
 # DATADIR empty here means "use the default convention" (nodes/<client>-<type>),
 # computed once the client is known; an explicit --datadir always wins.
 GENESIS=""; BOOTNODES=""; NETWORKID=""; DATADIR=""; NAME=""; HOST_IP=""; CHAIN=""
-MINEADDR=""; STATICPEERS=""; NETWORK=""
+MINEADDR=""; STATICPEERS=""; NETWORK=""; SYNCMODE=""
 # Ports are left empty here and defaulted PER CLIENT after --client is known, so
 # oldxdc/geth/erigon joins each get a distinct set (clear of run.sh) and can run
 # side by side without conflict. Any explicit flag below wins.
@@ -134,6 +139,7 @@ NM_CONFIG="${NM_CONFIG:-xdc-devnet5151}"
 while [ $# -gt 0 ]; do
   case "$1" in
     --network)     NETWORK=$2; shift 2;;
+    --syncmode)    SYNCMODE=$2; shift 2;;
     --genesis)     GENESIS=$2; shift 2;;
     --chain)       CHAIN=$2; shift 2;;
     --nm-config)   NM_CONFIG=$2; shift 2;;
@@ -157,10 +163,24 @@ while [ $# -gt 0 ]; do
     --staticpeers) STATICPEERS=$2; shift 2;;
     --ethstats)    ETHSTATS=$2; shift 2;;
     --no-ethstats) ETHSTATS=""; shift;;
-    -h|--help)     sed -n '2,91p' "$0" | sed 's/^# \{0,1\}//'; exit 0;;
+    -h|--help)     sed -n '2,96p' "$0" | sed 's/^# \{0,1\}//'; exit 0;;
     *) echo "unknown flag: $1" >&2; exit 1;;
   esac
 done
+
+# Sync mode. Default: snap for the PUBLIC networks (mainnet/testnet) so a node
+# bounds its disk to recent state (~10x smaller than full/archive) and syncs in
+# hours; full for devnet5151 (its legacy flat-diff base is validated in full, and
+# this preserves the pre-existing devnet behaviour exactly). Override anytime with
+# --syncmode snap|fast|full. Applied per-client at launch below: geth/xone
+# --syncmode, besu --sync-mode (upper-cased), nethermind --Sync.SnapSync/FastSync;
+# erigon and reth already snap/stage-sync by default so they take no extra flag.
+if [ -z "$SYNCMODE" ]; then
+  case "${NETWORK:-}" in
+    mainnet|xinfin|xdc|testnet|apothem) SYNCMODE=snap ;;
+    *)                                  SYNCMODE=full ;;
+  esac
+fi
 
 source ./lib.sh
 
@@ -547,7 +567,7 @@ elif [ "$CLIENT" = geth ]; then
   # every OTHER join.sh client, which already gets an explicit, non-default
   # authrpc port unconditionally.
   [ -n "$MINEADDR" ] && echo "note: --mine ignored (geth join is sync-only)" >&2
-  "$XDC" --datadir "$DATADIR" --networkid "$NETWORKID" --syncmode full \
+  "$XDC" --datadir "$DATADIR" --networkid "$NETWORKID" --syncmode "$SYNCMODE" \
     --bootnodes "$BOOTNODES" --port "$PORT" --nat "extip:${IP}" --identity "$NAME" --maxpeers "${MAXPEERS:-25}" \
     --http --http.corsdomain "*" --http.addr 0.0.0.0 --http.port "$RPCPORT" --http.vhosts "*" \
     --http.api eth,net,web3,txpool,debug,admin,XDPoS \
@@ -565,9 +585,11 @@ elif [ "$CLIENT" = besu ]; then
   python3 -c "import json,sys;print(json.dumps([e for e in sys.argv[1].split(',') if e]))" "$BOOTNODES" > "$DATADIR/static-nodes.json"
   BESU_ES=""; [ -n "$full" ] && BESU_ES="--ethstats=$full"
   MP_ARG=""; [ -n "$MAXPEERS" ] && MP_ARG="--max-peers=$MAXPEERS"
+  # besu expects an upper-case sync mode (SNAP|FAST|FULL); map from $SYNCMODE.
+  BESU_SYNC=$(printf '%s' "$SYNCMODE" | tr '[:lower:]' '[:upper:]')
   "$CLIENT_BIN" \
     --genesis-file="$GENESIS" --data-path="$DATADIR" --network-id="$NETWORKID" \
-    --sync-mode=FULL --data-storage-format=BONSAI \
+    --sync-mode="$BESU_SYNC" --data-storage-format=BONSAI \
     --p2p-port="$PORT" --p2p-host="$IP" --nat-method=NONE \
     --bootnodes="$BOOTNODES" --static-nodes-file="$DATADIR/static-nodes.json" \
     --rpc-http-enabled=true --rpc-http-host=127.0.0.1 --rpc-http-port="$RPCPORT" \
@@ -614,6 +636,14 @@ elif [ "$CLIENT" = nethermind ]; then
   WS_PORT=$((RPCPORT + 1))
   NM_ES=""; [ -n "$full" ] && NM_ES="--EthStats.Enabled true --EthStats.Name $ES_NAME --EthStats.Secret $ES_SECRET --EthStats.Server wss://${ES_HOSTPORT}/api"
   MP_ARG=""; [ -n "$MAXPEERS" ] && MP_ARG="--Network.MaxActivePeers $MAXPEERS"
+  # nethermind sync mode is config-driven (no --syncmode). Map $SYNCMODE to its
+  # Sync.* toggles: snap => SnapSync (+FastSync), fast => FastSync; full => neither
+  # (its default, which is what devnet5151 has always used -> unchanged there).
+  NM_SYNC=""
+  case "$SYNCMODE" in
+    snap) NM_SYNC="--Sync.SnapSync true --Sync.FastSync true" ;;
+    fast) NM_SYNC="--Sync.FastSync true" ;;
+  esac
   # net5151: disable nethermind peer persistence. With it ON, the DB-loaded copies
   # of the validator node IDs register in the peer pool BEFORE the static-config
   # entries, so those nodes never land in _staticPeers; once the validators drop
@@ -639,7 +669,7 @@ PY
     --Network.P2PPort "$PORT" --Network.DiscoveryPort "$PORT" \
     --JsonRpc.Port "$RPCPORT" --JsonRpc.WebSocketsPort "$WS_PORT" --JsonRpc.Host 127.0.0.1 \
     --Network.StaticPeers "$BOOTNODES" \
-    $MP_ARG $NM_ES ) &
+    $NM_SYNC $MP_ARG $NM_ES ) &
 elif [ "$CLIENT" = xone ]; then
   # xone-native (XDCIndia/xOneGo): go-ethereum-derived XDPoS client with
   # single-dash flags. Sync-only join here -- it recognises XDPoS from the genesis
@@ -649,7 +679,7 @@ elif [ "$CLIENT" = xone ]; then
   mkdir -p "$DATADIR"
   XONE_ES=""; [ -n "$full" ] && XONE_ES="-ethstats $full"
   MP_ARG=""; [ -n "$MAXPEERS" ] && MP_ARG="-maxpeers $MAXPEERS"
-  "$XDC" -override.genesis "$GENESIS" -networkid "$NETWORKID" -syncmode full \
+  "$XDC" -override.genesis "$GENESIS" -networkid "$NETWORKID" -syncmode "$SYNCMODE" \
     -datadir "$DATADIR" -port "$PORT" -discovery.port "$PORT" -nat "extip:${IP}" \
     -bootnodes "$BOOTNODES" $MP_ARG \
     -http -http.addr 0.0.0.0 -http.port "$RPCPORT" -http.vhosts "*" \
