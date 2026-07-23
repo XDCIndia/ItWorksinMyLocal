@@ -321,6 +321,25 @@ lab_start_producer() {
   timeout_period="${LAB_TIMEOUT_PERIOD:-10}"
   config_key="sw${switch_block}-p${period}-t${timeout_period}"
 
+  mkdir -p "$LAB_RESULTS_DIR" || return 1
+
+  # Back up the CURRENTLY-TRACKED genesis/genesis.json BEFORE anything else
+  # in this function can touch it (ItWorksinMyLocal#46 T3.3 residual fix).
+  # _lab_ensure_root_genesis_signers (next) rewrites this exact file in
+  # place whenever .env's PRIVATE_KEY_1..4 don't match its baked-in
+  # masternode set -- the common case, since .env is gitignored and gets
+  # swapped per environment/session while the tracked genesis is committed
+  # once. Taking the backup AFTER that call (the previous order here)
+  # captured the ALREADY-MUTATED file, not the git-tracked original -- so
+  # lab_teardown's restore put back the wrong snapshot, permanently, with
+  # no way back except `git checkout`. See lab_teardown's own comment for
+  # the other half of this same bug (a stale backup being reapplied to
+  # runs that never touched the genesis at all).
+  local root_genesis="$REPO_ROOT/genesis/genesis.json"
+  if [ -f "$root_genesis" ] && [ ! -f "$LAB_RESULTS_DIR/genesis-orig-backup.json" ]; then
+    cp "$root_genesis" "$LAB_RESULTS_DIR/genesis-orig-backup.json" || return 1
+  fi
+
   _lab_ensure_root_genesis_signers || return 1
 
   genesis="$LAB_DIR/genesis-lab-${config_key}.json"
@@ -328,12 +347,6 @@ lab_start_producer() {
     echo "lab_start_producer: $genesis missing; generating it..." >&2
     LAB_SWITCH_BLOCK="$switch_block" LAB_PERIOD="$period" LAB_TIMEOUT_PERIOD="$timeout_period" \
       "$LAB_DIR/gen-lab-genesis.sh" || return 1
-  fi
-  mkdir -p "$LAB_RESULTS_DIR" || return 1
-
-  local root_genesis="$REPO_ROOT/genesis/genesis.json"
-  if [ -f "$root_genesis" ] && [ ! -f "$LAB_RESULTS_DIR/genesis-orig-backup.json" ]; then
-    cp "$root_genesis" "$LAB_RESULTS_DIR/genesis-orig-backup.json" || return 1
   fi
 
   local active_marker="$LAB_RESULTS_DIR/active-config" prev_config=""
@@ -481,10 +494,10 @@ lab_stop() {
 }
 
 # lab_teardown: stops the producer and every configured follower
-# (best-effort), restores the original genesis/genesis.json if lab_start_
-# producer backed one up, and clears the active-config marker. Always
-# succeeds (best-effort cleanup) so callers can use it freely between/after
-# scenarios. Leaves results/ in place.
+# (best-effort), restores the original genesis/genesis.json ONLY if a
+# lab_start_producer run actually left it overlaid, and clears the
+# active-config marker. Always succeeds (best-effort cleanup) so callers
+# can use it freely between/after scenarios. Leaves results/ in place.
 lab_teardown() {
   local c
   for c in $(lab_clients); do lab_stop "$c" >/dev/null 2>&1; done
@@ -492,9 +505,28 @@ lab_teardown() {
   for i in 1 2 3 4; do lab_stop "node${i}" >/dev/null 2>&1; done
   lab_stop producer >/dev/null 2>&1
 
-  if [ -f "$LAB_RESULTS_DIR/genesis-orig-backup.json" ]; then
+  # Restore the tracked genesis/genesis.json ONLY when active-config is
+  # set -- i.e. lab_start_producer (this run, or an earlier one that
+  # crashed before its own teardown ran) actually staged an overlay, which
+  # is exactly what active-config tracks (ItWorksinMyLocal#46 T3.3 residual
+  # fix). NOT "whenever genesis-orig-backup.json happens to exist on disk":
+  # that file is written ONCE ever by lab_start_producer and, before this
+  # fix, was never deleted afterward -- so scenario.sh's blanket
+  # before/after lab_teardown call (every scenario, including every
+  # netlab/ scenario like 12/13/14 that NEVER calls lab_start_producer at
+  # all) kept unconditionally overwriting genesis/genesis.json with
+  # whatever backup happened to still be sitting in lab/results/ from a
+  # completely unrelated, possibly hours-old session. Confirmed live:
+  # running scenario 13 alone (which only ever touches
+  # nodes/all-clients/genesis.json, never the tracked one) left
+  # genesis/genesis.json modified in the working tree afterward. Deleting
+  # the backup once consumed here closes the other half of the same bug --
+  # without it, that same stale snapshot gets silently reapplied by every
+  # SUBSEQUENT teardown too, not just once.
+  if [ -f "$LAB_RESULTS_DIR/active-config" ] && [ -f "$LAB_RESULTS_DIR/genesis-orig-backup.json" ]; then
     cp "$LAB_RESULTS_DIR/genesis-orig-backup.json" "$REPO_ROOT/genesis/genesis.json" 2>/dev/null \
       && echo "lab_teardown: restored original genesis/genesis.json" >&2
+    rm -f "$LAB_RESULTS_DIR/genesis-orig-backup.json"
   fi
   rm -f "$LAB_RESULTS_DIR/active-config" "$LAB_RESULTS_DIR/partition.state"
   return 0
