@@ -12,6 +12,7 @@
 # Usage:
 #   ./oracle.sh --from 0 --to 400
 #   ./oracle.sh --from 0 --to 400 --clients "geth,erigon" --interval-blocks 10
+#   ./oracle.sh --targets "node1=http://127.0.0.1:34101,node5=http://127.0.0.1:34121" --ref http://127.0.0.1:34101
 #   ./oracle.sh --self-test        # pure ABI-decode check, no node required
 #
 # Flags:
@@ -19,8 +20,19 @@
 #   --to N                   last block height to check (default: the
 #                           reference's current head at start)
 #   --clients "a,b,..."      follower client ids to check (default: lab_clients)
+#                           -- looked up via lab_rpc's fixed lab/ port
+#                           registry; mutually exclusive with --targets.
+#   --targets "name=url,..."  explicit name=url endpoints (ItWorksinMyLocal#46
+#                           T2.2) instead of the fixed lab/ registry -- for a
+#                           netlab topology (see lab/lib-topo.sh's topo_rpc),
+#                           whose ports are NOT the lab/ fixed ones. Requires
+#                           --ref (no implicit producer/node1 reference in
+#                           target mode -- a topology may not even HAVE a
+#                           node named "node1"). Mutually exclusive with
+#                           --clients.
 #   --interval-blocks K      check every Kth height (default 1)
-#   --ref URL                reference RPC URL (default the producer, node1)
+#   --ref URL                reference RPC URL (default the producer, node1;
+#                           REQUIRED when --targets is given)
 #   --timeout-per-block S    how long to wait for a follower to reach a
 #                           height before marking it MISS (default 60s)
 #   --self-test              decode a canned getCandidates() hex blob with
@@ -64,6 +76,7 @@ _self_test() {
 FROM=0
 TO=""
 CLIENTS=""
+TARGETS=""
 INTERVAL=1
 REF=""
 TIMEOUT=60
@@ -74,6 +87,7 @@ while [ $# -gt 0 ]; do
     --from)              FROM=$2; shift 2 ;;
     --to)                TO=$2; shift 2 ;;
     --clients)           CLIENTS=$2; shift 2 ;;
+    --targets)           TARGETS=$2; shift 2 ;;
     --interval-blocks)   INTERVAL=$2; shift 2 ;;
     --ref)               REF=$2; shift 2 ;;
     --timeout-per-block) TIMEOUT=$2; shift 2 ;;
@@ -88,11 +102,33 @@ if [ "$SELFTEST" = 1 ]; then
   exit $?
 fi
 
-[ -n "$REF" ] || REF=$(lab_rpc oldxdc)
-if [ -z "$CLIENTS" ]; then
-  CLIENTS=$(lab_clients)
+if [ -n "$TARGETS" ] && [ -n "$CLIENTS" ]; then
+  echo "oracle: --targets and --clients are mutually exclusive" >&2
+  exit 1
+fi
+
+client_urls=""
+if [ -n "$TARGETS" ]; then
+  [ -n "$REF" ] || { echo "oracle: --targets requires --ref <url> (no implicit producer/node1 reference in target mode)" >&2; exit 1; }
+  CLIENTS=""
+  for pair in $(printf '%s' "$TARGETS" | tr ',' ' '); do
+    c="${pair%%=*}"; u="${pair#*=}"
+    [ -n "$c" ] && [ -n "$u" ] && [ "$c" != "$pair" ] || { echo "oracle: invalid --targets entry '$pair' (want name=url)" >&2; exit 1; }
+    client_urls="$client_urls $c=$u"
+    CLIENTS="$CLIENTS $c"
+  done
+  CLIENTS=$(printf '%s' "$CLIENTS" | sed 's/^ //')
 else
-  CLIENTS=$(printf '%s' "$CLIENTS" | tr ',' ' ')
+  [ -n "$REF" ] || REF=$(lab_rpc oldxdc)
+  if [ -z "$CLIENTS" ]; then
+    CLIENTS=$(lab_clients)
+  else
+    CLIENTS=$(printf '%s' "$CLIENTS" | tr ',' ' ')
+  fi
+  for c in $CLIENTS; do
+    u=$(lab_rpc "$c") || { echo "oracle: unknown client '$c'" >&2; exit 1; }
+    client_urls="$client_urls $c=$u"
+  done
 fi
 
 if [ -z "$TO" ]; then
@@ -100,12 +136,6 @@ if [ -z "$TO" ]; then
 fi
 
 echo "oracle: ref=$REF clients=[$CLIENTS] range=${FROM}..${TO} step=$INTERVAL" >&2
-
-client_urls=""
-for c in $CLIENTS; do
-  u=$(lab_rpc "$c") || { echo "oracle: unknown client '$c'" >&2; exit 1; }
-  client_urls="$client_urls $c=$u"
-done
 
 h=$FROM
 while [ "$h" -le "$TO" ]; do

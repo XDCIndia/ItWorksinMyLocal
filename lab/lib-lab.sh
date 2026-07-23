@@ -24,14 +24,19 @@ REPO_ROOT="$(cd "$LAB_DIR/.." && pwd)" || exit 1
 LAB_RESULTS_DIR="$LAB_DIR/results"
 mkdir -p "$LAB_RESULTS_DIR" 2>/dev/null || true
 
-# The XDPoS masternode/validator contract, always at this address on every
-# XDC-family client (genesis-deployed; see docs/lab/DESIGN.md §4).
-LAB_MASTERNODE_CONTRACT="0x0000000000000000000000000000000000000088"
-
 # Reuse the repo's existing helpers (detect_ip, ensure_bins, PLATFORM, ...)
 # rather than reimplementing them.
 # shellcheck source=../lib.sh
 source "$REPO_ROOT/lib.sh"
+
+# Topology-independent RPC/ABI helpers (lab_rpc_call, lab_block_number,
+# lab_block_hash, lab_wait_block, lab_abi_encode_*, lab_decode_address_array,
+# lab_call_0x88, lab_get_candidates, LAB_MASTERNODE_CONTRACT) live in
+# lib-rpc.sh (ItWorksinMyLocal#46 T0.1) so the netlab/ topology engine can
+# reuse them without this file's fixed-topology bits. Function names
+# unchanged -- every existing caller of lib-lab.sh keeps working as-is.
+# shellcheck source=../lib-rpc.sh
+source "$REPO_ROOT/lib-rpc.sh"
 
 # ---------------------------------------------------------------------------
 # Client registry
@@ -68,176 +73,16 @@ _lab_producer_rpc_port() {
   esac
 }
 
-# ---------------------------------------------------------------------------
-# JSON-RPC transport
-# ---------------------------------------------------------------------------
-
-# lab_rpc_call <url> <method> <json-params>: POSTs a JSON-RPC request and
-# prints the raw "result" (a bare string as-is, anything else JSON-encoded).
-# Returns nonzero on a transport error, an RPC error, or a null result.
-lab_rpc_call() {
-  local url="$1" method="$2" params="${3:-[]}" resp
-  resp=$(curl -s -m "${LAB_RPC_TIMEOUT:-10}" -X POST "$url" \
-    -H 'Content-Type: application/json' \
-    --data "{\"jsonrpc\":\"2.0\",\"method\":\"${method}\",\"params\":${params},\"id\":1}") || return 1
-  [ -n "$resp" ] || return 1
-  python3 - "$resp" <<'PY'
-import json
-import sys
-
-try:
-    obj = json.loads(sys.argv[1])
-except Exception:
-    sys.exit(1)
-if "error" in obj:
-    sys.stderr.write(json.dumps(obj["error"]) + "\n")
-    sys.exit(1)
-result = obj.get("result")
-if result is None:
-    sys.exit(1)
-if isinstance(result, str):
-    print(result)
-else:
-    print(json.dumps(result))
-PY
-}
-
-# lab_block_number <url>: decimal head height.
-lab_block_number() {
-  local url="$1" hex
-  hex=$(lab_rpc_call "$url" eth_blockNumber "[]") || return 1
-  printf '%d\n' "$hex"
-}
-
-# lab_block_hash <url> <N>: 0x... hash of block N, or "" (+ nonzero) if the
-# node doesn't have that block yet.
-lab_block_hash() {
-  local url="$1" n="$2" hexn block
-  hexn=$(printf '0x%x' "$n")
-  block=$(lab_rpc_call "$url" eth_getBlockByNumber "[\"${hexn}\",false]") || { printf ''; return 1; }
-  python3 -c "
-import json
-import sys
-
-b = json.loads(sys.argv[1])
-print(b.get('hash', '') if b else '')
-" "$block"
-}
-
-# lab_wait_block <url> <N> [timeout_s]: blocks until head >= N, or returns
-# nonzero after timeout_s (default 120).
-lab_wait_block() {
-  local url="$1" target="$2" timeout="${3:-120}" waited=0 cur
-  while :; do
-    cur=$(lab_block_number "$url" 2>/dev/null) || cur=0
-    [ -n "$cur" ] && [ "$cur" -ge "$target" ] 2>/dev/null && return 0
-    [ "$waited" -ge "$timeout" ] && return 1
-    sleep 2
-    waited=$((waited + 2))
-  done
-}
-
-# ---------------------------------------------------------------------------
-# ABI helpers (0x88 masternode contract; see docs/lab/DESIGN.md §4)
-# ---------------------------------------------------------------------------
-
-# lab_abi_encode_address <0xAddr>: 32-byte left-padded word (64 hex chars,
-# no 0x prefix), suitable for concatenating after a selector.
-lab_abi_encode_address() {
-  python3 -c "
-import sys
-
-a = sys.argv[1].lower()
-if a.startswith('0x'):
-    a = a[2:]
-if len(a) != 40:
-    sys.stderr.write('lab_abi_encode_address: not a 20-byte address: %s\n' % sys.argv[1])
-    sys.exit(1)
-print(a.rjust(64, '0'))
-" "$1"
-}
-
-# lab_abi_encode_uint256 <decimal>: 32-byte left-padded word (64 hex chars,
-# no 0x prefix). Accepts arbitrary-size integers (wei amounts).
-lab_abi_encode_uint256() {
-  python3 -c "
-import sys
-
-n = int(sys.argv[1])
-if n < 0:
-    sys.stderr.write('lab_abi_encode_uint256: negative value\n')
-    sys.exit(1)
-print(format(n, '064x'))
-" "$1"
-}
-
-# lab_abi_encode_string <string>: ABI encoding of a single dynamic `string`
-# argument (offset word + length word + data, right-padded to a 32-byte
-# boundary), no leading selector. Needed for uploadKYC(string) -- see the
-# note on cmd_upload_kyc in masternode.sh for why that call exists at all.
-lab_abi_encode_string() {
-  python3 -c "
-import sys
-
-s = sys.argv[1].encode('utf-8')
-length = len(s)
-padded = ((length + 31) // 32) * 32
-data_hex = s.hex().ljust(padded * 2, '0')
-print(format(0x20, '064x') + format(length, '064x') + data_hex)
-" "$1"
-}
-
 # lab_xdc_to_wei_hex <XDC-amount>: 0x-prefixed hex wei value for a decimal
-# XDC amount (arbitrary size; XDC has 18 decimals like ether).
+# XDC amount (arbitrary size; XDC has 18 decimals like ether). Stays here
+# (not lib-rpc.sh): plain unit-conversion utility used only by
+# lab/masternode.sh, not an RPC/ABI transport helper.
 lab_xdc_to_wei_hex() {
   python3 -c "
 import sys
 
 print('0x%x' % (int(sys.argv[1]) * 10**18))
 " "$1"
-}
-
-# lab_decode_address_array <hex>: decodes an ABI dynamic address[] return
-# value (offset word, length word, then N left-padded address words) into a
-# sorted, comma-joined, lowercase 0x-prefixed address list. Pure decode, no
-# network access -- this is what oracle.sh --self-test exercises directly.
-lab_decode_address_array() {
-  python3 -c "
-import sys
-
-h = sys.argv[1]
-if h.startswith('0x'):
-    h = h[2:]
-if len(h) < 128:
-    print('')
-    sys.exit(0)
-length = int(h[64:128], 16)
-addrs = []
-pos = 128
-for _ in range(length):
-    word = h[pos:pos + 64]
-    if len(word) < 64:
-        break
-    addrs.append('0x' + word[-40:].lower())
-    pos += 64
-addrs.sort()
-print(','.join(addrs))
-" "$1"
-}
-
-# lab_call_0x88 <url> <selector-with-args-hex>: eth_call to the masternode
-# contract at 'latest', returns the raw hex result.
-lab_call_0x88() {
-  local url="$1" data="$2"
-  lab_rpc_call "$url" eth_call "[{\"to\":\"${LAB_MASTERNODE_CONTRACT}\",\"data\":\"0x${data#0x}\"},\"latest\"]"
-}
-
-# lab_get_candidates <url>: decoded, sorted, comma-joined getCandidates()
-# address list. Universal (eth_call only) -- works against every client.
-lab_get_candidates() {
-  local url="$1" raw
-  raw=$(lab_call_0x88 "$url" "06a49fce") || return 1
-  lab_decode_address_array "$raw"
 }
 
 # lab_unlock_key <url> <hex-private-key> [unlock-secs] [known-address]:
@@ -378,6 +223,88 @@ _lab_pid_on_port() {
   lsof -ti "tcp:$1" -sTCP:LISTEN 2>/dev/null | head -1
 }
 
+# _lab_ensure_root_genesis_signers: run.sh's 4 sealers (NUM_NODES=4) are
+# whichever accounts .env's PRIVATE_KEY_1..4 import to. genesis/genesis.json
+# is a tracked file whose baked-in extraData masternode set comes from
+# whatever --signers gen-genesis.sh was last run with (or its own hardcoded
+# default) -- nothing keeps it in sync with .env, which is gitignored and
+# gets swapped wholesale between environments/sessions. A mismatch there is
+# fatal but silent: run.sh happily imports+seals with the .env keys and
+# inits every node on the mismatched genesis, then the chain wedges forever
+# at block 0 because none of the actual sealers are in the authorized
+# masternode set -- exactly the "Blocks stop / stuck at an epoch" failure
+# README.md's own FAQ already documents, and reproduced live in
+# ItWorksinMyLocal#46 Phase 2 acceptance (node1 spinning forever on "Failed
+# to retrieve block author err=recovery failed number=0").
+#
+# lab_start_producer's own genesis-lab-*.json cache (below) patches FROM
+# genesis/genesis.json and preserves its masternode set unchanged, so a
+# stale root genesis silently poisons the lab genesis too, indefinitely
+# (that cache is only regenerated "if missing"). So fix the root cause
+# before touching the cache: verify the 4 addresses baked into
+# genesis/genesis.json's extraData match what .env's PRIVATE_KEY_1..4
+# actually import to, and regenerate genesis/genesis.json (via the repo's
+# own gen-genesis.sh, exactly as setup.sh's dynamic-signer derivation
+# already does) if they don't. A fixed --timestamp keeps this
+# deterministic/assertable. On a genuine rewrite, any cached lab genesis
+# is now equally stale and gets dropped along with the active-config
+# marker so the next lab_start_producer call regenerates everything
+# against the corrected base.
+_lab_ensure_root_genesis_signers() {
+  local root_genesis="$REPO_ROOT/genesis/genesis.json"
+  [ -f "$root_genesis" ] && [ -f "$REPO_ROOT/.env" ] || return 0
+
+  require_oldxdc
+  ensure_bins
+  local xdc="$XDC_BIN"
+
+  set -a
+  # shellcheck disable=SC1091
+  source "$REPO_ROOT/.env"
+  set +a
+
+  local tmp i pk_var pk a want=""
+  tmp=$(mktemp -d) || return 1
+  : > "$tmp/pw"
+  for i in 1 2 3 4; do
+    pk_var="PRIVATE_KEY_$i"; pk="${!pk_var}"
+    if [ -z "$pk" ]; then
+      echo "_lab_ensure_root_genesis_signers: $pk_var not set in .env" >&2
+      rm -rf "$tmp"; return 1
+    fi
+    a=$("$xdc" account import --password "$tmp/pw" --datadir "$tmp/k$i" <(printf '%s' "$pk") 2>/dev/null \
+          | grep -oE 'xdc[0-9a-fA-F]{40}' | head -1 | sed 's/^xdc//' | tr 'A-F' 'a-f')
+    if [ -z "$a" ]; then
+      echo "_lab_ensure_root_genesis_signers: could not derive an address for $pk_var" >&2
+      rm -rf "$tmp"; return 1
+    fi
+    want="$want $a"
+  done
+  rm -rf "$tmp"
+  want=$(printf '%s\n' $want | sort)
+
+  local have
+  have=$(python3 -c "
+import json, sys
+d = json.load(open(sys.argv[1]))
+hexs = d['extraData'][2:]
+rest = hexs[64:]
+addrs = rest[:-130]
+for i in range(0, len(addrs), 40):
+    print(addrs[i:i+40].lower())
+" "$root_genesis" 2>/dev/null | sort)
+
+  [ "$want" = "$have" ] && return 0
+
+  echo "_lab_ensure_root_genesis_signers: $root_genesis's masternode set doesn't match .env's PRIVATE_KEY_1..4 -- regenerating via gen-genesis.sh (same derivation setup.sh uses)" >&2
+  local signers="" w
+  for w in $want; do signers="${signers:+$signers,}$w"; done
+  ( cd "$REPO_ROOT" && ./gen-genesis.sh --signers "$signers" --timestamp 0x0 ) || return 1
+
+  rm -f "$LAB_DIR"/genesis-lab-*.json
+  rm -f "$LAB_RESULTS_DIR/active-config" "$LAB_RESULTS_DIR/genesis-orig-backup.json"
+}
+
 # lab_start_producer: brings up the run.sh 4-node oldxdc net using the lab
 # genesis for the current LAB_SWITCH_BLOCK/LAB_PERIOD/LAB_TIMEOUT_PERIOD env
 # vars (the pinned contract in docs/lab/DESIGN.md Section 5; scenarios
@@ -393,6 +320,9 @@ lab_start_producer() {
   period="${LAB_PERIOD:-1}"
   timeout_period="${LAB_TIMEOUT_PERIOD:-10}"
   config_key="sw${switch_block}-p${period}-t${timeout_period}"
+
+  _lab_ensure_root_genesis_signers || return 1
+
   genesis="$LAB_DIR/genesis-lab-${config_key}.json"
   if [ ! -f "$genesis" ]; then
     echo "lab_start_producer: $genesis missing; generating it..." >&2
