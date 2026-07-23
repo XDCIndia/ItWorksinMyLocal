@@ -423,7 +423,15 @@ case "$CLIENT" in
       # is no known reason to prefer one over the other for sync-only.
       if [ -n "$XONE_BIN" ] && [ -x "$XONE_BIN" ]; then
         XDC="$XONE_BIN"
-        echo "Using XONE_BIN=$XONE_BIN ($("$XDC" version 2>/dev/null | head -1))"
+        # NOTE: xone does NOT treat a bare "version" positional as a
+        # print-and-exit subcommand the way oldxdc/geth do -- passed
+        # anything it doesn't recognise, it silently falls through to
+        # starting a real node (mainnet defaults, e.g. ~/.ETH2030) that
+        # never exits. Only "--version" (a real flag) prints and exits.
+        # Using the wrong one here previously hung join.sh indefinitely
+        # inside this very echo's command substitution and leaked a
+        # stray mainnet-config node -- verified live while fixing xOneGo#679.
+        echo "Using XONE_BIN=$XONE_BIN ($("$XDC" --version 2>/dev/null | head -1))"
       else
         ensure_bins
         XDC="$XDC_BIN"

@@ -174,9 +174,23 @@ scen_15() {
   esac
   if [ -n "$cand_bin" ] && [ -x "$cand_bin" ]; then
     local ver_line commit_line mtime
-    ver_line=$("$cand_bin" version 2>&1 | grep -m1 -i '^Version:' )
-    commit_line=$("$cand_bin" version 2>&1 | grep -m1 -i '^Git Commit:' )
     mtime=$(date -u -r "$cand_bin" +%FT%TZ 2>/dev/null || echo "?")
+    if [ "$cand_client" = xone ]; then
+      # xone does NOT treat a bare "version" positional as a print-and-exit
+      # subcommand the way oldxdc/geth do -- passed anything it doesn't
+      # recognise, it silently falls through to starting a real node
+      # (mainnet defaults) that never exits, hanging this whole script
+      # forever inside the command substitution below (verified live
+      # while fixing xOneGo#679). Only "--version" (a real flag) prints
+      # and exits; its own output has no "Version:"/"Git Commit:" lines,
+      # just one "xone vX.Y.Z (commit ...) [...]" line, so use that
+      # directly rather than grepping for the oldxdc/geth format.
+      ver_line=$("$cand_bin" --version 2>&1 | head -1)
+      commit_line=""
+    else
+      ver_line=$("$cand_bin" version 2>&1 | grep -m1 -i '^Version:' )
+      commit_line=$("$cand_bin" version 2>&1 | grep -m1 -i '^Git Commit:' )
+    fi
     cand_provenance="cand1(${cand_client}) bin=$cand_bin mtime=$mtime ${ver_line:-} ${commit_line:-}"
   else
     cand_provenance="cand1(${cand_client}) bin=<no *_BIN override resolved -- join.sh used its own default lookup path>"
