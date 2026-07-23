@@ -338,8 +338,13 @@ assert_survives_epoch() {
 # is the same bug wearing a PASS. Call this for every follower's log
 # alongside (not instead of) the hash-based assertions; a FAIL here means
 # the run's PASS, if any, is not real parity and must not be reported as
-# one. Pattern is the exact upstream wording seen in the field; extend it
-# if a client's phrasing differs.
+# one. Pattern set is deliberately a growing OR, not one literal string --
+# the first two entries are the exact upstream wording seen in the field
+# (modern-geth's A.94 recover path, ItWorksinMyLocal#46); the rest cover
+# other swallowed-mismatch phrasings anticipated for clients this lab
+# hasn't yet caught one from live. Extend this array (never narrow it) as
+# a new client's own recovery-path wording is confirmed -- self-acknowledged
+# narrow as of the mint-rotation gate review (ItWorksinMyLocal#62).
 # ---------------------------------------------------------------------------
 assert_no_validation_bypass() {
   [ $# -ge 2 ] || { _assert_fail "assert_no_validation_bypass: usage: assert_no_validation_bypass <name> <logfile>"; return 1; }
@@ -348,7 +353,17 @@ assert_no_validation_bypass() {
     _assert_fail "no-validation-bypass: $name -- log file not found ($logfile); cannot confirm no mismatch was swallowed"
     return 1
   fi
-  hit=$(grep -m1 -iE 'auto-recover on ValidateState mismatch|ValidateState mismatch' "$logfile" 2>/dev/null)
+  local -a _bypass_patterns=(
+    'auto-recover on ValidateState mismatch'
+    'ValidateState mismatch'
+    'auto-recover(ed)?[^.]*(consensus|validation) mismatch'
+    'swallow(ed|ing)[^.]*(invalid|mismatched) block'
+    'recovered from (an? )?(invalid|mismatched) (block|state)'
+    'ignoring invalid block'
+  )
+  local _bypass_re="" _p
+  for _p in "${_bypass_patterns[@]}"; do _bypass_re="${_bypass_re:+$_bypass_re|}$_p"; done
+  hit=$(grep -m1 -iE "$_bypass_re" "$logfile" 2>/dev/null)
   if [ -n "$hit" ]; then
     _assert_fail "no-validation-bypass: $name's log shows a swallowed consensus mismatch instead of a rejected block: ${hit}"
   else

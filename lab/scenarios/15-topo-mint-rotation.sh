@@ -41,7 +41,23 @@
 # precedent -- rather than either failing the whole run on a capability gap
 # that isn't this harness's bug, or silently calling it a PASS. A genuine
 # G1-G4 failure (or a G6/G7 assertion that actually FAILS once a mint IS
-# observed) is a real FAIL, never folded into the SKIP.
+# observed) is a real FAIL, never folded into the SKIP. G5 (P3 turn-order)
+# is likewise never discarded just because a mint was also observed: a
+# real G5 FAIL alongside a genuine G6/G7 PASS is reported as SKIP (not
+# PASS), with the G5 detail carried in both the narrative and the
+# MINT_GRAPH_STATE blocker text below -- it must never silently vanish
+# into an unqualified PASS (this exact masking was a gate-review finding).
+#
+# State reporting is CAPPED, never aspirational: the graph is linear (S5
+# V1-mint-accepted -> S6 V2-mint-accepted -> S7 fair-share), so a mint
+# observed below MINT_V2BLOCK can only ever be reported as S5 (with V1
+# fair-share evidence) -- S7 is reached ONLY by promoting an already-S6
+# (V2-crossing) mint, never hardcoded on G6+G7 passing alone.
+#
+# Every terminal MINT_GRAPH_STATE line also carries cand1's own resolved
+# binary path + version/commit (see cand_provenance below) -- a mint claim
+# is not fully honest if the exact build under test (e.g. a locally
+# patched *_BIN override) is left for a reviewer to reconstruct later.
 #
 # In addition to scenario.sh's usual "id|priority|verdict|reason|duration"
 # line, this file also emits one machine-parseable line per run:
@@ -143,6 +159,30 @@ scen_15() {
   local cand_norm; cand_norm=$(printf '%s' "$cand_addr" | tr 'A-Z' 'a-z')
   echo "scen_15: cand1 address=$cand_addr" >&2
 
+  # ---- binary provenance: disclose the EXACT binary/build actually under
+  # test, in the run's own evidence -- not something a later reviewer has
+  # to reconstruct from file mtimes. A mint claim for a client whose binary
+  # carries an undisclosed local patch (e.g. a *_BIN override pointing at a
+  # freshly rebuilt tree) is not fully honest until that patch is named
+  # here (ItWorksinMyLocal#62 gate review: a swapped/patched binary must be
+  # stated, never silently assumed "the stock build").
+  local cand_bin="" cand_provenance=""
+  case "$cand_client" in
+    geth) cand_bin="${GETH_BIN:-}" ;;
+    xone) cand_bin="${XONE_BIN:-}" ;;
+    reth) cand_bin="${RETH_BIN:-}" ;;
+  esac
+  if [ -n "$cand_bin" ] && [ -x "$cand_bin" ]; then
+    local ver_line commit_line mtime
+    ver_line=$("$cand_bin" version 2>&1 | grep -m1 -i '^Version:' )
+    commit_line=$("$cand_bin" version 2>&1 | grep -m1 -i '^Git Commit:' )
+    mtime=$(date -u -r "$cand_bin" +%FT%TZ 2>/dev/null || echo "?")
+    cand_provenance="cand1(${cand_client}) bin=$cand_bin mtime=$mtime ${ver_line:-} ${commit_line:-}"
+  else
+    cand_provenance="cand1(${cand_client}) bin=<no *_BIN override resolved -- join.sh used its own default lookup path>"
+  fi
+  echo "scen_15: provenance: $cand_provenance" >&2
+
   local ref="${URL[node1]}"
   local genesis_file="$REPO_ROOT/nodes/mint-iter/genesis.json"
 
@@ -187,8 +227,17 @@ scen_15() {
   fi
 
   # ---- G4: extraData + 0x88 SMC authorization ----
+  # NOTE: this must inspect ONLY the extraData field's own value, not grep
+  # the whole (minified, single-line) genesis file -- cand1's address also
+  # appears in `alloc` (its prefunded balance), so a whole-file grep can
+  # never independently FAIL when the address is prefunded but missing
+  # from the actual signer segment (ItWorksinMyLocal#62 gate review).
   local g4_ok=0
-  if [ -f "$genesis_file" ] && grep -qi "${cand_addr#0x}" "$genesis_file"; then
+  local extradata_field=""
+  if [ -f "$genesis_file" ]; then
+    extradata_field=$(grep -oE '"extraData"[[:space:]]*:[[:space:]]*"[^"]*"' "$genesis_file" | head -1)
+  fi
+  if [ -n "$extradata_field" ] && printf '%s' "$extradata_field" | grep -qi "${cand_addr#0x}"; then
     echo "PASS: G4 (extraData): cand1 ($cand_addr) appears in genesis extraData" >&2
   else
     echo "FAIL: G4 (extraData): cand1 ($cand_addr) does NOT appear in genesis extraData ($genesis_file)" >&2
@@ -257,10 +306,24 @@ scen_15() {
   mint_rc=$?
   echo "$mint_out" >&2
 
+  # mint_state is a CAP, not a starting point: the ItWorksinMyLocal#62
+  # mint-enablement graph is linear (S5 V1-mint-accepted -> S6 V2-mint-
+  # accepted -> S7 fair-share) -- a mint observed below MINT_V2BLOCK only
+  # ever exercised V1 sealing, so the honest state for THIS run can never
+  # exceed S5 regardless of how well G7 (fair share) goes below.
   local mint_state="S5"; [ "$mint_h" -ge "$_S15_V2BLOCK" ] 2>/dev/null && mint_state="S6"
 
+  # g5_note: G5 (P3 turn-order) is evaluated above, over the SAME window,
+  # but must never be silently discarded just because a real mint (G6) was
+  # also observed -- that exact "g5_rc only consulted in the no-mint SKIP
+  # branch" pattern is a can't-fail-once-minted masking bug the
+  # ItWorksinMyLocal#62 gate review found. Every terminal state emitted
+  # from here on carries this note (non-empty only on a real G5 failure).
+  local g5_note=""
+  [ "$g5_rc" -ne 0 ] && g5_note=" ALSO: G5 (P3 turn-order) FAILED over [$turn_from..$turn_to], not masked by the mint success: ${g5_out#FAIL: }"
+
   if [ "$mint_rc" -ne 0 ]; then
-    _s15_emit_state S4 "cand1 was OBSERVED minting block $mint_h but the mint gate (assert_mint_accepted) FAILED: ${mint_out#FAIL: }"
+    _s15_emit_state S4 "cand1 was OBSERVED minting block $mint_h but the mint gate (assert_mint_accepted) FAILED: ${mint_out#FAIL: }${g5_note}"
     echo "scen_15: FAIL (G6) - assert_mint_accepted rejected the observed mint at H=$mint_h (see line above) -- this is a REAL failure, not folded into a SKIP"
     return 1
   fi
@@ -270,7 +333,7 @@ scen_15() {
   local share_from=$((mint_h)) share_to=$((mint_h + _S15_SHARE_WINDOW))
   echo "scen_15: G7 -- waiting for the reference to reach block $share_to for the fair-share window [$share_from..$share_to] ..." >&2
   if ! lab_wait_block "$ref" "$share_to" $((share_to * 2 + 300)); then
-    _s15_emit_state "$mint_state" "mint gate PASSED at H=$mint_h, but the reference never reached block $share_to to evaluate G7 (fair share) -- treat as an inconclusive soak, not a fairness regression"
+    _s15_emit_state "$mint_state" "mint gate PASSED at H=$mint_h, but the reference never reached block $share_to to evaluate G7 (fair share) -- treat as an inconclusive soak, not a fairness regression.${g5_note} [$cand_provenance]"
     echo "SKIP:G6 (the mint gate) PASSED at H=$mint_h, but the reference never reached block $share_to within the timeout to evaluate G7 (fair share)"
     return 2
   fi
@@ -280,12 +343,35 @@ scen_15() {
   echo "$share_out" >&2
 
   if [ "$share_rc" -ne 0 ]; then
-    _s15_emit_state "$mint_state" "mint gate PASSED at H=$mint_h, but G7 (fair share) FAILED over [$share_from..$share_to]: ${share_out#FAIL: }"
+    _s15_emit_state "$mint_state" "mint gate PASSED at H=$mint_h, but G7 (fair share) FAILED over [$share_from..$share_to]: ${share_out#FAIL: }${g5_note}"
     echo "scen_15: FAIL (G7) - fair-share assertion failed over [$share_from..$share_to] (see line above)"
     return 1
   fi
 
-  _s15_emit_state S7 "-"
-  echo "scen_15: PASS - cand1 ($cand_client) minted block $mint_h under the full anti-masking gate (G6) and shares turns fairly (G7) -- ItWorksinMyLocal#62 state S7"
+  # ---- final state: capped at mint_state; S7 (fair-share) is only ever
+  # reached by PROMOTING an already-S6 run (a V2-crossing mint) -- never
+  # hardcoded on the mere fact that G6+G7 both passed, which is exactly
+  # the S5-run-reported-as-S7 overclaim the gate review found. ----
+  local final_state="$mint_state"
+  [ "$mint_state" = "S6" ] && final_state="S7"
+
+  if [ "$g5_rc" -ne 0 ]; then
+    # A real G5 (P3) FAIL must never flow into a silent PASS just because
+    # the mint gate (G6) -- and now G7 -- also passed. Report as SKIP (not
+    # PASS): the mint itself is genuine and disclosed via MINT_GRAPH_STATE
+    # below, but full G1-G7 coverage was NOT clean, so this run cannot
+    # honestly claim the unqualified PASS/state that a clean run would.
+    _s15_emit_state "$final_state" "mint gate (G6) genuinely PASSED at H=$mint_h and G7 fair-share also passed, but G5 (P3 turn-order) FAILED over [$turn_from..$turn_to] and is NOT masked by that success: ${g5_out#FAIL: } [$cand_provenance]"
+    echo "SKIP:cand1 ($cand_client) minted block $mint_h (G6 mint gate genuinely PASSED) and G7 fair-share also passed, but G5 (P3 turn-order) FAILED over [$turn_from..$turn_to] -- not folded into a PASS; see the FAIL line above for detail"
+    return 2
+  fi
+
+  if [ "$final_state" = "S7" ]; then
+    _s15_emit_state S7 "[$cand_provenance]"
+    echo "scen_15: PASS - cand1 ($cand_client) minted block $mint_h (>= MINT_V2BLOCK=$_S15_V2BLOCK, a V2-crossing mint) under the full anti-masking gate (G6) and shares turns fairly (G7) -- ItWorksinMyLocal#62 state S7"
+  else
+    _s15_emit_state "$final_state" "V1 mint-accepted + fair-share verified at H=$mint_h, but H < MINT_V2BLOCK=$_S15_V2BLOCK so this run never exercised V2 sealing -- S6/S7 remain untested; rerun with MINT_V2BLOCK <= $mint_h to reach them. [$cand_provenance]"
+    echo "scen_15: PASS - cand1 ($cand_client) minted block $mint_h under the full anti-masking gate (G6) and shares turns fairly under V1 (G7) -- ItWorksinMyLocal#62 state $final_state (H=$mint_h < MINT_V2BLOCK=$_S15_V2BLOCK: V2-mint/S6 and S7 were NOT exercised this run)"
+  fi
   return 0
 }
