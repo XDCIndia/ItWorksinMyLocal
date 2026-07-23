@@ -1,0 +1,20 @@
+{
+  "name": "mint-iter",
+  "description": "ItWorksinMyLocal#62's mint loop's own inner topology: 3 oldxdc sealers (the trusted quorum) + 1 role=proposer candidate under test ('cand1', client parameterized via env CAND_CLIENT -- default geth) + 1 oldxdc observer ('obs1', an independent oldxdc witness distinct from the sealers -- the mint gate's condition (1) needs this) + 1 modern-geth observer ('obs2', a fixed non-candidate modern-client witness for cross-client hash agreement). cand1's address is derived (fleet.sh, via node.sh addr) and appended to genesis --signers BEFORE any node starts, so it is a genesis-time masternode (extraData + the seeded 0x88 SMC) from block 1 onward, not something that has to be voted in later. v2block is parameterized via env MINT_V2BLOCK: 1800 (default, V1-focus -- long enough to exercise V1 round-robin/turn-order before any V1->V2 switch) or 900 (V2-focus -- switches at the very next epoch boundary). See lab/scenarios/15-topo-mint-rotation.sh and lab/mintlab.sh.",
+  "chainId": 34093,
+  "epoch": 900,
+  "v2block": ${MINT_V2BLOCK:-1800},
+  "period": 1,
+  "reward": 5000,
+  "gap": 450,
+  "portBase": 34500,
+  "staggerSeconds": 5,
+  "nodes": [
+    { "id": "node1", "client": "oldxdc", "role": "sealer", "keyRef": "PRIVATE_KEY_1" },
+    { "id": "node2", "client": "oldxdc", "role": "sealer", "keyRef": "PRIVATE_KEY_2" },
+    { "id": "node3", "client": "oldxdc", "role": "sealer", "keyRef": "PRIVATE_KEY_3" },
+    { "id": "cand1", "client": "${CAND_CLIENT:-geth}", "role": "proposer", "keyRef": "PRIVATE_KEY_5" },
+    { "id": "obs1", "client": "oldxdc", "role": "follower" },
+    { "id": "obs2", "client": "geth", "role": "follower" }
+  ]
+}
