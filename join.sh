@@ -40,10 +40,15 @@
 #                        oldxdc/geth/erigon if unavailable; BIN_SOURCE=build
 #                        (or per-client BIN_SOURCE_<client>=build) forces a
 #                        build / skips the download. besu/nethermind/reth also
-#                        honor OLDXDC_BIN / BESU_BIN / RETH_BIN / NETHERMIND_DIST (or PATH)
+#                        honor OLDXDC_BIN / BESU_BIN / RETH_BIN / NETHERMIND_DIST / XONE_BIN (or PATH)
 #                        ahead of both. besu & reth read the geth-format
 #                        --genesis natively; erigon loads it directly (v3.5.0+); nethermind
-#                        uses its own chainspec.
+#                        uses its own chainspec. xone's --mine (role:proposer) path
+#                        specifically resolves xone-native (XONE_NATIVE_BIN env override,
+#                        else a "xone-native" sibling next to the resolved xone binary,
+#                        else PATH) instead of the general xone launcher -- xOneGo#679:
+#                        the general launcher drops -miner.key on a private
+#                        -override.genesis join; xone-native (same build) accepts it.
 #   --chain NAME         erigon only: built-in chainspec (xdc | xdc-apothem). Optional
 #                        -- erigon v3.5.0+ loads the --genesis file directly.
 #   --nm-config NAME     nethermind only: chainspec name to load from
@@ -399,6 +404,43 @@ case "$CLIENT" in
     if [ "$CLIENT" = oldxdc ] && [ -n "$OLDXDC_BIN" ] && [ -x "$OLDXDC_BIN" ]; then
       XDC="$OLDXDC_BIN"
       echo "Using OLDXDC_BIN=$OLDXDC_BIN ($("$XDC" version 2>/dev/null | awk '/^Version/{print $2; exit}'))"
+    elif [ "$CLIENT" = xone ]; then
+      # xOneGo#679: pkg/bin/xone (the general-purpose launcher binary --
+      # what XONE_BIN normally resolves to, mirroring OLDXDC_BIN/BESU_BIN/
+      # RETH_BIN) does NOT register -miner.key when joining a private
+      # XDPoS genesis via -override.genesis -- it hard-errors with "flag
+      # provided but not defined: -miner.key" the instant a role=proposer
+      # --mine attempt reaches it. pkg/bin/xone-native, the SAME build's
+      # other binary, registers -mine/-miner.key/-miner.etherbase cleanly
+      # and actually starts the XDPoS validator mining loop. So: resolve
+      # the base xone binary as before (XONE_BIN env override, else the
+      # usual ensure_bins()/download path), but when this join will
+      # attempt to seal (--mine given), swap in xone-native instead --
+      # XONE_NATIVE_BIN env override wins, else a "xone-native" sibling
+      # next to the resolved base binary's own directory, else "xone-native"
+      # on PATH. Non-sealing (follower) xone joins are unaffected -- both
+      # binaries are "the same build" per xOneGo#679's own repro, so there
+      # is no known reason to prefer one over the other for sync-only.
+      if [ -n "$XONE_BIN" ] && [ -x "$XONE_BIN" ]; then
+        XDC="$XONE_BIN"
+        echo "Using XONE_BIN=$XONE_BIN ($("$XDC" version 2>/dev/null | head -1))"
+      else
+        ensure_bins
+        XDC="$XDC_BIN"
+      fi
+      if [ -n "$MINEADDR" ]; then
+        XONE_NATIVE_RESOLVED="${XONE_NATIVE_BIN:-}"
+        if [ -z "$XONE_NATIVE_RESOLVED" ] && [ -n "$XDC" ] && [ -x "$(dirname "$XDC")/xone-native" ]; then
+          XONE_NATIVE_RESOLVED="$(dirname "$XDC")/xone-native"
+        fi
+        [ -z "$XONE_NATIVE_RESOLVED" ] && XONE_NATIVE_RESOLVED="$(command -v xone-native 2>/dev/null)"
+        if [ -n "$XONE_NATIVE_RESOLVED" ] && [ -x "$XONE_NATIVE_RESOLVED" ]; then
+          echo "note: xone role=proposer sealing attempt -- using xone-native ($XONE_NATIVE_RESOLVED) instead of the general launcher (xOneGo#679: the general xone binary drops -miner.key on a private -override.genesis join; xone-native accepts it and starts the XDPoS mining loop)" >&2
+          XDC="$XONE_NATIVE_RESOLVED"
+        else
+          echo "note: --mine given for xone but no xone-native binary found (checked XONE_NATIVE_BIN, \$(dirname \$XDC)/xone-native, PATH) -- falling back to the general xone launcher, which is known to reject -miner.key on a private genesis join (xOneGo#679); sealing will likely fail to start" >&2
+        fi
+      fi
     else
       ensure_bins
       XDC="$XDC_BIN"
