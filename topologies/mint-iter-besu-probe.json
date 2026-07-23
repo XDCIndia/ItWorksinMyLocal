@@ -1,0 +1,18 @@
+{
+  "name": "mint-iter-besu-probe",
+  "description": "ItWorksinMyLocal#62 besu S2-follow probe: same 3-oldxdc-sealer trusted quorum as mint-iter.json, but instead of a role=proposer candidate (topo.sh hard-rejects role=proposer for client besu -- no sealing-flag path wired), besu is joined here as a plain role=follower node ('besu1') to answer one narrow question honestly: can the currently-staged besu binary (bin/besu, the tar.gz whose sha256 is 7ade4f2f... -- the 'good' build per the besu-xdc-5551 memory, NOT the broken 246e5030 build published at xdc.network today) even sync/follow (S2) this genesis, before any sealing question is reachable at all. Separate portBase (34700) from mint-iter.json's own (34500) so the two topologies never collide if brought up concurrently.",
+  "chainId": 34097,
+  "epoch": 900,
+  "v2block": 1800,
+  "period": 1,
+  "reward": 5000,
+  "gap": 450,
+  "portBase": 34100,
+  "staggerSeconds": 5,
+  "nodes": [
+    { "id": "node1", "client": "oldxdc", "role": "sealer", "keyRef": "PRIVATE_KEY_1" },
+    { "id": "node2", "client": "oldxdc", "role": "sealer", "keyRef": "PRIVATE_KEY_2" },
+    { "id": "node3", "client": "oldxdc", "role": "sealer", "keyRef": "PRIVATE_KEY_3" },
+    { "id": "besu1", "client": "besu", "role": "follower" }
+  ]
+}
