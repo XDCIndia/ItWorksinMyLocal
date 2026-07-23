@@ -22,18 +22,31 @@
 # --bootnodes: a `sealer` node derives its own bootnode enode from the
 # shared ./bootnode.key (same derivation run.sh uses) unless --bootnodes
 # overrides it -- sealers peer with each other through the topology's own
-# local bootnode. A `follower` node has no such fallback: fleet.sh gathers
-# the live sealer enodes (admin_nodeInfo) and MUST pass them via
-# --bootnodes -- followers dial sealers directly, never each other (D5).
+# local bootnode. A `follower` OR `proposer` node has no such fallback:
+# fleet.sh gathers the live sealer enodes (admin_nodeInfo) and MUST pass
+# them via --bootnodes -- followers/proposers dial sealers directly, never
+# each other (D5).
 #
-# `addr`: sealer-only utility (not part of the five lifecycle verbs above).
-# Ensures this node's validator key (topology's keyRef, an env var out of
-# .env) is imported into its keystore -- WITHOUT starting anything -- and
-# prints the resulting address on stdout, nothing else. This is what
-# fleet.sh calls, once per sealer, to learn the genesis --signers list
-# *before* any genesis exists (the same account-import step `start` performs
-# lazily is idempotent, so calling `addr` first and then `start` later never
-# double-imports).
+# `addr`: sealer/proposer-only utility (not part of the five lifecycle verbs
+# above). Ensures this node's validator key (topology's keyRef, an env var
+# out of .env) is imported into its keystore -- WITHOUT starting anything --
+# and prints the resulting address on stdout, nothing else. This is what
+# fleet.sh calls, once per sealer AND once per role=proposer node
+# (ItWorksinMyLocal#62), to learn the genesis --signers list *before* any
+# genesis exists (the same account-import step `start` performs lazily is
+# idempotent, so calling `addr` first and then `start` later never
+# double-imports). The import always goes through the oldxdc binary's own
+# `account import` (see _ensure_signer_account below) regardless of this
+# node's OWN client -- oldxdc/geth/xone all share the identical
+# go-ethereum-lineage V3 keystore JSON format, so this is a single neutral,
+# always-available way to learn (and, for keystore-reading clients, actually
+# seed) the resulting address no matter which client will run here.
+#
+# role=proposer (ItWorksinMyLocal#62): launched with its CLIENT's own
+# sealing flags (see join.sh's per-client branches) using this same derived
+# address, plus -- for a client whose sealing flag wants the raw key
+# directly rather than an address+keystore (xone's -miner.key) -- the raw
+# keyRef value itself, via join.sh's --sealkey.
 
 _NETLAB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit 1
 REPO_ROOT="$(cd "$_NETLAB_DIR/.." && pwd)" || exit 1
@@ -141,14 +154,19 @@ _pid_alive() { [ -n "${1:-}" ] && kill -0 "$1" 2>/dev/null; }
 _read_pid() { [ -f "$NODE_PIDFILE" ] && cat "$NODE_PIDFILE" 2>/dev/null; }
 
 # ---------------------------------------------------------------------------
-# _ensure_sealer_account: idempotent. Imports NODE_KEYREF's env value into
+# _ensure_signer_account: idempotent. Imports NODE_KEYREF's env value into
 # this node's keystore if it doesn't already hold an account, else reads
 # the existing one back. Prints the resulting 0x-prefixed address on stdout
 # (only), everything else (including ensure_bins' own progress messages)
-# is routed to stderr so callers can safely capture stdout.
+# is routed to stderr so callers can safely capture stdout. Valid for role
+# sealer OR proposer (ItWorksinMyLocal#62) -- both need an address derived
+# from their keyRef before genesis exists; a follower has no keyRef at all.
 # ---------------------------------------------------------------------------
-_ensure_sealer_account() {
-  [ "$NODE_ROLE" = sealer ] || { echo "node.sh: ${NODE_ID}: not a sealer (role=$NODE_ROLE)" >&2; return 1; }
+_ensure_signer_account() {
+  case "$NODE_ROLE" in
+    sealer|proposer) ;;
+    *) echo "node.sh: ${NODE_ID}: not a sealer/proposer (role=$NODE_ROLE)" >&2; return 1 ;;
+  esac
   local key="${!NODE_KEYREF:-}"
   [ -n "$key" ] || { echo "node.sh: ${NODE_ID}: keyRef '$NODE_KEYREF' is not set in the environment (check .env)" >&2; return 1; }
 
@@ -202,9 +220,9 @@ cmd_start() {
   mkdir -p "$NODE_DIR" || return 1
 
   local bootnodes="$OPT_BOOTNODES"
-  local seal_addr=""
+  local seal_addr="" seal_key=""
   if [ "$NODE_ROLE" = sealer ]; then
-    seal_addr="$(_ensure_sealer_account)" || return 1
+    seal_addr="$(_ensure_signer_account)" || return 1
     if [ -z "$bootnodes" ]; then
       # Sealers peer with each other through this topology's own local
       # bootnode (./bootnode.key, same derivation run.sh uses), at the
@@ -216,6 +234,24 @@ cmd_start() {
       pubkey=$("$BOOTNODE_BIN" -nodekey "$REPO_ROOT/bootnode.key" -writeaddress)
       bootnodes="enode://${pubkey}@${ip}:${TOPO_BOOTNODE_PORT}"
     fi
+  elif [ "$NODE_ROLE" = proposer ]; then
+    # role=proposer (ItWorksinMyLocal#62): same address derivation as a
+    # sealer, but no local-bootnode fallback -- a proposer is not part of
+    # the trusted quorum peering through the topology's own bootnode.key; it
+    # dials the sealers directly, exactly like a follower (fleet.sh gathers
+    # and passes their enodes via --bootnodes). seal_key carries the RAW
+    # keyRef value too (not just the derived address) for a client whose own
+    # sealing flag wants the raw private key directly instead of an
+    # address+keystore (xone's -miner.key -- see join.sh's --sealkey).
+    seal_addr="$(_ensure_signer_account)" || return 1
+    seal_key="${!NODE_KEYREF:-}"
+    [ -n "$bootnodes" ] || {
+      echo "node.sh: ${NODE_ID}: proposer nodes need --bootnodes (fleet.sh gathers the" >&2
+      echo "  live sealer enodes via admin_nodeInfo and passes them here, same as a" >&2
+      echo "  follower -- a proposer is not a sealer and has no local-bootnode" >&2
+      echo "  fallback; see ItWorksinMyLocal#62)." >&2
+      return 1
+    }
   else
     [ -n "$bootnodes" ] || {
       echo "node.sh: ${NODE_ID}: follower nodes need --bootnodes (fleet.sh gathers the" >&2
@@ -232,6 +268,16 @@ cmd_start() {
   [ -n "$NODE_MAXPEERS" ] && args+=(--maxpeers "$NODE_MAXPEERS")
   if [ "$NODE_ROLE" = sealer ]; then
     args+=(--mine "$seal_addr" --etherbase "$seal_addr")
+  elif [ "$NODE_ROLE" = proposer ]; then
+    # role=proposer (ItWorksinMyLocal#62): --mine/--etherbase carry the
+    # derived address (used by oldxdc/geth-style --unlock sealing); --sealkey
+    # additionally carries the raw keyRef value for a client whose own
+    # sealing flag wants the raw private key directly (xone's -miner.key) --
+    # join.sh's per-client branches pick whichever of these their own client
+    # actually needs and ignore the rest (see join.sh's per-client notes for
+    # what each client attempts today, and what remains blocked-upstream).
+    args+=(--mine "$seal_addr" --etherbase "$seal_addr")
+    [ -n "$seal_key" ] && args+=(--sealkey "$seal_key")
   fi
 
   echo "node.sh: starting ${NODE_ID} (${NODE_CLIENT}, ${NODE_ROLE}) rpc=http://127.0.0.1:${NODE_RPC} p2p=${NODE_P2P}" >&2
@@ -361,7 +407,7 @@ cmd_wipe() {
 # ---------------------------------------------------------------------------
 # cmd_addr
 # ---------------------------------------------------------------------------
-cmd_addr() { _ensure_sealer_account; }
+cmd_addr() { _ensure_signer_account; }
 
 case "$CMD" in
   start)  cmd_start ;;

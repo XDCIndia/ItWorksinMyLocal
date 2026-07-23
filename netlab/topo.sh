@@ -34,6 +34,22 @@
 #
 # Uses inline python3 for the JSON parse/validate/resolve (already a hard
 # dependency across this repo -- lab/lib-lab.sh, gen-genesis.sh, etc).
+#
+# Env-var templating (ItWorksinMyLocal#62 mint-iter): before JSON-parsing a
+# topology file, this script substitutes any "${VAR}" / "${VAR:-default}"
+# token found ANYWHERE in the raw file text with that variable's value from
+# the process environment (the same .env-sourced subshell this script
+# already runs in -- see below), falling back to the given default (or "" if
+# there is no ":-default" and the var is unset). This is a generic,
+# topology-agnostic templating pass, not special-cased to any one field or
+# topology -- it runs on the raw text before json.loads, so a placeholder
+# can appear either inside a JSON string ("client": "${CAND_CLIENT:-geth}")
+# or bare where a JSON literal is expected ("v2block": ${MINT_V2BLOCK:-1800})
+# as long as the SUBSTITUTED text is itself valid JSON at that position.
+# Lets one topology file (e.g. topologies/mint-iter.json) be re-parameterized
+# per run (which client is "the candidate under test", V1-focus vs V2-focus
+# v2block) via plain env vars, with zero fleet.sh/node.sh/scenario-side file
+# generation or copy-on-write tricks.
 
 _NETLAB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit 1
 REPO_ROOT="$(cd "$_NETLAB_DIR/.." && pwd)" || exit 1
@@ -83,6 +99,18 @@ try:
 except OSError as e:
     print("topo.sh: ERROR: cannot read %s: %s" % (topo_path, e), file=sys.stderr)
     sys.exit(1)
+
+_TEMPLATE_RE = re.compile(r'\$\{([A-Za-z_][A-Za-z0-9_]*)(?::-([^}]*))?\}')
+
+
+def _template_sub(text):
+    def repl(m):
+        var, default = m.group(1), m.group(2)
+        return os.environ.get(var, default if default is not None else "")
+    return _TEMPLATE_RE.sub(repl, text)
+
+
+raw = _template_sub(raw)
 
 try:
     topo = json.loads(raw)
@@ -226,17 +254,29 @@ for idx, entry in enumerate(nodes_raw):
             err("node '%s': unknown client '%s' (must be one of: %s)" % (node_id, client, ", ".join(KNOWN_CLIENTS)))
         if role not in KNOWN_ROLES:
             err("node '%s': unknown role '%s' (must be one of: %s)" % (node_id, role, ", ".join(KNOWN_ROLES)))
-        if role == "proposer":
-            err("node '%s': role 'proposer' is reserved and not yet supported "
-                "(runtime-rejected pending go-ethereum#1341) -- remove this node "
-                "or change its role" % node_id)
         if role == "sealer" and client != "oldxdc":
             err("node '%s': role 'sealer' requires client 'oldxdc' (only oldxdc "
                 "can seal via join.sh --mine; got client '%s')" % (node_id, client))
-        if role == "sealer":
+        # role=proposer (ItWorksinMyLocal#62 P1/S3): a node under test for
+        # client-side sealing/BFT-voting. Its own address gets derived
+        # (fleet.sh, via node.sh addr -- the same neutral "XDC account
+        # import" every sealer already uses) BEFORE genesis exists and is
+        # APPENDED to gen-genesis.sh's --signers, so it lands in genesis
+        # extraData AND the seeded 0x88 masternode SMC alongside the real
+        # sealers -- see fleet.sh. Restricted to the clients netlab/node.sh +
+        # join.sh actually wire a sealing attempt for; the other clients have
+        # no sealing-flag path here yet (erigon/besu/nethermind) or seal via
+        # role=sealer instead (oldxdc) -- an honest guard, not a capability
+        # this harness fakes.
+        if role == "proposer" and client not in ("geth", "xone", "reth"):
+            err("node '%s': role 'proposer' requires client one of geth|xone|reth "
+                "(the clients netlab/node.sh + join.sh wire a sealing attempt for "
+                "-- oldxdc seals via role 'sealer' instead; erigon/besu/nethermind "
+                "have no sealing-flag path here yet); got client '%s'" % (node_id, client))
+        if role in ("sealer", "proposer"):
             if not keyref:
-                err("node '%s': role 'sealer' requires keyRef (name of an env "
-                    "var holding the validator private key)" % node_id)
+                err("node '%s': role '%s' requires keyRef (name of an env "
+                    "var holding the validator private key)" % (node_id, role))
             elif mode == "print" and not os.environ.get(keyref):
                 err("node '%s': keyRef '%s' is not set in the environment "
                     "(check .env)" % (node_id, keyref))
@@ -257,6 +297,7 @@ for idx, entry in enumerate(nodes_raw):
         })
 
 sealer_count = sum(1 for n in resolved if n["role"] == "sealer")
+proposer_count = sum(1 for n in resolved if n["role"] == "proposer")
 if nodes_raw and sealer_count == 0:
     err("topology has no role=sealer node -- nothing to generate/join a chain against")
 
@@ -315,9 +356,88 @@ for i, n in enumerate(resolved):
 
 bootnode_port = port_base + len(resolved) * PORT_WIDTH
 
+# ---------------------------------------------------------------------------
+# Cross-topology port-overlap check (ItWorksinMyLocal#62 "port re-band"):
+# this topology's own occupied port range is [portBase, bootnode_port] (every
+# resolved node's p2p/rpc/ws/authrpc/torrent/mcp/privapi block, plus the
+# bootnode just past the last one -- see "Port math" above). Two topologies
+# that can each be brought up independently (fleet.sh has no notion of "only
+# one topology at a time") must never claim overlapping ranges, or bringing
+# both up (even at different times, on the same box) leaves stale listeners
+# from one colliding with the other's bind attempts -- confirmed latent
+# between mixed-5 (old portBase 34100, 5 nodes -> bootnode at 34200) and
+# all-clients (old portBase 34200) before the re-band. Scans every OTHER
+# *.json file in the SAME directory as this topology file (sibling
+# topologies are expected to live together, e.g. topologies/*.json) and
+# best-effort parses just enough of each (portBase + a node count) to
+# compute its own range; a sibling that fails to parse that far (not valid
+# JSON, missing portBase, whatever) is silently skipped here -- it is not
+# this topology's problem, and its OWN `topo.sh validate` run will catch its
+# own malformedness. This intentionally does NOT catch a sibling living in a
+# DIFFERENT directory (e.g. a scenario-generated scratch topology file
+# outside topologies/) -- that is by design: such a file is never meant to
+# run concurrently with anything in topologies/ (see mint-iter.json's own
+# ${CAND_CLIENT} templating note above), so this check only needs to reason
+# about files that actually declare themselves as permanent siblings.
+topo_dir = os.path.dirname(topo_path)
+try:
+    sibling_files = sorted(f for f in os.listdir(topo_dir) if f.endswith(".json"))
+except OSError:
+    sibling_files = []
+for fname in sibling_files:
+    fpath = os.path.join(topo_dir, fname)
+    if os.path.abspath(fpath) == os.path.abspath(topo_path):
+        continue
+    try:
+        with open(fpath) as f:
+            other_raw = _template_sub(f.read())
+        other = json.loads(other_raw)
+        if not isinstance(other, dict):
+            continue
+        other_port_base = other.get("portBase")
+        if not isinstance(other_port_base, int) or isinstance(other_port_base, bool):
+            continue
+        other_nodes_raw = other.get("nodes")
+        if not isinstance(other_nodes_raw, list):
+            continue
+        other_count = 0
+        for oe in other_nodes_raw:
+            if not isinstance(oe, dict):
+                continue
+            oid = oe.get("id")
+            if not isinstance(oid, str):
+                continue
+            om = RANGE_RE.match(oid)
+            if om:
+                oa, ob = int(om.group("a")), int(om.group("b"))
+                if oa <= ob:
+                    other_count += ob - oa + 1
+            else:
+                other_count += 1
+        if other_count == 0:
+            continue
+        other_bootnode_port = other_port_base + other_count * PORT_WIDTH
+        # both ranges are inclusive [start, end]; they overlap iff each
+        # starts at or before the other's end.
+        if port_base <= other_bootnode_port and other_port_base <= bootnode_port:
+            err("portBase %d (this topology's own range %d..%d, %d node(s) + "
+                "bootnode) overlaps sibling topology '%s' (%s)'s own range "
+                "%d..%d -- give one of them a non-overlapping portBase "
+                "(netlab/TOPOLOGY.md 'Port re-band')"
+                % (port_base, port_base, bootnode_port, len(resolved),
+                   other.get("name", fname), fname, other_port_base, other_bootnode_port))
+    except (OSError, json.JSONDecodeError):
+        continue
+
+if errors:
+    for e in errors:
+        print("topo.sh: ERROR: %s" % e, file=sys.stderr)
+    sys.exit(1)
+
 if mode == "validate":
-    print("OK: %s: %d node(s) (%d sealer, %d follower), chainId=%s portBase=%s bootnode_port=%s"
-          % (name, len(resolved), sealer_count, len(resolved) - sealer_count, chain_id, port_base, bootnode_port))
+    print("OK: %s: %d node(s) (%d sealer, %d proposer, %d follower), chainId=%s portBase=%s bootnode_port=%s"
+          % (name, len(resolved), sealer_count, proposer_count,
+             len(resolved) - sealer_count - proposer_count, chain_id, port_base, bootnode_port))
     sys.exit(0)
 
 # mode == "print"
@@ -337,6 +457,7 @@ meta = [
     ("bootnode_port", bootnode_port),
     ("node_count", len(resolved)),
     ("sealer_count", sealer_count),
+    ("proposer_count", proposer_count),
 ]
 for k, v in meta:
     print("# %s=%s" % (k, v))

@@ -15,9 +15,13 @@
 #      test) -- ENFORCED: a real shortfall aborts `up` before any process
 #      starts, unless `--force` (T3.1) tells preflight to proceed anyway
 #      (still printing every FAIL line first -- never silently masked)
-#   3. node.sh addr for every sealer -> derives (or reuses) each one's
-#      keystore address BEFORE any genesis exists
-#   4. gen-genesis.sh --signers <those addresses> --out
+#   3. node.sh addr for every sealer AND every role=proposer node -> derives
+#      (or reuses) each one's keystore address BEFORE any genesis exists; a
+#      proposer's address is appended to the signers list alongside the
+#      sealers' (ItWorksinMyLocal#62 role:proposer), so it lands in genesis
+#      extraData + the seeded 0x88 SMC from block 1, not just the sealers'
+#      owner/foundation/prefund fields (those stay sealer-only)
+#   4. gen-genesis.sh --signers <sealer + proposer addresses> --out
 #      nodes/<name>/genesis.json -- this topology's OWN genesis, never
 #      ./genesis/genesis.json
 #   5. start this topology's own local bootnode (shared ./bootnode.key,
@@ -232,11 +236,30 @@ cmd_up() {
   done
   [ -n "$addrs" ] || { echo "fleet.sh: no sealer addresses resolved" >&2; return 1; }
 
+  # -- proposer addresses (ItWorksinMyLocal#62 role:proposer), ALSO BEFORE
+  # any genesis exists -- node.sh addr derives a proposer's address the same
+  # neutral way a sealer's is (XDC account import, regardless of the
+  # proposer's own client), then it gets APPENDED to the genesis --signers
+  # list below (never to $addrs itself -- owner/foundation/swap/prefund
+  # below stay sealer-only, unaffected) so a proposer under test is a
+  # genesis-time masternode (extraData + the seeded 0x88 SMC) from block 1
+  # onward, exactly like a real sealer, without needing a separate
+  # propose()/vote-in step.
+  local signer_addrs="$addrs" proposer_addrs=""
+  for id in "${NODE_IDS[@]}"; do
+    [ "${ROLE_OF[$id]}" = proposer ] || continue
+    addr=$("$NODE_SH" addr "$TOPO_FILE" "$id") || return 1
+    echo "fleet.sh: proposer $id -> $addr" >&2
+    [ -n "$proposer_addrs" ] && proposer_addrs="$proposer_addrs,$addr"
+    proposer_addrs="${proposer_addrs:-$addr}"
+    signer_addrs="$signer_addrs,$addr"
+  done
+
   # -- genesis (this topology's own, at nodes/<name>/genesis.json) --
   if [ -f "$GENESIS_FILE" ]; then
     echo "fleet.sh: reusing existing $GENESIS_FILE (pass --wipe for a fresh one)" >&2
   else
-    echo "fleet.sh: generating genesis (chainId=$TOPO_CHAINID signers=$addrs)..." >&2
+    echo "fleet.sh: generating genesis (chainId=$TOPO_CHAINID signers=$signer_addrs)..." >&2
     local skip_v1_arg="false"; [ "$TOPO_SKIPV1VALIDATION" = true ] && skip_v1_arg="true"
     # puppeth (via gen-genesis.sh) rejects "--network" names containing a
     # hyphen ("no spaces or hyphens, please") -- every shipped topology name
@@ -254,7 +277,7 @@ cmd_up() {
     # determinism goal (confirmed live: an --skip-v1-validation/--period-only
     # regeneration diffed identical in every field except `timestamp`).
     ( cd "$REPO_ROOT" && ./gen-genesis.sh \
-        --network "$puppeth_network" --chainid "$TOPO_CHAINID" --signers "$addrs" \
+        --network "$puppeth_network" --chainid "$TOPO_CHAINID" --signers "$signer_addrs" \
         --owner "${addrs%%,*}" --foundation "${addrs%%,*}" \
         --foundation-owners "$addrs" --team-owners "$addrs" \
         --swap "${addrs%%,*}" --prefund "${addrs%%,*}" \
