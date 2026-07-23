@@ -11,6 +11,7 @@
 #   topo_down  [<topology.json>] [--force]        # netlab/fleet.sh down; no-arg form is
 #                                                  # idempotent teardown-of-everything
 #   topo_rpc   <topology.json> <nodeId>            # -> http://127.0.0.1:<rpc> for that node
+#   topo_client <topology.json> <nodeId>           # -> that node's client id (e.g. "geth")
 #   topo_nodes <topology.json> [role]              # -> node ids, one per line, optionally
 #                                                   #    filtered to role=sealer|follower
 #   topo_stop  <topology.json> <nodeId> [--force]  # netlab/node.sh stop for one node
@@ -157,6 +158,18 @@ for line in sys.stdin:
         sys.exit(0)
 sys.exit(1)
 " "$node_id" || { echo "topo_rpc: no such node id '$node_id' in $abs" >&2; return 1; }
+}
+
+# ---------------------------------------------------------------------------
+# topo_client <topology.json> <nodeId> -> that node's client id (e.g. "geth")
+# -- lets scenario code (e.g. an all-clients matrix, T3.3) key its own
+# per-node verdicts by client without reaching into topo.sh's TSV itself.
+# ---------------------------------------------------------------------------
+topo_client() {
+  [ $# -ge 2 ] || { echo "topo_client: usage: topo_client <topology.json> <nodeId>" >&2; return 1; }
+  local topo_file="$1" node_id="$2"
+  _topo_row_field "$topo_file" "$node_id" client \
+    || { echo "topo_client: no such node id '$node_id' in $topo_file" >&2; return 1; }
 }
 
 # ---------------------------------------------------------------------------

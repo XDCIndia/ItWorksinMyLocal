@@ -97,20 +97,19 @@ cmd_wait_rpc() {
 }
 
 # ---------------------------------------------------------------------------
-# wait-peers
+# wait-peers -- uses lab_peer_count (net_peerCount), NOT admin_peers: erigon
+# never enables the `admin` RPC namespace (see lib-rpc.sh's lab_peer_count
+# header), so an admin_peers-based gate would misreport a perfectly healthy
+# erigon follower as stuck at 0 peers forever -- exactly the false-FAIL
+# ItWorksinMyLocal#46 T3.3's all-clients-soak scenario exists to NOT
+# reproduce. net_peerCount is answered by every client this framework can
+# bring up (the "net" RPC namespace, unlike "admin", is universal).
 # ---------------------------------------------------------------------------
 cmd_wait_peers() {
   [ $# -ge 2 ] || usage
   local url="$1" min="$2" timeout="${3:-60}" waited=0 n
   while :; do
-    n=$(lab_rpc_call "$url" admin_peers "[]" 2>/dev/null | python3 -c "
-import json, sys
-try:
-    d = json.load(sys.stdin)
-except Exception:
-    d = None
-print(len(d) if isinstance(d, list) else 0)
-" 2>/dev/null)
+    n=$(lab_peer_count "$url" 2>/dev/null) || n=0
     [ -n "$n" ] || n=0
     if [ "$n" -ge "$min" ] 2>/dev/null; then
       echo "OK: $url has $n peer(s) (>= $min, waited ${waited}s)"
