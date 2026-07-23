@@ -1,7 +1,7 @@
 #!/bin/bash
 # fleet.sh - whole-topology lifecycle: up|down|status|wipe|logs.
 #
-#   fleet.sh up     <topology.json> [--wipe]
+#   fleet.sh up     <topology.json> [--wipe] [--force]
 #   fleet.sh down   <topology.json> [--force]
 #   fleet.sh status <topology.json>
 #   fleet.sh wipe   <topology.json> [--force]
@@ -9,8 +9,12 @@
 #
 # `up` sequence (D5's "hub + staggered + capped" peering model):
 #   1. topo.sh print  -> nodes/<name>/topo.resolved.tsv (validates first;
-#      hard-errors on any violation -- see netlab/TOPOLOGY.md)
-#   2. health.sh preflight (disk/RAM/every resolved port, real bind test)
+#      hard-errors on any violation -- see netlab/TOPOLOGY.md; this is also
+#      where each node's role-based maxpeers default is resolved -- T3.1)
+#   2. health.sh preflight (disk/RAM/cores/every resolved port, real bind
+#      test) -- ENFORCED: a real shortfall aborts `up` before any process
+#      starts, unless `--force` (T3.1) tells preflight to proceed anyway
+#      (still printing every FAIL line first -- never silently masked)
 #   3. node.sh addr for every sealer -> derives (or reuses) each one's
 #      keystore address BEFORE any genesis exists
 #   4. gen-genesis.sh --signers <those addresses> --out
@@ -22,11 +26,15 @@
 #   6. node.sh start every sealer (they peer with each other through that
 #      bootnode); health.sh wait-rpc each
 #   7. gather every sealer's live enode via admin_nodeInfo
-#   8. node.sh start each follower ONE AT A TIME, in declaration order,
-#      --bootnodes = the gathered sealer enodes (comma-joined) -- followers
-#      dial sealers directly, never each other (D5) -- gated on
-#      health.sh wait-rpc + wait-peers>=1 before starting the next one, with
-#      an extra staggerSeconds settle pause from the topology (default 5)
+#   8. node.sh start each follower ONE AT A TIME, in declaration order, under
+#      `nice -n 10` (T3.1 -- a follower is sync-only load on the box, not
+#      the chain's liveness, so it never competes with a sealer for CPU at
+#      the OS scheduling level), --bootnodes = the gathered sealer enodes
+#      (comma-joined), plus every earlier-started follower's own enode too
+#      when the topology's "peering" field is "mesh" instead of the default
+#      "hub" (T3.2 -- see netlab/TOPOLOGY.md) -- gated on health.sh wait-rpc
+#      + wait-peers>=1 before starting the next one, with an extra
+#      staggerSeconds settle pause from the topology (default 5)
 #
 # `down` stops in REVERSE declaration order (so followers stop before the
 # sealers they depend on), then the bootnode -- all via node.sh's graceful
@@ -58,7 +66,7 @@ source "$REPO_ROOT/lib-rpc.sh"
 
 usage() {
   cat >&2 <<EOF
-usage: $(basename "$0") up     <topology.json> [--wipe]
+usage: $(basename "$0") up     <topology.json> [--wipe] [--force]
        $(basename "$0") down   <topology.json> [--force]
        $(basename "$0") status <topology.json>
        $(basename "$0") wipe   <topology.json> [--force]
@@ -179,7 +187,13 @@ cmd_up() {
   echo "fleet.sh: wrote $RESOLVED_TSV" >&2
 
   echo "fleet.sh: preflight..." >&2
-  "$HEALTH_SH" preflight "$TOPO_FILE" || { echo "fleet.sh: preflight failed, aborting up" >&2; return 1; }
+  # --force (T3.1): forwarded from `up`'s own --force so an operator who
+  # knows a resource shortfall is acceptable (e.g. a deliberately
+  # resource-constrained dev box) can still bring the topology up; preflight
+  # itself still prints every real FAIL line first (never silently masked --
+  # see health.sh's own header), --force just decides whether that's fatal.
+  local preflight_args=(); [ "$OPT_FORCE" = 1 ] && preflight_args=(--force)
+  "$HEALTH_SH" preflight "$TOPO_FILE" "${preflight_args[@]}" || { echo "fleet.sh: preflight failed, aborting up" >&2; return 1; }
 
   # -- sealer addresses, BEFORE any genesis exists --
   local id addrs="" addr
@@ -281,9 +295,21 @@ cmd_up() {
   echo "fleet.sh: gathered $(echo "$sealer_enodes" | tr ',' '\n' | grep -c enode) sealer enode(s)" >&2
 
   # -- followers, staggered, gated on peers>=1 --
+  # nice -n 10 (T3.1): followers are sync-only load on the box, not the
+  # chain's liveness -- a heavy follower (a full-sync erigon/besu/nethermind-
+  # class build) competing for CPU with the SEALERS is exactly how a shared
+  # dev box starves consensus (net5551 recovery already learned this lesson
+  # the hard way at the OS level: a mainnet geth follower left running
+  # alongside V2 validators starved sealing outright). node.sh's own start
+  # backgrounds the real client process via a plain `&`, which inherits
+  # whatever niceness the shell that forked it was running at -- so simply
+  # running node.sh itself (and everything it forks) under `nice -n 10` here
+  # lowers the WHOLE follower chain's scheduling priority in one place,
+  # without touching node.sh/join.sh. Sealers are never niced -- they ARE
+  # the liveness this framework exists to protect.
   for id in "${NODE_IDS[@]}"; do
     [ "${ROLE_OF[$id]}" = sealer ] && continue
-    "$NODE_SH" start "$TOPO_FILE" "$id" --genesis "$GENESIS_FILE" --bootnodes "$sealer_enodes" {FLEET_LOCK_FD}>&- || return 1
+    nice -n 10 "$NODE_SH" start "$TOPO_FILE" "$id" --genesis "$GENESIS_FILE" --bootnodes "$sealer_enodes" {FLEET_LOCK_FD}>&- || return 1
     "$HEALTH_SH" wait-rpc "http://127.0.0.1:${RPC_OF[$id]}" 90 || { echo "fleet.sh: follower $id never came up" >&2; return 1; }
     "$HEALTH_SH" wait-peers "http://127.0.0.1:${RPC_OF[$id]}" 1 60 || echo "fleet.sh: WARNING: follower $id still has 0 peers -- continuing anyway" >&2
     sleep "${TOPO_STAGGERSECONDS:-5}"

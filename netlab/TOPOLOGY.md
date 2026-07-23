@@ -35,7 +35,7 @@ more resolved node rows before validation.
 | `client`  | string | yes                 | One of `oldxdc \| geth \| erigon \| besu \| nethermind \| reth \| xone` (the same enum `join.sh --client` accepts, minus `all`). |
 | `role`    | string | yes                 | `sealer` (mines, `oldxdc` only) or `follower` (sync-only). `proposer` is accepted by the schema but **hard-rejected** by `topo.sh validate` -- reserved, pending client-side BFT-voting support (go-ethereum#1341). |
 | `keyRef`  | string | yes iff `role=sealer` | Name of an **environment variable** (sourced from `.env`, e.g. `PRIVATE_KEY_1`) holding the raw hex validator private key. Topology JSON files are committed to git and must never contain a private key directly -- only a reference to where the (gitignored) key lives. |
-| `maxpeers`| int    | no                  | Per-node override, threaded to `join.sh --maxpeers`. |
+| `maxpeers`| int    | no                  | Per-node override, threaded to `join.sh --maxpeers`. Omit it to get the **role-based default** (ItWorksinMyLocal#46 T3.1) instead of the client binary's own hardcoded default: a `sealer` defaults to `node_count + 5` (enough for a full sealer mesh plus every follower dialing in, plus slack for a manual/admin connection) so a large topology can't starve a sealer's peer slots; a `follower` defaults to a fixed `15` regardless of topology size (hub mode only ever needs the sealer count; mesh mode -- see `peering` below -- adds the other followers too), so a follower can't itself become an unbounded peer-storm sink as the topology grows. `topo.sh print`'s `maxpeers` column always shows the resolved value (explicit or role-based default), never blank. |
 
 ### Id expansion
 
