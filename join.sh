@@ -40,10 +40,15 @@
 #                        oldxdc/geth/erigon if unavailable; BIN_SOURCE=build
 #                        (or per-client BIN_SOURCE_<client>=build) forces a
 #                        build / skips the download. besu/nethermind/reth also
-#                        honor OLDXDC_BIN / BESU_BIN / RETH_BIN / NETHERMIND_DIST (or PATH)
+#                        honor OLDXDC_BIN / BESU_BIN / RETH_BIN / NETHERMIND_DIST / XONE_BIN (or PATH)
 #                        ahead of both. besu & reth read the geth-format
 #                        --genesis natively; erigon loads it directly (v3.5.0+); nethermind
-#                        uses its own chainspec.
+#                        uses its own chainspec. xone's --mine (role:proposer) path
+#                        specifically resolves xone-native (XONE_NATIVE_BIN env override,
+#                        else a "xone-native" sibling next to the resolved xone binary,
+#                        else PATH) instead of the general xone launcher -- xOneGo#679:
+#                        the general launcher drops -miner.key on a private
+#                        -override.genesis join; xone-native (same build) accepts it.
 #   --chain NAME         erigon only: built-in chainspec (xdc | xdc-apothem). Optional
 #                        -- erigon v3.5.0+ loads the --genesis file directly.
 #   --nm-config NAME     nethermind only: chainspec name to load from
@@ -87,8 +92,22 @@
 #                        geth's own default of 25 is unchanged either way.
 #   --etherbase ADDR     oldxdc --mine only: block-reward address (also env
 #                        ETHERBASE). Omitted (client default) unless given.
-#   --mine KEY           also mine, unlocking this address (oldxdc only; needs a
-#                        validator key in .env). Ignored by geth/erigon.
+#   --mine ADDR          also mine/seal, unlocking this address (needs a
+#                        validator key in .env). Wired for oldxdc (real
+#                        sealing), and attempted for geth/xone (role:proposer,
+#                        ItWorksinMyLocal#62) -- see --sealkey below and each
+#                        client's own branch comment for the current, honest
+#                        state of that attempt. Ignored by erigon/besu/
+#                        nethermind (no sealing-flag path here yet) and by
+#                        reth (no XDPoS validator-signing CLI flag exists
+#                        upstream today -- blocked-upstream, see reth's
+#                        branch comment).
+#   --sealkey KEY        the RAW hex private key backing --mine's address
+#                        (role:proposer only -- node.sh passes this straight
+#                        from the topology's keyRef env var, never from a
+#                        file). Only xone's branch consumes it today (its
+#                        -miner.key flag wants the raw key, not just an
+#                        address+keystore); every other client ignores it.
 #   --ethstats SPEC      ethstats target (ON by default, same as run.sh). SPEC
 #                        is SECRET@HOST:PORT (node name prepended) or a full
 #                        NAME:SECRET@HOST:PORT used verbatim.
@@ -109,7 +128,7 @@ SELF="$PWD/$(basename "$0")"
 # DATADIR empty here means "use the default convention" (nodes/<client>-<type>),
 # computed once the client is known; an explicit --datadir always wins.
 GENESIS=""; BOOTNODES=""; NETWORKID=""; DATADIR=""; NAME=""; HOST_IP=""; CHAIN=""
-MINEADDR=""; STATICPEERS=""; NETWORK=""
+MINEADDR=""; STATICPEERS=""; NETWORK=""; SEALKEY=""
 # Ports are left empty here and defaulted PER CLIENT after --client is known, so
 # oldxdc/geth/erigon joins each get a distinct set (clear of run.sh) and can run
 # side by side without conflict. Any explicit flag below wins.
@@ -154,6 +173,7 @@ while [ $# -gt 0 ]; do
     --maxpeers)    MAXPEERS=$2; shift 2;;
     --etherbase)   ETHERBASE=$2; shift 2;;
     --mine)        MINEADDR=$2; shift 2;;
+    --sealkey)     SEALKEY=$2; shift 2;;
     --staticpeers) STATICPEERS=$2; shift 2;;
     --ethstats)    ETHSTATS=$2; shift 2;;
     --no-ethstats) ETHSTATS=""; shift;;
@@ -238,7 +258,8 @@ if [ "$CLIENT" = all ]; then
   [ -n "$STATICPEERS" ] && shared+=(--staticpeers "$STATICPEERS")
   [ -n "$NETWORKID" ]   && shared+=(--networkid "$NETWORKID")
   [ -n "$CHAIN" ]       && shared+=(--chain "$CHAIN")
-  [ -n "$MINEADDR" ]    && shared+=(--mine "$MINEADDR")   # only oldxdc seals; others print "ignored"
+  [ -n "$MINEADDR" ]    && shared+=(--mine "$MINEADDR")   # only oldxdc seals; others attempt/note per client (see --mine's own doc)
+  [ -n "$SEALKEY" ]     && shared+=(--sealkey "$SEALKEY")
   [ -n "$MAXPEERS" ]    && shared+=(--maxpeers "$MAXPEERS")
   [ -n "$ETHERBASE" ]   && shared+=(--etherbase "$ETHERBASE")   # only the oldxdc --mine child uses it
   if [ -n "$ETHSTATS" ]; then shared+=(--ethstats "$ETHSTATS"); else shared+=(--no-ethstats); fi
@@ -383,6 +404,51 @@ case "$CLIENT" in
     if [ "$CLIENT" = oldxdc ] && [ -n "$OLDXDC_BIN" ] && [ -x "$OLDXDC_BIN" ]; then
       XDC="$OLDXDC_BIN"
       echo "Using OLDXDC_BIN=$OLDXDC_BIN ($("$XDC" version 2>/dev/null | awk '/^Version/{print $2; exit}'))"
+    elif [ "$CLIENT" = xone ]; then
+      # xOneGo#679: pkg/bin/xone (the general-purpose launcher binary --
+      # what XONE_BIN normally resolves to, mirroring OLDXDC_BIN/BESU_BIN/
+      # RETH_BIN) does NOT register -miner.key when joining a private
+      # XDPoS genesis via -override.genesis -- it hard-errors with "flag
+      # provided but not defined: -miner.key" the instant a role=proposer
+      # --mine attempt reaches it. pkg/bin/xone-native, the SAME build's
+      # other binary, registers -mine/-miner.key/-miner.etherbase cleanly
+      # and actually starts the XDPoS validator mining loop. So: resolve
+      # the base xone binary as before (XONE_BIN env override, else the
+      # usual ensure_bins()/download path), but when this join will
+      # attempt to seal (--mine given), swap in xone-native instead --
+      # XONE_NATIVE_BIN env override wins, else a "xone-native" sibling
+      # next to the resolved base binary's own directory, else "xone-native"
+      # on PATH. Non-sealing (follower) xone joins are unaffected -- both
+      # binaries are "the same build" per xOneGo#679's own repro, so there
+      # is no known reason to prefer one over the other for sync-only.
+      if [ -n "$XONE_BIN" ] && [ -x "$XONE_BIN" ]; then
+        XDC="$XONE_BIN"
+        # NOTE: xone does NOT treat a bare "version" positional as a
+        # print-and-exit subcommand the way oldxdc/geth do -- passed
+        # anything it doesn't recognise, it silently falls through to
+        # starting a real node (mainnet defaults, e.g. ~/.ETH2030) that
+        # never exits. Only "--version" (a real flag) prints and exits.
+        # Using the wrong one here previously hung join.sh indefinitely
+        # inside this very echo's command substitution and leaked a
+        # stray mainnet-config node -- verified live while fixing xOneGo#679.
+        echo "Using XONE_BIN=$XONE_BIN ($("$XDC" --version 2>/dev/null | head -1))"
+      else
+        ensure_bins
+        XDC="$XDC_BIN"
+      fi
+      if [ -n "$MINEADDR" ]; then
+        XONE_NATIVE_RESOLVED="${XONE_NATIVE_BIN:-}"
+        if [ -z "$XONE_NATIVE_RESOLVED" ] && [ -n "$XDC" ] && [ -x "$(dirname "$XDC")/xone-native" ]; then
+          XONE_NATIVE_RESOLVED="$(dirname "$XDC")/xone-native"
+        fi
+        [ -z "$XONE_NATIVE_RESOLVED" ] && XONE_NATIVE_RESOLVED="$(command -v xone-native 2>/dev/null)"
+        if [ -n "$XONE_NATIVE_RESOLVED" ] && [ -x "$XONE_NATIVE_RESOLVED" ]; then
+          echo "note: xone role=proposer sealing attempt -- using xone-native ($XONE_NATIVE_RESOLVED) instead of the general launcher (xOneGo#679: the general xone binary drops -miner.key on a private -override.genesis join; xone-native accepts it and starts the XDPoS mining loop)" >&2
+          XDC="$XONE_NATIVE_RESOLVED"
+        else
+          echo "note: --mine given for xone but no xone-native binary found (checked XONE_NATIVE_BIN, \$(dirname \$XDC)/xone-native, PATH) -- falling back to the general xone launcher, which is known to reject -miner.key on a private genesis join (xOneGo#679); sealing will likely fail to start" >&2
+        fi
+      fi
     else
       ensure_bins
       XDC="$XDC_BIN"
@@ -546,14 +612,42 @@ elif [ "$CLIENT" = geth ]; then
   # per-client-offset default (here: 10745) just brings geth in line with
   # every OTHER join.sh client, which already gets an explicit, non-default
   # authrpc port unconditionally.
-  [ -n "$MINEADDR" ] && echo "note: --mine ignored (geth join is sync-only)" >&2
+  #
+  # role:proposer sealing attempt (ItWorksinMyLocal#62 P1/S3): --mine wires
+  # the classic go-ethereum flags (--mine --unlock --miner.etherbase
+  # --allow-insecure-unlock) -- node.sh's _ensure_signer_account has already
+  # imported this address into $DATADIR/keystore (via oldxdc's own `account
+  # import`, the same V3 keystore JSON format geth reads) before this runs.
+  # VERIFIED LIVE (net5151-pv2-modern, v1.17.4-xdc.7, mint-iter smoke test):
+  # these flags are NOT rejected -- `--help` doesn't list them (they're
+  # deprecated, not removed), but they still work: geth logs "--unlock" and
+  # "--miner.etherbase" deprecation WARNs and continues, then genuinely
+  # unlocks the account ("XDPoS miner account unlocked address=...") and
+  # starts its XDPoS v2 block-production worker ("--mine flag set, block
+  # production will start after sync" / "block-production worker started").
+  # The observed next blocker in that same run was different: the node
+  # stayed reported syncing=true / phase=FULL_SYNC for an extended period
+  # even once it was visibly at the same head as its peers, and no mint by
+  # this candidate was seen in the first ~30 blocks after it eventually
+  # logged "FULL_SYNC at-tip detected -- clearing XdcBulkSyncMode for
+  # miner". Whether it goes on to actually seal given more time/blocks was
+  # NOT conclusively verified in that session -- this is exactly the kind
+  # of open question lab/mintlab.sh's iterative loop (not this comment)
+  # should chase down with a longer soak; update this note with whatever it
+  # finds rather than re-guessing here.
+  GETH_MINE_FLAGS=""
+  if [ -n "$MINEADDR" ]; then
+    touch .pwd
+    GETH_MINE_FLAGS="--mine --unlock $MINEADDR --miner.etherbase $MINEADDR --allow-insecure-unlock --password ./.pwd"
+    echo "note: --mine given for geth (role=proposer) -- attempting --mine/--unlock/--miner.etherbase/--allow-insecure-unlock (deprecated but functional on at least one build checked live -- see this branch's own comment for what was actually observed)" >&2
+  fi
   "$XDC" --datadir "$DATADIR" --networkid "$NETWORKID" --syncmode full \
     --bootnodes "$BOOTNODES" --port "$PORT" --nat "extip:${IP}" --identity "$NAME" --maxpeers "${MAXPEERS:-25}" \
     --http --http.corsdomain "*" --http.addr 0.0.0.0 --http.port "$RPCPORT" --http.vhosts "*" \
     --http.api eth,net,web3,txpool,debug,admin,XDPoS \
     --ws --ws.addr 0.0.0.0 --ws.origins "*" --ws.port "$WSPORT" --ws.api eth,net,web3,XDPoS \
     --authrpc.port "$AUTHRPC_PORT" \
-    $ETHSTATS_ARG &
+    $GETH_MINE_FLAGS $ETHSTATS_ARG &
 elif [ "$CLIENT" = besu ]; then
   # besu-xdc (sync-only). Reads the geth-format genesis natively via --genesis-file
   # (no translation). Needs BOTH --bootnodes and --static-nodes-file: bootnodes are
@@ -578,7 +672,19 @@ elif [ "$CLIENT" = reth ]; then
   # reth-xdc (sync-only). Reads the geth-format genesis natively via --chain <file>.
   # Peers via trusted-only (its discv4/v5 doesn't traverse an XDPoS bootnode), and
   # its --ethstats wants a wss:// URL, not geth's bare host:port.
-  [ -n "$MINEADDR" ] && echo "note: --mine ignored (reth join is sync-only)" >&2
+  #
+  # role:proposer (ItWorksinMyLocal#62): --mine is intentionally left
+  # UNWIRED here, not attempted-and-failing -- reth-xdc has no XDPoS
+  # validator-signing CLI flag today (checked live: `node --help` has no
+  # miner/seal/validator/signer flag of any kind). Its only local-authoring
+  # mode is --dev, a throwaway PoA testnet with its own mnemonic-derived
+  # accounts, not a way to seal THIS genesis's real validator set -- passing
+  # it here would silently swap in a different chain, exactly the kind of
+  # fabricated "mint" this harness exists to refuse. Real reth mint needs the
+  # V2-seating client work already tracked in the net5050 reth PRs (#202/
+  # #223/#243) -- honest blocked-upstream, joining sync-only regardless of
+  # role until that lands.
+  [ -n "$MINEADDR" ] && echo "note: --mine given for reth (role=proposer) but reth-xdc has no XDPoS validator-signing CLI flag today -- blocked-upstream (net5050 reth PRs #202/#223/#243); joining sync-only, not attempted" >&2
   [ -n "$BOOTNODES" ] || { echo "reth join needs peers: set DEFAULT_BOOTNODES in network.env or pass --bootnodes" >&2; exit 1; }
   mkdir -p "$DATADIR"
   RETH_ES=""; [ -n "$full" ] && RETH_ES="--ethstats ${ES_NAME}:${ES_SECRET}@wss://${ES_HOSTPORT}"
@@ -642,10 +748,27 @@ PY
     $MP_ARG $NM_ES ) &
 elif [ "$CLIENT" = xone ]; then
   # xone-native (XDCIndia/xOneGo): go-ethereum-derived XDPoS client with
-  # single-dash flags. Sync-only join here -- it recognises XDPoS from the genesis
-  # (config-driven) and inits from -override.genesis on a fresh datadir. Sealing
-  # needs a raw -miner.key, which a sync join doesn't carry, so --mine is noted.
-  [ -n "$MINEADDR" ] && echo "note: --mine ignored (xone join is sync-only; sealing needs -miner.key)" >&2
+  # single-dash flags. Sync-only join here by default -- it recognises XDPoS
+  # from the genesis (config-driven) and inits from -override.genesis on a
+  # fresh datadir.
+  #
+  # role:proposer sealing attempt (ItWorksinMyLocal#62 P1/S3): xone's own
+  # sealing flags are -mine -miner.key <hex> -miner.etherbase <addr>
+  # (checked live: -miner.key wants the RAW hex private key, not an address
+  # + keystore -- unlike oldxdc/geth's --unlock model). --mine (the derived
+  # ADDRESS) alone is not enough here; this needs --sealkey too (node.sh
+  # passes both, reading the raw key straight from the topology's keyRef env
+  # var -- see node.sh's cmd_start). Without --sealkey, --mine is a no-op
+  # note, same honest-skip posture as every other not-yet-wired client.
+  XONE_MINE_FLAGS=""
+  if [ -n "$MINEADDR" ]; then
+    if [ -n "$SEALKEY" ]; then
+      XONE_MINE_FLAGS="-mine -miner.key $SEALKEY -miner.etherbase $MINEADDR"
+      echo "note: --mine + --sealkey given for xone (role=proposer) -- attempting -mine -miner.key -miner.etherbase" >&2
+    else
+      echo "note: --mine given for xone but no --sealkey (raw private key) was provided -- xone's -miner.key wants the raw hex key, not just an address; sealing not attempted" >&2
+    fi
+  fi
   mkdir -p "$DATADIR"
   XONE_ES=""; [ -n "$full" ] && XONE_ES="-ethstats $full"
   MP_ARG=""; [ -n "$MAXPEERS" ] && MP_ARG="-maxpeers $MAXPEERS"
@@ -655,7 +778,7 @@ elif [ "$CLIENT" = xone ]; then
     -http -http.addr 0.0.0.0 -http.port "$RPCPORT" -http.vhosts "*" \
     -http.api eth,net,web3,admin,debug,txpool,XDPoS \
     -authrpc.port "$AUTHRPC_PORT" \
-    $XONE_ES &
+    $XONE_MINE_FLAGS $XONE_ES &
 else
   # oldxdc (XDPoSChain): classic flags; --mine unlocks a validator to also seal.
   # --maxpeers/--etherbase are additive: omitted (client default) unless given.
