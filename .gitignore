@@ -20,3 +20,4 @@ lab/lab-accounts.env
 lab/*/peer/
 lab/**/datadir
 lab/genesis-lab-*.json
+genesis/genesis-*-0x.json

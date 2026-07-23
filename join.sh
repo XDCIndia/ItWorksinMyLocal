@@ -213,6 +213,29 @@ if [ -n "$PUB_BOOTNODES_FILE" ] && [ -z "$BOOTNODES" ] && [ -f "$PUB_BOOTNODES_F
   BOOTNODES=$(grep -v '^[[:space:]]*#' "$PUB_BOOTNODES_FILE" | grep enode | paste -sd, -)
   echo "No --bootnodes given; using $(echo "$BOOTNODES" | tr ',' '\n' | grep -c enode) public $NETWORK bootnode(s)"
 fi
+# The vendored public genesis uses XDC's "xdc"-prefixed address display format in
+# its coinbase / foudationWalletAddr / alloc keys. geth-xdc (chainId in code) and
+# erigon (built-in --chain) don't read the file, but the FILE-reading clients --
+# besu (--genesis-file), reth (--chain <file>), xone (-override.genesis) -- run a
+# strict address decoder that rejects the "xdc" prefix ("Invalid coinbase ...",
+# "invalid address", "odd number of digits"). "xdc" and "0x" are the same 20-byte
+# address, so normalise a cached copy to 0x for those clients. Verified: the
+# normalised genesis computes the IDENTICAL genesis hash (mainnet 0x4a9d74...),
+# i.e. same chain, and unblocks besu/reth/xone on the public networks.
+case "${NETWORK:-}" in
+  mainnet|xinfin|xdc|testnet|apothem)
+    if [ -n "$GENESIS" ] && [ -f "$GENESIS" ] && grep -q '"xdc[0-9a-fA-F]\{40\}"' "$GENESIS" 2>/dev/null; then
+      _g0x="${GENESIS%.json}-0x.json"
+      sed -E 's/"xdc([0-9a-fA-F]{40})"/"0x\1"/g' "$GENESIS" > "$_g0x"
+      if python3 -c "import json,sys; json.load(open(sys.argv[1]))" "$_g0x" 2>/dev/null; then
+        echo "  normalised xdc-prefixed genesis addresses -> 0x for file-reading clients ($_g0x)"
+        GENESIS="$_g0x"
+      else
+        rm -f "$_g0x"
+        echo "  warning: genesis xdc->0x normalisation produced invalid JSON; using original $GENESIS" >&2
+      fi
+    fi ;;
+esac
 [ -n "$NETWORK" ] && [ "$NETWORK" != devnet5151 ] && echo "Target network: $NETWORK (chainId ${NETWORKID:-?}, genesis ${GENESIS:-?})"
 
 # Default the genesis from network.env (DEFAULT_GENESIS) when --genesis is omitted,
