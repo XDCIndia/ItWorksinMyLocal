@@ -6,8 +6,15 @@
     "geth": {
       "file": "geth-{os}-{arch}",
       "archive": "none",
-      "produces": { "geth": "" },
-      "platforms": ["darwin-amd64", "darwin-arm64", "linux-amd64", "linux-arm64"],
+      "produces": {
+        "geth": ""
+      },
+      "platforms": [
+        "darwin-amd64",
+        "darwin-arm64",
+        "linux-amd64",
+        "linux-arm64"
+      ],
       "sha256": {
         "darwin-amd64": "12000bdde6ad903d068bd3ee9df1b438cd366b5e1168ec17647f584fa9198f57",
         "darwin-arm64": "de511290ee95421caa9d67afe64a6a144c2ec581c66ae4439b9b5c626f747a23",
@@ -19,19 +26,31 @@
       "_comment": "linux-amd64 + darwin-arm64 published. darwin-arm64 first published 2026-07-23, built from main (v3.5.2), --chain xdc-net5151 genesis 0x96f121 verified + live-synced past block 20000. Other platforms fall back to a source build (lib.sh).",
       "file": "erigon-{os}-{arch}",
       "archive": "none",
-      "produces": { "erigon": "" },
-      "platforms": ["linux-amd64", "darwin-arm64"],
+      "produces": {
+        "erigon": ""
+      },
+      "platforms": [
+        "linux-amd64",
+        "darwin-arm64"
+      ],
       "sha256": {
         "linux-amd64": "6618bd4fa9697c33e446f973b74d6cf47e96ffe468204fcaf42f6c8ed8dbe9df",
         "darwin-arm64": "c584883048486b044726eac7fe28a8ffbb865478a5aa6e60684a0a49e3eb8862"
       }
     },
     "reth": {
-      "_comment": "darwin-arm64 refreshed 2026-07-23 from the #12 chain-recognition fix (PR XDCIndia/reth#253) — genesis-config-driven XDC detection, verified live-syncing net5151 (3 peers, block import, no Ethereum-bootnode fallback). PR #253 pending human merge to reth main (touches sync-path code); other platforms unchanged.",
+      "_comment": "darwin-arm64 refreshed 2026-07-23 from the #12 chain-recognition fix (PR XDCIndia/reth#253) \u2014 genesis-config-driven XDC detection, verified live-syncing net5151 (3 peers, block import, no Ethereum-bootnode fallback). PR #253 pending human merge to reth main (touches sync-path code); other platforms unchanged.",
       "file": "reth-{os}-{arch}",
       "archive": "none",
-      "produces": { "xdc-reth": "" },
-      "platforms": ["darwin-amd64", "darwin-arm64", "linux-amd64", "linux-arm64"],
+      "produces": {
+        "xdc-reth": ""
+      },
+      "platforms": [
+        "darwin-amd64",
+        "darwin-arm64",
+        "linux-amd64",
+        "linux-arm64"
+      ],
       "sha256": {
         "darwin-amd64": "189f4a1a8f595232a834456722cc17f22571a4ee0339cb4b89b51d2b53526cee",
         "darwin-arm64": "510782432e086b923e8537b783fff882921a88361788a29f2945d420fb88928f",
@@ -40,21 +59,31 @@
       }
     },
     "besu": {
-      "_comment": "Java, platform-independent. Archive contains bin/besu (the launcher) + lib/*.jar.",
+      "_comment": "Java, platform-independent \u2014 now SELF-CONTAINED: the archive bundles a Temurin JRE 21 under jre/ and the bin/besu launcher is patched to use $APP_HOME/jre, so NO host Java is required (the previous dist needed host Java >=21). Archive contains bin/besu (launcher) + jre/ (bundled runtime) + lib/*.jar. Built on the 7ade4f2f v00.0-develop base (net5151-working; supersedes the broken v26.7 246e5030 that failed net5151 block-1, see ItWorksinMyLocal #51). Public mainnet/apothem still need the client-side fork-id fix (issue #69) to peer; net5151 syncs.",
       "file": "besu-latest.tar.gz",
       "archive": "tar.gz",
-      "produces": { "besu": "bin/besu" },
-      "platforms": ["*"],
+      "produces": {
+        "besu": "bin/besu"
+      },
+      "platforms": [
+        "*"
+      ],
       "sha256": {
-        "*": "246e50302e3573e734e71330f70bdce63400d61bd7558e48702e30b3e987cb36"
+        "*": "000bbc7697ec4ac3316b22d58ffa6ee15feeddb3a7ddb6c3845ec7aed72b3c5e"
       }
     },
     "nethermind": {
       "_comment": "No linux-arm64 build published. Archive is a flat .NET publish dir (./nethermind launcher + ./chainspec/*.json + ./configs/*.json at the archive root, no version-prefixed top dir), so produces path is '.' (the whole extracted dir is NETHERMIND_DIST). This archive INCLUDES chainspec/xdc-devnet5151.json (chainId 5151, genesis 0x96f121, XDPoS engine) and its runner config, so join.sh --client nethermind syncs devnet 5151 out of the box. Built from XDCIndia/xdc-nethermind-private with the net5151 follower bypass (PR #246): the legacy chain's non-standard gas schedule can't be recomputed bit-for-bit, so for chainId 5151 the header's gas-derived fields are trusted while state is fully validated -- linux-amd64 verified syncing to the live tip. NOTE: darwin-arm64 refreshed 2026-07-23 (built from main, v1.36.0) but NOT sync-verified (host disk below the 47GB HealthChecks guard) and may be missing chainspec/xdc-devnet5151.json (absent from main at build time); linux-amd64 remains the verified 5151 client -- see issue #32.",
       "file": "nethermind-{os}-{arch}.tar.gz",
       "archive": "tar.gz",
-      "produces": { "nethermind": "." },
-      "platforms": ["darwin-amd64", "darwin-arm64", "linux-amd64"],
+      "produces": {
+        "nethermind": "."
+      },
+      "platforms": [
+        "darwin-amd64",
+        "darwin-arm64",
+        "linux-amd64"
+      ],
       "sha256": {
         "darwin-amd64": "bd5e95912d4b01d3952047949f440a49ce56c584e7d0a632f2ca8fbdbb1a1459",
         "darwin-arm64": "99573a88c4fc6dbaf33bfc3f37b0082fe39810209644f1ec8c30418b1925dc94",
@@ -65,8 +94,13 @@
       "_comment": "xone-native (XDCIndia/xOneGo), the go-ethereum-derived XDPoS reference client (built from pkg/cmd/xone-native; the `xone` binary is only a launcher). linux-amd64 + darwin-arm64 (refreshed 2026-07-23 from origin/master) published; other platforms fall back to a source build (lib.sh). NOTE: use `xone --version` (not the `version` subcommand, which boots a node).",
       "file": "xone-{os}-{arch}",
       "archive": "none",
-      "produces": { "xone": "" },
-      "platforms": ["linux-amd64", "darwin-arm64"],
+      "produces": {
+        "xone": ""
+      },
+      "platforms": [
+        "linux-amd64",
+        "darwin-arm64"
+      ],
       "sha256": {
         "linux-amd64": "45cb62ceeb610fa66f755a5db6a3b16eeaebd7c891b01c78ef759a34c55b07ad",
         "darwin-arm64": "49b3f3f8338f03e864b02ca6d8b83c490137ae0a480a92ab9007935786dae916"
