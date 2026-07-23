@@ -127,6 +127,18 @@ port_base = require_int("portBase")
 stagger_seconds = require_int("staggerSeconds", required=False, default=5)
 skip_v1_validation = bool(topo.get("skipV1Validation", False))
 
+# peering (ItWorksinMyLocal#46 T3.2): "hub" (default) keeps D5's original
+# model -- followers dial ONLY the sealers, never each other. "mesh" lets
+# fleet.sh also hand each follower every EARLIER-started follower's own
+# enode as an additional bootnode (still staggered, still one at a time),
+# so followers can peer with each other too -- useful for exercising a
+# follower's own peer-management/eviction behavior under a denser graph,
+# not just its sync-from-sealer path. Neither value changes how SEALERS
+# peer with each other (always through the topology's own bootnode).
+peering = topo.get("peering", "hub")
+if peering not in ("hub", "mesh"):
+    err("field 'peering' must be 'hub' or 'mesh' (got %r)" % peering)
+
 # docs/lab/DESIGN.md's "Documented risks & forbidden knobs" section is
 # explicit: "Forbidden: SkipV1Validation / SkipV2Validation -- they disable
 # the validation the lab exists to compare." This lab is a
@@ -319,6 +331,7 @@ meta = [
     ("reward", reward),
     ("gap", gap),
     ("skipV1Validation", "true" if skip_v1_validation else "false"),
+    ("peering", peering),
     ("portBase", port_base),
     ("staggerSeconds", stagger_seconds),
     ("bootnode_port", bootnode_port),

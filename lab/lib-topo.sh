@@ -14,6 +14,10 @@
 #   topo_nodes <topology.json> [role]              # -> node ids, one per line, optionally
 #                                                   #    filtered to role=sealer|follower
 #   topo_stop  <topology.json> <nodeId> [--force]  # netlab/node.sh stop for one node
+#   topo_partition <topology.json> <groupA-ids> <groupB-ids>  # T3.2: admin_removePeer
+#                                                  # split, admin-RPC-capable clients only
+#   topo_heal  <topology.json>                     # T3.2: admin_addPeer, reverses the
+#                                                  # most recent topo_partition for this topology
 #
 # State: lab/results/active-topologies -- one absolute topology.json path
 # per line, appended to by a successful topo_up, removed by topo_down.
@@ -34,6 +38,13 @@ _LIBTOPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit 1
 REPO_ROOT="$(cd "$_LIBTOPO_DIR/.." && pwd)" || exit 1
 LAB_RESULTS_DIR="$_LIBTOPO_DIR/results"
 mkdir -p "$LAB_RESULTS_DIR" 2>/dev/null || true
+
+# topo_partition/topo_heal (below) drive admin_nodeInfo/admin_addPeer/
+# admin_removePeer directly, so this file needs lab_rpc_call -- standalone
+# source, same posture as netlab/health.sh (T1.4): don't depend on
+# lab/lib-lab.sh's fixed-topology bits just for the RPC transport.
+# shellcheck source=../lib-rpc.sh
+source "$REPO_ROOT/lib-rpc.sh"
 
 _TOPO_FLEET_SH="$REPO_ROOT/netlab/fleet.sh"
 _TOPO_NODE_SH="$REPO_ROOT/netlab/node.sh"
@@ -218,4 +229,142 @@ topo_stop() {
   local topo_file="$1" node_id="$2"; shift 2
   local abs; abs=$(_topo_abspath "$topo_file") || return 1
   "$_TOPO_NODE_SH" stop "$abs" "$node_id" "$@"
+}
+
+# ---------------------------------------------------------------------------
+# topo_partition / topo_heal (ItWorksinMyLocal#46 T3.2)
+#
+# Generalizes lab/lib-lab.sh's lab_partition/lab_heal (which hardcode the
+# fixed node1..node4 producer set and its own port registry) to ANY node id
+# in ANY netlab topology, via admin_removePeer/admin_addPeer -- same
+# mechanism, same docs/lab/DESIGN.md §6 rationale (peer manipulation on the
+# admin API, not iptables/pfctl -- deterministic and portable).
+#
+# ADMIN-API-CAPABLE CLIENTS ONLY: not every client this framework can bring
+# up actually exposes admin_removePeer/admin_addPeer/admin_nodeInfo. Per
+# join.sh's own per-client flag lists (--http.api / --rpcapi) and
+# docs/lab/DESIGN.md §3's client registry:
+#   oldxdc, geth, besu, reth, xone   -- all enable `admin` -- SUPPORTED
+#   erigon                          -- join.sh never passes `admin` in its
+#                                      --http.api list -- EXCLUDED
+#   nethermind                      -- its dist config doesn't expose the
+#                                      peer-control admin methods either
+#                                      (DESIGN.md §3: "via config", no
+#                                      confirmed admin_removePeer/addPeer) --
+#                                      EXCLUDED
+# topo_partition refuses outright (fails fast, before touching any peer) if
+# EITHER group contains a node running an excluded client -- this is an
+# honest capability gap, not something to silently skip past.
+_TOPO_ADMIN_CAPABLE_CLIENTS="oldxdc geth besu reth xone"
+
+# _topo_row_field <topology.json> <nodeId> <column> -> that column's value
+# from topo.sh print's resolved row (e.g. "client"), or empty + nonzero if
+# no such node id exists in the topology.
+_topo_row_field() {
+  local topo_file="$1" node_id="$2" col="$3" abs out
+  abs=$(_topo_abspath "$topo_file") || return 1
+  out=$("$_TOPO_TOPO_SH" print "$abs") || return 1
+  printf '%s\n' "$out" | python3 -c "
+import sys
+
+node_id, col = sys.argv[1], sys.argv[2]
+header = None
+for line in sys.stdin:
+    line = line.rstrip('\n')
+    if line.startswith('# ') or not line:
+        continue
+    if header is None:
+        header = line.split('\t')
+        continue
+    row = dict(zip(header, line.split('\t')))
+    if row.get('id') == node_id:
+        print(row.get(col, ''))
+        sys.exit(0)
+sys.exit(1)
+" "$node_id" "$col"
+}
+
+# _topo_node_enode <topology.json> <nodeId>: that node's own live enode
+# (admin_nodeInfo) -- caller must have already confirmed it's admin-capable.
+_topo_node_enode() {
+  local topo_file="$1" node_id="$2" url info
+  url=$(topo_rpc "$topo_file" "$node_id") || return 1
+  info=$(lab_rpc_call "$url" admin_nodeInfo "[]") || return 1
+  python3 -c "
+import json
+import sys
+
+print(json.loads(sys.argv[1]).get('enode', ''))
+" "$info"
+}
+
+# _topo_toggle_peers <topology.json> <add|remove> <groupA ids> <groupB ids>:
+# calls admin_<action>Peer across every A<->B pair, at each node's own admin
+# RPC (mirrors lab/lib-lab.sh's _lab_toggle_peers, generalized to arbitrary
+# topology node ids instead of the fixed node1..node4).
+_topo_toggle_peers() {
+  local topo_file="$1" action="$2" group_a="$3" group_b="$4"
+  local a b url_a url_b enode_a enode_b
+  for a in $group_a; do
+    url_a=$(topo_rpc "$topo_file" "$a") || return 1
+    enode_a=$(_topo_node_enode "$topo_file" "$a") || { echo "topo_partition: could not read enode for $a" >&2; return 1; }
+    for b in $group_b; do
+      url_b=$(topo_rpc "$topo_file" "$b") || return 1
+      enode_b=$(_topo_node_enode "$topo_file" "$b") || { echo "topo_partition: could not read enode for $b" >&2; return 1; }
+      lab_rpc_call "$url_a" "admin_${action}Peer" "[\"${enode_b}\"]" >/dev/null
+      lab_rpc_call "$url_b" "admin_${action}Peer" "[\"${enode_a}\"]" >/dev/null
+    done
+  done
+}
+
+# topo_partition <topology.json> <groupA-ids> <groupB-ids>: splits the two
+# (comma- or space-separated) node-id groups via admin_removePeer, recording
+# the split (scoped to THIS topology, so partitioning two different
+# topologies at once doesn't clobber each other's state) so topo_heal knows
+# what to reconnect.
+topo_partition() {
+  [ $# -ge 3 ] || { echo "topo_partition: usage: topo_partition <topology.json> <groupA-ids> <groupB-ids>" >&2; return 1; }
+  local topo_file="$1" group_a group_b
+  group_a=$(printf '%s' "$2" | tr ',' ' ')
+  group_b=$(printf '%s' "$3" | tr ',' ' ')
+  [ -n "$(printf '%s' "$group_a" | tr -d '[:space:]')" ] || { echo "topo_partition: groupA is empty" >&2; return 1; }
+  [ -n "$(printf '%s' "$group_b" | tr -d '[:space:]')" ] || { echo "topo_partition: groupB is empty" >&2; return 1; }
+
+  # Validate EVERY node's client is admin-capable BEFORE touching a single
+  # peer connection -- an honest refusal, not a partial partition.
+  local id client bad=""
+  for id in $group_a $group_b; do
+    client=$(_topo_row_field "$topo_file" "$id" client) || { echo "topo_partition: no such node id '$id' in $topo_file" >&2; return 1; }
+    case " $_TOPO_ADMIN_CAPABLE_CLIENTS " in
+      *" $client "*) ;;
+      *) bad="${bad}${bad:+, }${id}(${client})" ;;
+    esac
+  done
+  if [ -n "$bad" ]; then
+    echo "topo_partition: refusing -- these node(s) run a client with no admin peer-control API (erigon/nethermind excluded, see this function's header): $bad" >&2
+    return 1
+  fi
+
+  local abs; abs=$(_topo_abspath "$topo_file") || return 1
+  local state_file; state_file="$LAB_RESULTS_DIR/partition-$(basename "$abs" .json).state"
+  _topo_toggle_peers "$topo_file" remove "$group_a" "$group_b" || return 1
+  printf '%s|%s\n' "$group_a" "$group_b" > "$state_file"
+  echo "topo_partition: split [$group_a] | [$group_b] for $(basename "$abs")" >&2
+}
+
+# topo_heal <topology.json>: reconnects the most recent topo_partition split
+# for THIS topology via admin_addPeer.
+topo_heal() {
+  [ $# -ge 1 ] || { echo "topo_heal: usage: topo_heal <topology.json>" >&2; return 1; }
+  local topo_file="$1" abs state_file
+  abs=$(_topo_abspath "$topo_file") || return 1
+  state_file="$LAB_RESULTS_DIR/partition-$(basename "$abs" .json).state"
+  [ -f "$state_file" ] || { echo "topo_heal: no active partition for $(basename "$abs") (no $state_file)" >&2; return 1; }
+  local line group_a group_b
+  line=$(cat "$state_file")
+  group_a="${line%%|*}"
+  group_b="${line#*|}"
+  _topo_toggle_peers "$topo_file" add "$group_a" "$group_b" || return 1
+  rm -f "$state_file"
+  echo "topo_heal: reconnected [$group_a] | [$group_b] for $(basename "$abs")" >&2
 }

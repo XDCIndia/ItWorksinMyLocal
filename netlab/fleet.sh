@@ -307,11 +307,30 @@ cmd_up() {
   # lowers the WHOLE follower chain's scheduling priority in one place,
   # without touching node.sh/join.sh. Sealers are never niced -- they ARE
   # the liveness this framework exists to protect.
+  # mesh peering (T3.2, see TOPOLOGY.md's "peering" field): accumulated as
+  # each follower comes up, comma-joined and appended to the NEXT follower's
+  # --bootnodes -- so with peering=mesh a follower dials every sealer AND
+  # every follower started before it (still one at a time; still gated on
+  # peers>=1 below). Stays empty (a no-op) for the default peering=hub.
+  local follower_enodes=""
   for id in "${NODE_IDS[@]}"; do
     [ "${ROLE_OF[$id]}" = sealer ] && continue
-    nice -n 10 "$NODE_SH" start "$TOPO_FILE" "$id" --genesis "$GENESIS_FILE" --bootnodes "$sealer_enodes" {FLEET_LOCK_FD}>&- || return 1
+    local bootnodes_for_id="$sealer_enodes"
+    if [ "$TOPO_PEERING" = mesh ] && [ -n "$follower_enodes" ]; then
+      bootnodes_for_id="${bootnodes_for_id},${follower_enodes}"
+    fi
+    nice -n 10 "$NODE_SH" start "$TOPO_FILE" "$id" --genesis "$GENESIS_FILE" --bootnodes "$bootnodes_for_id" {FLEET_LOCK_FD}>&- || return 1
     "$HEALTH_SH" wait-rpc "http://127.0.0.1:${RPC_OF[$id]}" 90 || { echo "fleet.sh: follower $id never came up" >&2; return 1; }
     "$HEALTH_SH" wait-peers "http://127.0.0.1:${RPC_OF[$id]}" 1 60 || echo "fleet.sh: WARNING: follower $id still has 0 peers -- continuing anyway" >&2
+    if [ "$TOPO_PEERING" = mesh ]; then
+      local this_enode; this_enode=$(_fleet_node_enode "http://127.0.0.1:${RPC_OF[$id]}" 2>/dev/null)
+      if [ -n "$this_enode" ]; then
+        [ -n "$follower_enodes" ] && follower_enodes="$follower_enodes,"
+        follower_enodes="${follower_enodes}${this_enode}"
+      else
+        echo "fleet.sh: WARNING: could not read $id's own enode for mesh peering -- later followers won't dial it directly" >&2
+      fi
+    fi
     sleep "${TOPO_STAGGERSECONDS:-5}"
   done
 
