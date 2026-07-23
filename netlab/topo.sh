@@ -280,11 +280,16 @@ for idx, entry in enumerate(nodes_raw):
             elif mode == "print" and not os.environ.get(keyref):
                 err("node '%s': keyRef '%s' is not set in the environment "
                     "(check .env)" % (node_id, keyref))
-        if client == "nethermind" and chain_id is not None and chain_id != 5151:
-            err("node '%s': client 'nethermind' only loads its own bundled "
-                "net5151 chainspec, not an arbitrary genesis file -- it cannot "
-                "join a custom chainId (%r) topology (ItWorksinMyLocal#46 open "
-                "question #2)" % (node_id, chain_id))
+        # Was: hard-rejected any chainId != 5151 (nethermind only shipped hand-
+        # authored chainspecs, no genesis converter existed -- ItWorksinMyLocal#46
+        # open question #2 / xdc-nethermind-private#250). join.sh now auto-
+        # converts an arbitrary genesis into a Parity-style chainspec via
+        # netlab/nm-chainspec.sh (xdc-nethermind-private#250), so nethermind can
+        # at least ATTEMPT to join any chainId topology -- this guard is lifted.
+        # Sealing (role=proposer) for nethermind is still refused above (no
+        # sealing-flag path wired, and upstream InitBlockProducer is a hard
+        # NotSupportedException -- xdc-nethermind-private#224); only
+        # role=follower reaches this line for client=nethermind.
         if maxpeers != "" and (not isinstance(maxpeers, int) or isinstance(maxpeers, bool)):
             err("node '%s': maxpeers must be an integer (got %r)" % (node_id, maxpeers))
 

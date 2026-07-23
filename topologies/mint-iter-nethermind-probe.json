@@ -1,0 +1,18 @@
+{
+  "name": "mint-iter-nethermind-probe",
+  "description": "ItWorksinMyLocal#62 / xdc-nethermind-private#250 nethermind S1/S2-follow probe: same 3-oldxdc-sealer trusted quorum as mint-iter.json, but instead of a role=proposer candidate (topo.sh hard-rejects role=proposer for client nethermind -- no sealing-flag path wired, and upstream InitBlockProducer is a hard NotSupportedException, xdc-nethermind-private#224), nethermind is joined here as a plain role=follower node ('nm1') to answer one narrow question honestly: with #250's genesis->chainspec converter (netlab/nm-chainspec.sh, auto-invoked by join.sh) now lifting the old chainId==5151-only rejection, can nethermind at least reach S1 (syncs)/S2 (follows-at-tip, clean) against a live oldxdc XDPoS quorum on a custom, per-run chainId -- or does it hit the converter's own known live wall (a genesis-block state-root divergence from nethermind's TIPSigning-at-genesis default, documented in nm-chainspec.sh's header and #250). Same chain shape as mint-iter.json (period=1, epoch=900, reward=5000, gap=450) so results are directly comparable; v2block fixed at 1800 (V1-focus) since S1/S2 is the question, not the V1->V2 switch. Separate portBase (34305) from every other topology file's own range so this can run standalone or alongside them.",
+  "chainId": 34098,
+  "epoch": 900,
+  "v2block": 1800,
+  "period": 1,
+  "reward": 5000,
+  "gap": 450,
+  "portBase": 34305,
+  "staggerSeconds": 5,
+  "nodes": [
+    { "id": "node1", "client": "oldxdc", "role": "sealer", "keyRef": "PRIVATE_KEY_1" },
+    { "id": "node2", "client": "oldxdc", "role": "sealer", "keyRef": "PRIVATE_KEY_2" },
+    { "id": "node3", "client": "oldxdc", "role": "sealer", "keyRef": "PRIVATE_KEY_3" },
+    { "id": "nm1", "client": "nethermind", "role": "follower" }
+  ]
+}
