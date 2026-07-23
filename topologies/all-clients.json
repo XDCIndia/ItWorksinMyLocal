@@ -7,7 +7,7 @@
   "period": 1,
   "reward": 5000,
   "gap": 450,
-  "portBase": 34200,
+  "portBase": 34700,
   "staggerSeconds": 8,
   "nodes": [
     { "id": "node1", "client": "oldxdc", "role": "sealer", "keyRef": "PRIVATE_KEY_1" },
