@@ -12,8 +12,14 @@
 # point at your own network. --ip / --bootnodes / --staticpeers still override.
 #
 # Flags:
-#   --genesis FILE       the target network's genesis.json (defaults to
-#                        DEFAULT_GENESIS in network.env -- devnet 5151)
+#   --network NAME       public XDC network to join: mainnet (chainId 50) |
+#                        testnet/apothem (chainId 51) | devnet5151 (default).
+#                        mainnet/testnet use the vendored public genesis
+#                        (genesis/genesis-<net>.json) + public bootnodes
+#                        (bootnodes/<net>.list, from XinFinOrg/XinFin-Node) by
+#                        default. Works with --client <c> or --client all.
+#   --genesis FILE       the target network's genesis.json (overrides --network;
+#                        defaults to DEFAULT_GENESIS in network.env -- devnet 5151)
 #   --ip IP[:PORT]       just give the target machine's IP -- connects to its
 #                        bootnode (shared bootnode.key) at PORT (default 30301).
 #                        Simplest way to join a network on another host.
@@ -103,7 +109,7 @@ SELF="$PWD/$(basename "$0")"
 # DATADIR empty here means "use the default convention" (nodes/<client>-<type>),
 # computed once the client is known; an explicit --datadir always wins.
 GENESIS=""; BOOTNODES=""; NETWORKID=""; DATADIR=""; NAME=""; HOST_IP=""; CHAIN=""
-MINEADDR=""; STATICPEERS=""
+MINEADDR=""; STATICPEERS=""; NETWORK=""
 # Ports are left empty here and defaulted PER CLIENT after --client is known, so
 # oldxdc/geth/erigon joins each get a distinct set (clear of run.sh) and can run
 # side by side without conflict. Any explicit flag below wins.
@@ -127,6 +133,7 @@ ETHSTATS="xdc_openscan_stats_2026@stats.xdcindia.com:443"
 NM_CONFIG="${NM_CONFIG:-xdc-devnet5151}"
 while [ $# -gt 0 ]; do
   case "$1" in
+    --network)     NETWORK=$2; shift 2;;
     --genesis)     GENESIS=$2; shift 2;;
     --chain)       CHAIN=$2; shift 2;;
     --nm-config)   NM_CONFIG=$2; shift 2;;
@@ -161,6 +168,32 @@ source ./lib.sh
 # network.env -> DEFAULT_HOST/DEFAULT_BOOTNODE_PORT/DEFAULT_BOOTNODES/DEFAULT_GENESIS;
 # peers.list -> default peers.
 [ -f network.env ] && . ./network.env
+
+# --network mainnet|testnet: sync a PUBLIC XDC network using the genesis +
+# bootnodes vendored from XinFinOrg/XinFin-Node (genesis/genesis-<net>.json,
+# bootnodes/<net>.list). Unset (or devnet5151) keeps the network.env default
+# (devnet 5151). Explicit --genesis/--bootnodes/--networkid still win; public
+# bootnodes are used by default for mainnet/testnet.
+PUB_BOOTNODES_FILE=""
+case "${NETWORK:-}" in
+  mainnet|xinfin|xdc)
+    [ -z "$GENESIS" ]   && GENESIS="genesis/genesis-mainnet.json"
+    [ -z "$NETWORKID" ] && NETWORKID=50
+    NM_CONFIG="${NM_CONFIG/xdc-devnet5151/xdc-mainnet}"
+    PUB_BOOTNODES_FILE="bootnodes/mainnet.list" ;;
+  testnet|apothem)
+    [ -z "$GENESIS" ]   && GENESIS="genesis/genesis-testnet.json"
+    [ -z "$NETWORKID" ] && NETWORKID=51
+    NM_CONFIG="${NM_CONFIG/xdc-devnet5151/xdc-testnet}"
+    PUB_BOOTNODES_FILE="bootnodes/testnet.list" ;;
+  ""|devnet5151|5151|devnet) : ;;
+  *) echo "unknown --network '$NETWORK' (expected: mainnet | testnet | devnet5151)" >&2; exit 1 ;;
+esac
+if [ -n "$PUB_BOOTNODES_FILE" ] && [ -z "$BOOTNODES" ] && [ -f "$PUB_BOOTNODES_FILE" ]; then
+  BOOTNODES=$(grep -v '^[[:space:]]*#' "$PUB_BOOTNODES_FILE" | grep enode | paste -sd, -)
+  echo "No --bootnodes given; using $(echo "$BOOTNODES" | tr ',' '\n' | grep -c enode) public $NETWORK bootnode(s)"
+fi
+[ -n "$NETWORK" ] && [ "$NETWORK" != devnet5151 ] && echo "Target network: $NETWORK (chainId ${NETWORKID:-?}, genesis ${GENESIS:-?})"
 
 # Default the genesis from network.env (DEFAULT_GENESIS) when --genesis is omitted,
 # so a plain `./join.sh` joins the configured network (devnet 5151) with no flags.
@@ -581,6 +614,25 @@ elif [ "$CLIENT" = nethermind ]; then
   WS_PORT=$((RPCPORT + 1))
   NM_ES=""; [ -n "$full" ] && NM_ES="--EthStats.Enabled true --EthStats.Name $ES_NAME --EthStats.Secret $ES_SECRET --EthStats.Server wss://${ES_HOSTPORT}/api"
   MP_ARG=""; [ -n "$MAXPEERS" ] && MP_ARG="--Network.MaxActivePeers $MAXPEERS"
+  # net5151: disable nethermind peer persistence. With it ON, the DB-loaded copies
+  # of the validator node IDs register in the peer pool BEFORE the static-config
+  # entries, so those nodes never land in _staticPeers; once the validators drop
+  # nethermind as UselessPeer (they do, on the legacy XDPoS base), nethermind never
+  # reconnects -- 0 peers, "Waiting for peers..." forever, stalled behind tip.
+  # IsPeersPersistenceOn is NOT exposed as a CLI arg in this build, so patch it into
+  # the dist config before launch (idempotent). Verified live: nethermind then holds
+  # the validators and stays on-tip. Underlying nethermind fix: xdc-nethermind #249.
+  python3 - "$NETHERMIND_DIST/configs/$NM_CONFIG.json" <<'PY'
+import json, sys
+p = sys.argv[1]
+try:
+    cfg = json.load(open(p))
+    cfg.setdefault("Network", {})["IsPeersPersistenceOn"] = False
+    json.dump(cfg, open(p, "w"), indent=2)
+    print("  nethermind: set Network.IsPeersPersistenceOn=false in %s" % p)
+except Exception as e:
+    sys.stderr.write("  warning: could not patch nethermind config %s: %s\n" % (p, e))
+PY
   ( cd "$NETHERMIND_DIST" && ./nethermind \
     --config "$NM_CONFIG" \
     --Init.BaseDbPath "$NM_DATADIR" \
