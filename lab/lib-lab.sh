@@ -485,15 +485,67 @@ lab_start_follower() {
   )
 }
 
+# _lab_reap_orphan_producer: find+SIGTERM any run.sh/bootnode process that
+# belongs to THIS repo (cwd == REPO_ROOT, or -- for a relative-path
+# bootnode invocation -- cwd-scoped the same way) but is no longer
+# reachable via producer.pid -- e.g. because an external harness SIGKILLed
+# the scenario.sh/run.sh ancestor directly (SIGKILL can't be trapped, so
+# run.sh's own "kill child_proc on INT/TERM" cleanup in its own trap never
+# runs and its bootnode+sealer children are orphaned, reparented to init),
+# or because producer.pid was itself lost/cleared (e.g. a results/ wipe)
+# while run.sh was still alive. Confirmed live (ItWorksinMyLocal#46
+# T3.3/regression-gate finding): exactly such an orphan -- a run.sh with
+# every one of its 4 sealers already dead but its OWN bootnode still
+# running -- sat blocked forever in run.sh's bare `wait` (bash's `wait`
+# with no args blocks on EVERY backgrounded job of that shell, so one
+# still-alive bootnode alone is enough to wedge the wrapper permanently),
+# holding the bootnode's UDP/TCP port for good and leaving the NEXT
+# lab_start_producer attempt on the same box to contend with a leftover
+# process nothing in lab_teardown's pidfile-only bookkeeping could find.
+# Best-effort/idempotent like the rest of lab_stop: a no-op when nothing
+# matches, always returns success either way (called from lab_stop, whose
+# own contract is the same).
+_lab_reap_orphan_producer() {
+  local pid cwd cmd
+  for pid in $(pgrep -f '(^|/)run\.sh([[:space:]]|$)' 2>/dev/null); do
+    cwd=$(readlink -f "/proc/$pid/cwd" 2>/dev/null) || continue
+    [ "$cwd" = "$REPO_ROOT" ] || continue
+    echo "lab_stop: reaping orphaned run.sh (pid $pid -- stale/missing producer.pid, or a hard-killed ancestor left it running)" >&2
+    kill -TERM "$pid" 2>/dev/null
+  done
+  for pid in $(pgrep -f 'bootnode .*-nodekey' 2>/dev/null); do
+    cmd=$(tr '\0' ' ' < "/proc/$pid/cmdline" 2>/dev/null)
+    cwd=$(readlink -f "/proc/$pid/cwd" 2>/dev/null)
+    case "$cmd" in
+      *"-nodekey $REPO_ROOT/bootnode.key"*) : ;;
+      *'-nodekey ./bootnode.key'*) [ "$cwd" = "$REPO_ROOT" ] || continue ;;
+      *) continue ;;
+    esac
+    echo "lab_stop: reaping orphaned bootnode (pid $pid)" >&2
+    kill -TERM "$pid" 2>/dev/null
+  done
+  return 0
+}
+
 # lab_stop <client|producer|node1..node4>: SIGTERMs that follower's join.sh
 # wrapper (which itself traps and cleans up its child), the whole producer
 # wrapper (run.sh, which cleans up bootnode + all 4 sealers), or a single
-# producer sealer found by the OS process listening on its RPC port.
+# producer sealer found by the OS process listening on its RPC port. Also
+# reaps any run.sh/bootnode orphan left behind by an earlier hard-killed or
+# state-lost run (see _lab_reap_orphan_producer) so a stale pidfile (or a
+# missing one) never leaves the box dirty.
 lab_stop() {
   local target="$1" pidfile pid port
   case "$target" in
     producer)
       pidfile="$LAB_RESULTS_DIR/producer.pid"
+      if [ -f "$pidfile" ]; then
+        pid=$(cat "$pidfile")
+        kill -TERM "$pid" 2>/dev/null
+        rm -f "$pidfile"
+      fi
+      _lab_reap_orphan_producer
+      return 0
       ;;
     node1|node2|node3|node4)
       port=$(_lab_producer_rpc_port "$target") || return 1

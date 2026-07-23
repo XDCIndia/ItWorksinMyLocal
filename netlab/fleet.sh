@@ -169,6 +169,32 @@ print(json.loads(sys.argv[1]).get('enode', ''))
 }
 
 # ---------------------------------------------------------------------------
+# _fleet_up_abort: best-effort teardown of whatever THIS cmd_up call already
+# started (bootnode/sealers/followers), used on every failure path from the
+# first node-start onward (ItWorksinMyLocal#46 T3.3 gate finding). cmd_up
+# has several "some node/health-check didn't come up" exits deep into
+# bring-up; before this, every one of them just `return 1`ed with sealers
+# (and possibly some followers) already running, live processes on real
+# ports. Nothing tears those down: topo_up (lib-topo.sh) only appends to
+# active-topologies on a SUCCESSFUL `up` (rc=0), so a failed `up` leaves its
+# already-started nodes both running AND untracked -- no active-topologies
+# entry for the next `topo_down` (scenario.sh's own before/after-scenario
+# cleanup) to find. Confirmed live: an erigon follower that never came up
+# within its wait-rpc window left 4 sealers + an earlier geth follower
+# running with 16 leaked 34000+ listeners after `up` reported failure and
+# exited. Calling cmd_down here, using the SAME already-resolved topology
+# globals (NODE_IDS/RPC_OF/RUN_DIR/BOOTNODE_PIDFILE etc, set once by
+# _fleet_resolve near the top of cmd_up and never re-resolved for this
+# invocation), stops exactly what this attempt brought up -- gracefully
+# (no --force; a partial bring-up deserves the same SIGTERM->45s-poll
+# discipline as a normal `down`), then cmd_up still returns its own real
+# failure to the caller.
+_fleet_up_abort() {
+  echo "fleet.sh: up failed -- tearing down whatever this attempt already started (nothing leaked running/untracked)" >&2
+  cmd_down --best-effort >&2
+}
+
+# ---------------------------------------------------------------------------
 # cmd_up
 # ---------------------------------------------------------------------------
 cmd_up() {
@@ -276,19 +302,19 @@ cmd_up() {
     # {FLEET_LOCK_FD}>&- (see the bootnode comment above): node.sh's own
     # start backgrounds the actual client process, which would otherwise
     # inherit our lock fd across node.sh's exec and hold it open forever.
-    "$NODE_SH" start "$TOPO_FILE" "$id" --genesis "$GENESIS_FILE" {FLEET_LOCK_FD}>&- || return 1
+    "$NODE_SH" start "$TOPO_FILE" "$id" --genesis "$GENESIS_FILE" {FLEET_LOCK_FD}>&- || { _fleet_up_abort; return 1; }
   done
   for id in "${NODE_IDS[@]}"; do
     [ "${ROLE_OF[$id]}" = sealer ] || continue
-    "$HEALTH_SH" wait-rpc "http://127.0.0.1:${RPC_OF[$id]}" 60 || { echo "fleet.sh: sealer $id never came up" >&2; return 1; }
+    "$HEALTH_SH" wait-rpc "http://127.0.0.1:${RPC_OF[$id]}" 60 || { echo "fleet.sh: sealer $id never came up" >&2; _fleet_up_abort; return 1; }
   done
 
   # -- gather sealer enodes for the followers --
   local sealer_enodes="" e
   for id in "${NODE_IDS[@]}"; do
     [ "${ROLE_OF[$id]}" = sealer ] || continue
-    e=$(_fleet_node_enode "http://127.0.0.1:${RPC_OF[$id]}") || { echo "fleet.sh: could not read enode for $id" >&2; return 1; }
-    [ -n "$e" ] || { echo "fleet.sh: empty enode for $id" >&2; return 1; }
+    e=$(_fleet_node_enode "http://127.0.0.1:${RPC_OF[$id]}") || { echo "fleet.sh: could not read enode for $id" >&2; _fleet_up_abort; return 1; }
+    [ -n "$e" ] || { echo "fleet.sh: empty enode for $id" >&2; _fleet_up_abort; return 1; }
     [ -n "$sealer_enodes" ] && sealer_enodes="$sealer_enodes,"
     sealer_enodes="${sealer_enodes}${e}"
   done
@@ -319,8 +345,8 @@ cmd_up() {
     if [ "$TOPO_PEERING" = mesh ] && [ -n "$follower_enodes" ]; then
       bootnodes_for_id="${bootnodes_for_id},${follower_enodes}"
     fi
-    nice -n 10 "$NODE_SH" start "$TOPO_FILE" "$id" --genesis "$GENESIS_FILE" --bootnodes "$bootnodes_for_id" {FLEET_LOCK_FD}>&- || return 1
-    "$HEALTH_SH" wait-rpc "http://127.0.0.1:${RPC_OF[$id]}" 90 || { echo "fleet.sh: follower $id never came up" >&2; return 1; }
+    nice -n 10 "$NODE_SH" start "$TOPO_FILE" "$id" --genesis "$GENESIS_FILE" --bootnodes "$bootnodes_for_id" {FLEET_LOCK_FD}>&- || { _fleet_up_abort; return 1; }
+    "$HEALTH_SH" wait-rpc "http://127.0.0.1:${RPC_OF[$id]}" 90 || { echo "fleet.sh: follower $id never came up" >&2; _fleet_up_abort; return 1; }
     "$HEALTH_SH" wait-peers "http://127.0.0.1:${RPC_OF[$id]}" 1 60 || echo "fleet.sh: WARNING: follower $id still has 0 peers -- continuing anyway" >&2
     if [ "$TOPO_PEERING" = mesh ]; then
       local this_enode; this_enode=$(_fleet_node_enode "http://127.0.0.1:${RPC_OF[$id]}" 2>/dev/null)
