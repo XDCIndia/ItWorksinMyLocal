@@ -262,6 +262,35 @@ if [ -z "$STATICPEERS" ] && [ -f peers.list ]; then
   [ -n "$STATICPEERS" ] && echo "Using $(echo "$STATICPEERS" | tr ',' '\n' | grep -c enode) default peer(s) from peers.list"
 fi
 
+# If no explicit --bootnodes, derive the enode from ./bootnode.key at the given
+# IP (--ip/--host, may include :PORT; defaults to this machine's IP:30301).
+# erigon joining a built-in --chain (no --ip) uses that chain's own bootnodes,
+# so skip derivation there.
+# besu/nethermind/reth take the validator enodes directly (network.env
+# DEFAULT_BOOTNODES / --bootnodes); a key-derived enode would carry the wrong
+# node id, so never derive one for them. Resolved HERE (before the --client all
+# fan-out below) so it runs ONCE and is forwarded to every child via `shared`
+# -- besu/nethermind/reth can't self-derive, so under --client all they'd never
+# get a bootnode otherwise (this used to sit after the fan-out and never ran
+# for CLIENT=all, leaving those three childrens' BOOTNODES empty).
+if [ -z "$BOOTNODES" ] \
+   && [ "$CLIENT" != besu ] && [ "$CLIENT" != nethermind ] && [ "$CLIENT" != reth ] \
+   && { [ "$CLIENT" != erigon ] || [ -n "$HOST_IP" ]; }; then
+  [ -f ./bootnode.key ] || { echo "need --bootnodes or --ip, or a ./bootnode.key to derive one" >&2; exit 1; }
+  # The enode pubkey comes from bootnode.key via any bootnode binary. The geth
+  # client has none, so fall back to whichever bootnode binary is built.
+  bn="$BOOTNODE_BIN"
+  [ -x "$bn" ] || bn=$(ls bin/*/*/bootnode 2>/dev/null | head -1)
+  [ -x "$bn" ] || { echo "no bootnode binary to derive the enode; pass --bootnodes, or build the oldxdc client once" >&2; exit 1; }
+  target="${HOST_IP:-$(detect_ip)}"
+  case "$target" in
+    *:*) bhost="${target%:*}"; bport="${target##*:}";;
+    *)   bhost="$target";      bport=30301;;
+  esac
+  BOOTNODES="enode://$("$bn" -nodekey ./bootnode.key -writeaddress)@${bhost}:${bport}"
+  echo "Using key-based bootnode: $BOOTNODES"
+fi
+
 # --client all: boot EVERY client at once, each in its own datadir with its
 # per-client port offset (already distinct below), all sharing the same genesis +
 # bootnodes resolved above. Implemented as a fan-out: re-invoke this same script
@@ -432,31 +461,6 @@ case "$CLIENT" in
     fi ;;
 esac
 
-# If no explicit --bootnodes, derive the enode from ./bootnode.key at the given
-# IP (--ip/--host, may include :PORT; defaults to this machine's IP:30301).
-# erigon joining a built-in --chain (no --ip) uses that chain's own bootnodes,
-# so skip derivation there.
-# besu/nethermind/reth take the validator enodes directly (network.env
-# DEFAULT_BOOTNODES / --bootnodes); a key-derived enode would carry the wrong
-# node id, so never derive one for them.
-if [ -z "$BOOTNODES" ] \
-   && [ "$CLIENT" != besu ] && [ "$CLIENT" != nethermind ] && [ "$CLIENT" != reth ] \
-   && { [ "$CLIENT" != erigon ] || [ -n "$HOST_IP" ]; }; then
-  [ -f ./bootnode.key ] || { echo "need --bootnodes or --ip, or a ./bootnode.key to derive one" >&2; exit 1; }
-  # The enode pubkey comes from bootnode.key via any bootnode binary. The geth
-  # client has none, so fall back to whichever bootnode binary is built.
-  bn="$BOOTNODE_BIN"
-  [ -x "$bn" ] || bn=$(ls bin/*/*/bootnode 2>/dev/null | head -1)
-  [ -x "$bn" ] || { echo "no bootnode binary to derive the enode; pass --bootnodes, or build the oldxdc client once" >&2; exit 1; }
-  target="${HOST_IP:-$(detect_ip)}"
-  case "$target" in
-    *:*) bhost="${target%:*}"; bport="${target##*:}";;
-    *)   bhost="$target";      bport=30301;;
-  esac
-  BOOTNODES="enode://$("$bn" -nodekey ./bootnode.key -writeaddress)@${bhost}:${bport}"
-  echo "Using key-based bootnode: $BOOTNODES"
-fi
-
 # Default the network id to the genesis chainId (erigon --chain <name> needn't).
 if [ -z "$NETWORKID" ] && [ -f "$GENESIS" ]; then
   NETWORKID=$(python3 -c "import json,sys;print(json.load(open('$GENESIS'))['config']['chainId'])" 2>/dev/null)
@@ -566,8 +570,16 @@ if [ "$CLIENT" = erigon ]; then
   SP_ARG=""; [ -n "$STATICPEERS" ] && SP_ARG="--staticpeers $STATICPEERS"
   [ -z "$STATICPEERS" ] && echo "  note: no --staticpeers given; erigon may not discover XDPoS peers via the bootnode alone" >&2
   MP_ARG=""; [ -n "$MAXPEERS" ] && MP_ARG="--maxpeers $MAXPEERS"
+  # erigon's default --p2p.allowed-ports is a HARDCODED [30303,30304,30305,30306,
+  # 30307] (from its own flag default, independent of --port) with our --port only
+  # prepended, not substituted -- so it still tries to bind that classic range and
+  # fails ("run out of allowed ports") whenever those ports are already taken by a
+  # local net or another join.sh client. Give it its own private range based on
+  # $PORT instead (comma-separated per erigon's own --p2p.allowed-ports syntax);
+  # 5 ports comfortably covers its eth-protocol version count (seen up to 4).
+  ALLOWED_PORTS="$PORT,$((PORT+1)),$((PORT+2)),$((PORT+3)),$((PORT+4))"
   "$XDC" --datadir "$DATADIR" --chain "$ERC" --discv4 \
-    --port "$PORT" --nat "extip:${IP}" $BN_ARG $SP_ARG $MP_ARG \
+    --port "$PORT" --p2p.allowed-ports "$ALLOWED_PORTS" --nat "extip:${IP}" $BN_ARG $SP_ARG $MP_ARG \
     --http --http.addr 0.0.0.0 --http.port "$RPCPORT" --http.vhosts "*" \
     --http.corsdomain "*" --http.api eth,net,web3,erigon,debug,txpool \
     --ws --ws.port "$WSPORT" \
