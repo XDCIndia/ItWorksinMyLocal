@@ -60,7 +60,7 @@ declare -A _STATIC_STATE=(
 declare -A _STATIC_BLOCKER=(
   [besu]="no known Java block-production path yet; also binary-broken@block1 in some builds (#51) -- client-side work, heavy"
   [erigon]="staged-sync has no XDPoS production path yet -- client-side work, heavy"
-  [nethermind]="only loads its own bundled net5151 Parity chainspec (topo.sh rejects any other chainId for it); needs a genesis->chainspec converter before sealing is even reachable -- harness->client"
+  [nethermind]="confirmed S0 live this session (topo.sh validate rejects a mint-iter-shaped topology for ANY nethermind node, proposer or plain follower, at any chainId != 5151 -- no genesis->chainspec converter exists); even where a converter existed, S3+ is separately blocked by xdc-nethermind-private#224 (InitBlockProducer() => NotSupportedException) -- see xdc-nethermind-private#250, blocked-upstream"
 )
 
 CLIENTS=("$@")
