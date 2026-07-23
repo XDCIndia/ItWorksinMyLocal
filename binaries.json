@@ -1,7 +1,7 @@
 {
   "_comment": "Prebuilt-binary manifest for lib.sh:download_bins() / join.sh. baseUrl + file (with {os}/{arch} substituted) form the download URL; archive says how to unpack it; produces maps a logical binary name to its path *inside* the download (\"\" = the download IS the binary, \".\" = the whole extracted directory is the product, e.g. a dist dir). platforms uses {os}-{arch} keys (darwin|linux, amd64|arm64); \"*\" = platform-independent. sha256 keys mirror platforms (or \"*\"), fetched from the upstream <file>.sha256 siblings on xdc.network. Re-run the fetch and bump 'updated' if xdc.network publishes new binaries.",
   "baseUrl": "https://xdc.network/snapshots/bin/",
-  "updated": "2026-07-22",
+  "updated": "2026-07-23",
   "clients": {
     "geth": {
       "file": "geth-{os}-{arch}",
@@ -10,19 +10,20 @@
       "platforms": ["darwin-amd64", "darwin-arm64", "linux-amd64", "linux-arm64"],
       "sha256": {
         "darwin-amd64": "12000bdde6ad903d068bd3ee9df1b438cd366b5e1168ec17647f584fa9198f57",
-        "darwin-arm64": "b2a686cb12081f766ce16031df9c363df0eb320ea17666a725c06d48b3b887e1",
+        "darwin-arm64": "de511290ee95421caa9d67afe64a6a144c2ec581c66ae4439b9b5c626f747a23",
         "linux-amd64": "17890f1dce07a8072e984c17d3692d3755a3b0da6cbd39c890755e6ff6af8600",
         "linux-arm64": "f56076efc6664a8ee0739b47879be16c53b1a935fb436a1bf43ab5058e399e11"
       }
     },
     "erigon": {
-      "_comment": "xdc.network only publishes erigon for linux-amd64 -- darwin/arm64 stay build-from-source (lib.sh falls back automatically).",
+      "_comment": "linux-amd64 + darwin-arm64 published. darwin-arm64 first published 2026-07-23, built from main (v3.5.2), --chain xdc-net5151 genesis 0x96f121 verified + live-synced past block 20000. Other platforms fall back to a source build (lib.sh).",
       "file": "erigon-{os}-{arch}",
       "archive": "none",
       "produces": { "erigon": "" },
-      "platforms": ["linux-amd64"],
+      "platforms": ["linux-amd64", "darwin-arm64"],
       "sha256": {
-        "linux-amd64": "6618bd4fa9697c33e446f973b74d6cf47e96ffe468204fcaf42f6c8ed8dbe9df"
+        "linux-amd64": "6618bd4fa9697c33e446f973b74d6cf47e96ffe468204fcaf42f6c8ed8dbe9df",
+        "darwin-arm64": "c584883048486b044726eac7fe28a8ffbb865478a5aa6e60684a0a49e3eb8862"
       }
     },
     "reth": {
@@ -44,18 +45,18 @@
       "produces": { "besu": "bin/besu" },
       "platforms": ["*"],
       "sha256": {
-        "*": "7ade4f2f56b8c163d5fc5e86d024fe27ce50891e2e29677973245f4dc3a02820"
+        "*": "246e50302e3573e734e71330f70bdce63400d61bd7558e48702e30b3e987cb36"
       }
     },
     "nethermind": {
-      "_comment": "No linux-arm64 build published. Archive is a flat .NET publish dir (./nethermind launcher + ./chainspec/*.json + ./configs/*.json at the archive root, no version-prefixed top dir), so produces path is '.' (the whole extracted dir is NETHERMIND_DIST). This archive INCLUDES chainspec/xdc-devnet5151.json (chainId 5151, genesis 0x96f121, XDPoS engine) and its runner config, so join.sh --client nethermind syncs devnet 5151 out of the box. Built from XDCIndia/xdc-nethermind-private with the net5151 follower bypass (PR #246): the legacy chain's non-standard gas schedule can't be recomputed bit-for-bit, so for chainId 5151 the header's gas-derived fields are trusted while state is fully validated -- verified syncing to the live tip.",
+      "_comment": "No linux-arm64 build published. Archive is a flat .NET publish dir (./nethermind launcher + ./chainspec/*.json + ./configs/*.json at the archive root, no version-prefixed top dir), so produces path is '.' (the whole extracted dir is NETHERMIND_DIST). This archive INCLUDES chainspec/xdc-devnet5151.json (chainId 5151, genesis 0x96f121, XDPoS engine) and its runner config, so join.sh --client nethermind syncs devnet 5151 out of the box. Built from XDCIndia/xdc-nethermind-private with the net5151 follower bypass (PR #246): the legacy chain's non-standard gas schedule can't be recomputed bit-for-bit, so for chainId 5151 the header's gas-derived fields are trusted while state is fully validated -- linux-amd64 verified syncing to the live tip. NOTE: darwin-arm64 refreshed 2026-07-23 (built from main, v1.36.0) but NOT sync-verified (host disk below the 47GB HealthChecks guard) and may be missing chainspec/xdc-devnet5151.json (absent from main at build time); linux-amd64 remains the verified 5151 client -- see issue #32.",
       "file": "nethermind-{os}-{arch}.tar.gz",
       "archive": "tar.gz",
       "produces": { "nethermind": "." },
       "platforms": ["darwin-amd64", "darwin-arm64", "linux-amd64"],
       "sha256": {
         "darwin-amd64": "bd5e95912d4b01d3952047949f440a49ce56c584e7d0a632f2ca8fbdbb1a1459",
-        "darwin-arm64": "2d84a4a04c87d353f5eb78195eaa3db5f230d90fdaba289aadb8a9844126d788",
+        "darwin-arm64": "99573a88c4fc6dbaf33bfc3f37b0082fe39810209644f1ec8c30418b1925dc94",
         "linux-amd64": "876335b90bd390bf7a50c5c098fab42da7dee8ca91a577539fbd7fef63d8103a"
       }
     },
