@@ -27,13 +27,14 @@
       }
     },
     "reth": {
+      "_comment": "darwin-arm64 refreshed 2026-07-23 from the #12 chain-recognition fix (PR XDCIndia/reth#253) — genesis-config-driven XDC detection, verified live-syncing net5151 (3 peers, block import, no Ethereum-bootnode fallback). PR #253 pending human merge to reth main (touches sync-path code); other platforms unchanged.",
       "file": "reth-{os}-{arch}",
       "archive": "none",
       "produces": { "xdc-reth": "" },
       "platforms": ["darwin-amd64", "darwin-arm64", "linux-amd64", "linux-arm64"],
       "sha256": {
         "darwin-amd64": "189f4a1a8f595232a834456722cc17f22571a4ee0339cb4b89b51d2b53526cee",
-        "darwin-arm64": "36c35bcd13a5570608f9dfaf733e2486c0c00b830afd7525be82d7a13471107f",
+        "darwin-arm64": "510782432e086b923e8537b783fff882921a88361788a29f2945d420fb88928f",
         "linux-amd64": "e05bc7ec0f1ce10b69c7e49b0149f90d3c46d361acb846de73ae648a36b45fa3",
         "linux-arm64": "425dc422c7f1eecfbd655fdecff8827f208adee73b8060ffdde9507513497630"
       }
@@ -61,13 +62,14 @@
       }
     },
     "xone": {
-      "_comment": "xone-native (XDCIndia/xOneGo), the go-ethereum-derived XDPoS reference client. Only linux-amd64 published so far; other platforms fall back to a source build (lib.sh). NOTE: use `xone --version` (not the `version` subcommand, which boots a node).",
+      "_comment": "xone-native (XDCIndia/xOneGo), the go-ethereum-derived XDPoS reference client (built from pkg/cmd/xone-native; the `xone` binary is only a launcher). linux-amd64 + darwin-arm64 (refreshed 2026-07-23 from origin/master) published; other platforms fall back to a source build (lib.sh). NOTE: use `xone --version` (not the `version` subcommand, which boots a node).",
       "file": "xone-{os}-{arch}",
       "archive": "none",
       "produces": { "xone": "" },
-      "platforms": ["linux-amd64"],
+      "platforms": ["linux-amd64", "darwin-arm64"],
       "sha256": {
-        "linux-amd64": "45cb62ceeb610fa66f755a5db6a3b16eeaebd7c891b01c78ef759a34c55b07ad"
+        "linux-amd64": "45cb62ceeb610fa66f755a5db6a3b16eeaebd7c891b01c78ef759a34c55b07ad",
+        "darwin-arm64": "49b3f3f8338f03e864b02ca6d8b83c490137ae0a480a92ab9007935786dae916"
       }
     }
   }
