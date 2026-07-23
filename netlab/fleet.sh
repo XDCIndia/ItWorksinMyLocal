@@ -419,7 +419,7 @@ case "$CMD" in
       exit 1
     fi
     : >"$FLEET_LOCKFILE"
-    printf 'pid=%s locked=%s\n' "$$" "$(date -u +%FT%TZ)" >&"$FLEET_LOCK_FD" 2>/dev/null
+    printf 'pid=%s locked=%s\n' "$$" "$(date -u +%FT%TZ)" 1>&"$FLEET_LOCK_FD" 2>/dev/null
     ;;
 esac
 
