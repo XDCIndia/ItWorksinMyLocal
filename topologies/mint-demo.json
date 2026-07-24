@@ -1,0 +1,20 @@
+{
+  "name": "mint-demo",
+  "description": "ItWorksinMyLocal#62's small PERSISTENT minting demo fleet: 3 oldxdc sealers (the trusted quorum) + 1 geth role:proposer candidate + 1 xone role:proposer candidate, both genesis-time masternodes (extraData + the seeded 0x88 SMC from block 1, same role:proposer mechanism as mint-iter). Unlike mint-iter* (wiped/rebuilt every gate iteration), this topology is meant to be brought up once and left running so its nodes are visible on stats.xdcindia.com as a live demo of geth-XDC and xone actually minting -- ethstats is on, and it is NOT part of any mint-gate scenario/assertion. Stable chainId, own portBase, own genesis; never torn down by scenario.sh or mintlab.sh.",
+  "chainId": 34093,
+  "epoch": 900,
+  "v2block": 900,
+  "period": 1,
+  "reward": 5000,
+  "gap": 450,
+  "portBase": 34890,
+  "staggerSeconds": 5,
+  "ethstats": true,
+  "nodes": [
+    { "id": "node1", "client": "oldxdc", "role": "sealer", "keyRef": "PRIVATE_KEY_1" },
+    { "id": "node2", "client": "oldxdc", "role": "sealer", "keyRef": "PRIVATE_KEY_2" },
+    { "id": "node3", "client": "oldxdc", "role": "sealer", "keyRef": "PRIVATE_KEY_3" },
+    { "id": "geth1", "client": "geth", "role": "proposer", "keyRef": "PRIVATE_KEY_4" },
+    { "id": "xone1", "client": "xone", "role": "proposer", "keyRef": "PRIVATE_KEY_6" }
+  ]
+}
