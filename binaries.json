@@ -1,9 +1,10 @@
 {
   "_comment": "Prebuilt-binary manifest for lib.sh:download_bins() / join.sh. baseUrl + file (with {os}/{arch} substituted) form the download URL; archive says how to unpack it; produces maps a logical binary name to its path *inside* the download (\"\" = the download IS the binary, \".\" = the whole extracted directory is the product, e.g. a dist dir). platforms uses {os}-{arch} keys (darwin|linux, amd64|arm64); \"*\" = platform-independent. sha256 keys mirror platforms (or \"*\"), fetched from the upstream <file>.sha256 siblings on xdc.network. Re-run the fetch and bump 'updated' if xdc.network publishes new binaries.",
   "baseUrl": "https://xdc.network/snapshots/bin/",
-  "updated": "2026-07-23",
+  "updated": "2026-07-24",
   "clients": {
     "geth": {
+      "_comment": "darwin-amd64/darwin-arm64 are now the SAME universal (lipo fat) binary built 2026-07-24 from main (arm64 native + amd64 cross-compiled, no Intel Mac needed since geth is pure Go) -- identical sha256 both filenames, runs natively on either Mac architecture. Verified via `lipo -info` (both slices present) and a live devnet 5151 join on the arm64 slice.",
       "file": "geth-{os}-{arch}",
       "archive": "none",
       "produces": {
@@ -16,14 +17,14 @@
         "linux-arm64"
       ],
       "sha256": {
-        "darwin-amd64": "12000bdde6ad903d068bd3ee9df1b438cd366b5e1168ec17647f584fa9198f57",
-        "darwin-arm64": "de511290ee95421caa9d67afe64a6a144c2ec581c66ae4439b9b5c626f747a23",
+        "darwin-amd64": "cdc74be3ebadfaad197c6445ab3aaf848d024f6aad09239583a9cfe8672a47be",
+        "darwin-arm64": "cdc74be3ebadfaad197c6445ab3aaf848d024f6aad09239583a9cfe8672a47be",
         "linux-amd64": "17890f1dce07a8072e984c17d3692d3755a3b0da6cbd39c890755e6ff6af8600",
         "linux-arm64": "f56076efc6664a8ee0739b47879be16c53b1a935fb436a1bf43ab5058e399e11"
       }
     },
     "erigon": {
-      "_comment": "linux-amd64 + darwin-arm64 published. darwin-arm64 first published 2026-07-23, built from main (v3.5.2), --chain xdc-net5151 genesis 0x96f121 verified + live-synced past block 20000. Other platforms fall back to a source build (lib.sh).",
+      "_comment": "linux-amd64 + darwin (universal) published. darwin-amd64/darwin-arm64 are the SAME lipo fat binary built 2026-07-24 from main (arm64 native + amd64 cross-compiled with CGO_ENABLED=1 CC/CXX=clang -arch x86_64, needed since erigon uses cgo for mdbx/blst/evmone) -- includes the node/cli p2p.allowed-ports flag-registration fix (PR XDCIndia/erigon-xdc#361, pending human merge). --chain xdc-net5151 genesis 0x96f121 verified on the arm64 slice + live-synced past block 20000. Other platforms fall back to a source build (lib.sh).",
       "file": "erigon-{os}-{arch}",
       "archive": "none",
       "produces": {
@@ -31,15 +32,17 @@
       },
       "platforms": [
         "linux-amd64",
+        "darwin-amd64",
         "darwin-arm64"
       ],
       "sha256": {
         "linux-amd64": "6618bd4fa9697c33e446f973b74d6cf47e96ffe468204fcaf42f6c8ed8dbe9df",
-        "darwin-arm64": "c584883048486b044726eac7fe28a8ffbb865478a5aa6e60684a0a49e3eb8862"
+        "darwin-amd64": "61b79adcf2fe4545e958c2868613c28e16bdb35b30201d3d9e45275cff60d070",
+        "darwin-arm64": "61b79adcf2fe4545e958c2868613c28e16bdb35b30201d3d9e45275cff60d070"
       }
     },
     "reth": {
-      "_comment": "darwin-arm64 refreshed 2026-07-23 from the #12 chain-recognition fix (PR XDCIndia/reth#253) \u2014 genesis-config-driven XDC detection, verified live-syncing net5151 (3 peers, block import, no Ethereum-bootnode fallback). PR #253 pending human merge to reth main (touches sync-path code); other platforms unchanged.",
+      "_comment": "darwin-amd64/darwin-arm64 are now the SAME universal (lipo fat) binary built 2026-07-24 from main, which now includes the #12 chain-recognition fix (PR XDCIndia/reth#253, merged) \u2014 genesis-config-driven XDC detection, verified live-syncing net5151 (3 peers, block import, no Ethereum-bootnode fallback) on the arm64 slice. amd64 cross-compiled via `rustup target add x86_64-apple-darwin --toolchain stable` (default toolchain here is a pre-2024-edition nightly; must use stable). Other platforms unchanged.",
       "file": "reth-{os}-{arch}",
       "archive": "none",
       "produces": {
@@ -52,8 +55,8 @@
         "linux-arm64"
       ],
       "sha256": {
-        "darwin-amd64": "189f4a1a8f595232a834456722cc17f22571a4ee0339cb4b89b51d2b53526cee",
-        "darwin-arm64": "510782432e086b923e8537b783fff882921a88361788a29f2945d420fb88928f",
+        "darwin-amd64": "f36af0771e58fbef834dd8863c35356c60724c3ad58a43f6a2f0bf5a14d80c98",
+        "darwin-arm64": "f36af0771e58fbef834dd8863c35356c60724c3ad58a43f6a2f0bf5a14d80c98",
         "linux-amd64": "e05bc7ec0f1ce10b69c7e49b0149f90d3c46d361acb846de73ae648a36b45fa3",
         "linux-arm64": "425dc422c7f1eecfbd655fdecff8827f208adee73b8060ffdde9507513497630"
       }
@@ -91,7 +94,7 @@
       }
     },
     "xone": {
-      "_comment": "xone-native (XDCIndia/xOneGo), the go-ethereum-derived XDPoS reference client (built from pkg/cmd/xone-native; the `xone` binary is only a launcher). linux-amd64 + darwin-arm64 (refreshed 2026-07-23 from origin/master) published; other platforms fall back to a source build (lib.sh). NOTE: use `xone --version` (not the `version` subcommand, which boots a node).",
+      "_comment": "xone-native (XDCIndia/xOneGo), the go-ethereum-derived XDPoS reference client (built from pkg/cmd/xone-native; the `xone` binary is only a launcher). linux-amd64 + darwin (universal) published. darwin-amd64/darwin-arm64 are the SAME lipo fat binary built 2026-07-24 from origin/master (pure Go, cross-compiles cleanly). Other platforms fall back to a source build (lib.sh). NOTE: use `xone --version` (not the `version` subcommand, which boots a node).",
       "file": "xone-{os}-{arch}",
       "archive": "none",
       "produces": {
@@ -99,11 +102,13 @@
       },
       "platforms": [
         "linux-amd64",
+        "darwin-amd64",
         "darwin-arm64"
       ],
       "sha256": {
         "linux-amd64": "45cb62ceeb610fa66f755a5db6a3b16eeaebd7c891b01c78ef759a34c55b07ad",
-        "darwin-arm64": "49b3f3f8338f03e864b02ca6d8b83c490137ae0a480a92ab9007935786dae916"
+        "darwin-amd64": "776f6a3932d8f965fe07abb6e1b046b2078faffc8bc35d21062ff5a46abf24c5",
+        "darwin-arm64": "776f6a3932d8f965fe07abb6e1b046b2078faffc8bc35d21062ff5a46abf24c5"
       }
     }
   }
