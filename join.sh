@@ -115,6 +115,14 @@ SELF="$PWD/$(basename "$0")"
 # computed once the client is known; an explicit --datadir always wins.
 GENESIS=""; BOOTNODES=""; NETWORKID=""; DATADIR=""; NAME=""; HOST_IP=""; CHAIN=""
 MINEADDR=""; STATICPEERS=""; NETWORK=""; SYNCMODE=""
+# STATICPEERS_EXPLICIT: set when the caller passes --staticpeers directly, so
+# the local-sealer harvest below (LOCAL_BOOTNODE=1) knows to never clobber an
+# explicit choice -- it only overrides STATICPEERS it (or peers.list) derived.
+STATICPEERS_EXPLICIT=0
+# LOCAL_BOOTNODE: set to 1 when BOOTNODES is derived from ./bootnode.key below
+# (i.e. we're joining THIS machine's own local run.sh network), so the
+# local-sealer peer harvest after it knows to fire.
+LOCAL_BOOTNODE=0
 # Ports are left empty here and defaulted PER CLIENT after --client is known, so
 # oldxdc/geth/erigon joins each get a distinct set (clear of run.sh) and can run
 # side by side without conflict. Any explicit flag below wins.
@@ -160,7 +168,7 @@ while [ $# -gt 0 ]; do
     --maxpeers)    MAXPEERS=$2; shift 2;;
     --etherbase)   ETHERBASE=$2; shift 2;;
     --mine)        MINEADDR=$2; shift 2;;
-    --staticpeers) STATICPEERS=$2; shift 2;;
+    --staticpeers) STATICPEERS=$2; STATICPEERS_EXPLICIT=1; shift 2;;
     --ethstats)    ETHSTATS=$2; shift 2;;
     --no-ethstats) ETHSTATS=""; shift;;
     -h|--help)     sed -n '2,96p' "$0" | sed 's/^# \{0,1\}//'; exit 0;;
@@ -289,6 +297,76 @@ if [ -z "$BOOTNODES" ] \
   esac
   BOOTNODES="enode://$("$bn" -nodekey ./bootnode.key -writeaddress)@${bhost}:${bport}"
   echo "Using key-based bootnode: $BOOTNODES"
+  LOCAL_BOOTNODE=1
+fi
+
+# LOCAL_BOOTNODE=1 means we're joining THIS machine's own local run.sh network
+# (the bootnode-derivation above only fires for a key-based, same-host bootnode).
+# That bootnode serves DISCOVERY only, not blocks -- and reth/besu can't even
+# discover through it (trusted-only / static-nodes designs) -- so without a
+# real block-serving peer every client sits at peers=0/1 and never advances.
+# Harvest the LIVE local sealers' (run.sh nodes/1..4, RPC 8545-8548) own enodes
+# via admin_nodeInfo -- these ARE real, block-serving peers on the SAME chain.
+# Runs here (before the --client all fan-out) so it executes ONCE in the
+# parent and is forwarded to every child via `shared`. This overrides any
+# peers.list-derived STATICPEERS set above: peers.list holds the PUBLIC devnet
+# 5151 masternode enodes, the wrong chain for a local join. An explicit
+# --staticpeers (STATICPEERS_EXPLICIT=1) always wins over this.
+#
+# Set on BOTH STATICPEERS and BOOTNODES: only erigon's launch section reads
+# STATICPEERS (its discv4 can't discover XDPoS peers through a bootnode at
+# all, hence a dedicated --staticpeers flag); oldxdc/geth/xone (--bootnodes),
+# besu (--bootnodes + a static-nodes-file built FROM --bootnodes), reth
+# (--trusted-peers) and nethermind (--Network.StaticPeers) all wire their peer
+# connections off $BOOTNODES instead. Verified live: with BOOTNODES holding
+# only the bootnode-only enode, besu logs "Looking for peers ... static=0" and
+# oldxdc/geth cross-connect with each other (both stuck at genesis) rather
+# than finding the real sealers -- appending the harvested sealers onto
+# BOOTNODES (kept alongside the discovery bootnode) gives every client an
+# immediate, real, block-serving peer to dial instead of waiting on (or never
+# completing) Kademlia propagation through the bootnode alone.
+if [ "$LOCAL_BOOTNODE" = 1 ] && [ "$STATICPEERS_EXPLICIT" != 1 ]; then
+  _local_nid="$NETWORKID"
+  if [ -z "$_local_nid" ] && [ -n "$GENESIS" ] && [ -f "$GENESIS" ]; then
+    _local_nid=$(python3 -c "import json,sys;print(json.load(open('$GENESIS'))['config']['chainId'])" 2>/dev/null)
+  fi
+  _local_peers=""
+  for _lp in 8545 8546 8547 8548; do
+    _lenode=$(curl -s -m3 "http://127.0.0.1:${_lp}" -X POST -H 'Content-Type: application/json' \
+      --data '{"jsonrpc":"2.0","method":"admin_nodeInfo","params":[],"id":1}' 2>/dev/null \
+      | python3 -c "
+import sys, json
+try:
+    print((json.load(sys.stdin).get('result') or {}).get('enode', ''))
+except Exception:
+    pass" 2>/dev/null)
+    [ -n "$_lenode" ] || continue
+    # Normalise the host to $bhost (this machine's IP / --ip, resolved above)
+    # and strip any ?discport=... query, so it's a clean, dialable
+    # enode://<id>@<ip>:<tcpport> regardless of what the sealer self-reports.
+    _lenode=$(printf '%s' "$_lenode" | python3 -c "
+import sys
+e = sys.stdin.read().strip().split('?', 1)[0]
+try:
+    head, hostport = e.split('@', 1)
+    _, port = hostport.split(':', 1)
+    print('%s@%s:%s' % (head, '$bhost', port))
+except Exception:
+    print(e)
+")
+    _local_peers="${_local_peers:+$_local_peers,}$_lenode"
+  done
+  if [ -z "$_local_peers" ]; then
+    echo "  no local sealer RPC reachable on 8545-8548; falling back to bootnode-discovery harvest" >&2
+    _local_peers=$(harvest_peers "$GENESIS" "$BOOTNODES" "${_local_nid:-0}")
+  fi
+  if [ -n "$_local_peers" ]; then
+    STATICPEERS="$_local_peers"
+    BOOTNODES="${BOOTNODES:+$BOOTNODES,}$_local_peers"
+    echo "Using $(echo "$_local_peers" | tr ',' '\n' | grep -c enode) local sealer peer(s) as staticpeers/bootnodes (overrides peers.list)"
+  else
+    echo "  warning: could not find any local sealer peers; clients may not sync (pass --staticpeers)" >&2
+  fi
 fi
 
 # --client all: boot EVERY client at once, each in its own datadir with its
@@ -336,11 +414,14 @@ if [ "$CLIENT" = all ]; then
     nt=sync; [ -n "$MINEADDR" ] && [ "$c" = oldxdc ] && nt=seal
     dd="${base}/${c}-${nt}"
     args=(--client "$c" --datadir "$dd" "${shared[@]}")
-    # erigon can't join via a --genesis file (its --chain only resolves built-in
-    # names); when the caller didn't pass an explicit --chain, default it to the
-    # net5151 built-in chainspec so `--client all` doesn't fail erigon's own
-    # early validation. Harmless for the other clients (they ignore --chain).
-    [ "$c" = erigon ] && [ -z "$CHAIN" ] && args+=(--chain "${ERIGON_CHAIN:-xdc-net5151}")
+    # erigon-xdc v3.5.0+ loads a genesis FILE directly via --chain <path> (see the
+    # erigon-only validation below), so only fall back to the net5151 built-in
+    # chainspec when the caller passed neither --chain nor a usable --genesis --
+    # otherwise `--client all` would silently override a real --genesis (e.g. a
+    # LOCAL network's genesis) with the public devnet 5151 chainspec, putting
+    # erigon on the wrong chain while every other client joins the intended one.
+    # Harmless for the other clients (they ignore --chain).
+    [ "$c" = erigon ] && [ -z "$CHAIN" ] && [ ! -f "$GENESIS" ] && args+=(--chain "${ERIGON_CHAIN:-xdc-net5151}")
     # Distinct ethstats/identity name per client when the user forced one (the
     # per-client default name already embeds the client, so only needed here).
     [ -n "$NAME" ] && args+=(--name "${NAME}-${c}")
