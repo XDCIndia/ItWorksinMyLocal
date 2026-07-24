@@ -94,7 +94,7 @@
       }
     },
     "xone": {
-      "_comment": "xone-native (XDCIndia/xOneGo), the go-ethereum-derived XDPoS reference client (built from pkg/cmd/xone-native; the `xone` binary is only a launcher). linux-amd64 + darwin (universal) published. darwin-amd64/darwin-arm64 are the SAME lipo fat binary built 2026-07-24 from origin/master (pure Go, cross-compiles cleanly). Other platforms fall back to a source build (lib.sh). NOTE: use `xone --version` (not the `version` subcommand, which boots a node).",
+      "_comment": "xone-native (XDCIndia/xOneGo), the go-ethereum-derived XDPoS reference client (built from pkg/cmd/xone-native; the `xone` binary is only a launcher). linux-amd64 + darwin (universal) published. darwin-amd64/darwin-arm64 are the SAME lipo fat binary built 2026-07-24 from origin/master (pure Go, cross-compiles cleanly). Other platforms fall back to a source build (lib.sh). NOTE: use `xone --version` (not the `version` subcommand, which boots a node). [2026-07-24: refreshed v1.0.0->v1.1.0 (b117fbd7) which clears the net5151 epoch-1 (#899) wedge; v1.0.0 stalled there.]",
       "file": "xone-{os}-{arch}",
       "archive": "none",
       "produces": {
@@ -106,7 +106,7 @@
         "darwin-arm64"
       ],
       "sha256": {
-        "linux-amd64": "45cb62ceeb610fa66f755a5db6a3b16eeaebd7c891b01c78ef759a34c55b07ad",
+        "linux-amd64": "b117fbd7add4c847c9b444d797940aa607befb13d747c8f87d67b9de4425e048",
         "darwin-amd64": "776f6a3932d8f965fe07abb6e1b046b2078faffc8bc35d21062ff5a46abf24c5",
         "darwin-arm64": "776f6a3932d8f965fe07abb6e1b046b2078faffc8bc35d21062ff5a46abf24c5"
       }
