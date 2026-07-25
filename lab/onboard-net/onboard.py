@@ -15,11 +15,16 @@ Usage:
   onboard.py receipt <txhash>    # fetch a receipt
   onboard.py iscandidate         # eth_call isCandidate(<CAND>) -> bool
 
-Config via env (all optional except CAND_KEY):
+Owner != candidate: set OWNER_KEY (the signer/payer that becomes the on-chain
+owner) and CAND (the candidate/coinbase address that gets seated + mints). With
+only CAND_KEY, owner==candidate (single-key legacy mode).
+
+Config via env (need OWNER_KEY or CAND_KEY):
   RPC          JSON-RPC endpoint            (default http://127.0.0.1:8545)
   CHAIN_ID     numeric chain id             (default 34093)
-  CAND_KEY     candidate private key (hex, no 0x)   [REQUIRED]
-  CAND         candidate address (checked against CAND_KEY if given)
+  OWNER_KEY    signer/payer private key (hex, no 0x) — on-chain owner
+  CAND_KEY     fallback signer key when OWNER_KEY unset (owner==candidate)
+  CAND         candidate/coinbase address (required when it differs from signer)
   SMC          validator contract           (default 0x...0088)
   DEPOSIT_WEI  propose() stake in wei       (default 10000e18 = 10,000 XDC)
   KYC_HASH     KYC document ref string      (default "kyc://<CAND>")
@@ -32,7 +37,6 @@ from eth_account import Account
 
 RPC        = os.environ.get("RPC", "http://127.0.0.1:8545")
 CHAIN_ID   = int(os.environ.get("CHAIN_ID", "34093"))
-KEY        = os.environ["CAND_KEY"].replace("0x", "")
 SMC        = os.environ.get("SMC", "0x0000000000000000000000000000000000000088")
 DEPOSIT    = int(float(os.environ.get("DEPOSIT_WEI", str(10000 * 10**18))))
 GAS_PRICE  = int(os.environ.get("GAS_PRICE", "250000000"))
@@ -42,9 +46,22 @@ SEL_UPLOAD_KYC  = "f5c95125"   # uploadKYC(string)
 SEL_PROPOSE     = "01267951"   # propose(address)
 SEL_ISCANDIDATE = "d51b9e93"   # isCandidate(address) -> bool
 
-acct = Account.from_key(KEY)
-CAND = os.environ.get("CAND", acct.address).lower()
-assert acct.address.lower() == CAND, f"CAND {CAND} != key address {acct.address}"
+# Signer/payer vs candidate separation.
+#   OWNER_KEY  — key that SIGNS + PAYS (becomes the on-chain owner of the
+#                candidate). If unset, falls back to CAND_KEY (owner==candidate,
+#                the original single-key behaviour).
+#   CAND       — candidate address that gets seated / mints (the coinbase).
+#                Required when OWNER_KEY is set and differs from it; otherwise
+#                defaults to the signing key's own address.
+SIGN_KEY = (os.environ.get("OWNER_KEY") or os.environ.get("CAND_KEY", "")).replace("0x", "")
+if not SIGN_KEY:
+    sys.exit("need OWNER_KEY (signer/payer) or CAND_KEY")
+signer = Account.from_key(SIGN_KEY)
+OWNER  = signer.address.lower()          # from-address for every tx (nonce/pay)
+CAND   = os.environ.get("CAND", OWNER).lower()  # candidate/coinbase address
+if "OWNER_KEY" not in os.environ:
+    # legacy single-key mode: CAND must equal the key address
+    assert OWNER == CAND, f"CAND {CAND} != key address {OWNER}"
 KYC_HASH = os.environ.get("KYC_HASH", f"kyc://{CAND}")
 
 
@@ -70,10 +87,10 @@ def enc_string(s):
 
 
 def send(data_hex, value, gas):
-    nonce = int(rpc("eth_getTransactionCount", [CAND, "pending"]), 16)
+    nonce = int(rpc("eth_getTransactionCount", [OWNER, "pending"]), 16)
     tx = {"nonce": nonce, "to": SMC, "value": value, "gas": gas,
           "gasPrice": GAS_PRICE, "data": "0x" + data_hex, "chainId": CHAIN_ID}
-    signed = Account.sign_transaction(tx, KEY)
+    signed = Account.sign_transaction(tx, SIGN_KEY)
     raw = signed.raw_transaction.hex()
     if not raw.startswith("0x"):
         raw = "0x" + raw
