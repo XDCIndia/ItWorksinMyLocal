@@ -1,0 +1,5 @@
+# Never commit live-net secrets or operator-local key material.
+seat.env
+*.key
+keys.txt
+*keystore*
