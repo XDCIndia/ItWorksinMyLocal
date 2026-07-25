@@ -207,7 +207,11 @@ case "${NETWORK:-}" in
   mainnet|xinfin|xdc)
     [ -z "$GENESIS" ]   && GENESIS="genesis/genesis-mainnet.json"
     [ -z "$NETWORKID" ] && NETWORKID=50
-    NM_CONFIG="${NM_CONFIG/xdc-devnet5151/xdc-mainnet}"
+    # nethermind's dist ships chainspec/config named "xdc" for mainnet (chainId 50)
+    # -- there is NO xdc-mainnet.json, so mapping to xdc-mainnet made
+    # `--client nethermind --network mainnet` abort ("missing chainspec/xdc-mainnet.json")
+    # and crash-loop. Map to the actual bundled name.
+    NM_CONFIG="${NM_CONFIG/xdc-devnet5151/xdc}"
     PUB_BOOTNODES_FILE="bootnodes/mainnet.list" ;;
   testnet|apothem)
     [ -z "$GENESIS" ]   && GENESIS="genesis/genesis-testnet.json"
