@@ -22,18 +22,27 @@ LEGACY=4
 MODERN=geth
 NETWORKID=20250          # distinct from mainnet(50)/net5151(5151) to avoid peer conflicts
 MODERN_MINE=0            # geth mints only if =1; minting forks (its V1 blocks are rejected), following works
-STATS_SECRET="xdc_openscan_stats_2026"
-ETHSTATS_HOST="stats.xdcindia.com:443"
+STATS_SECRET="${STATS_SECRET:-xdc_openscan_stats_2026}"
+ETHSTATS_HOST="${ETHSTATS_HOST:-stats.xdcindia.com:443}"
 USE_STATS=1
+LOCAL_STATS=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --legacy) LEGACY=$2; shift 2;;
     --modern-client) MODERN=$2; shift 2;;
     --no-ethstats) USE_STATS=0; shift;;
+    --localStats) LOCAL_STATS=1; shift;;
     -h|--help) sed -n '2,20p' "$0" | sed 's/^# \{0,1\}//'; exit 0;;
-    *) echo "usage: ./run-mixed.sh [--legacy N] [--modern-client geth|xone|reth|besu|nethermind] [--no-ethstats]" >&2; exit 1;;
+    *) echo "usage: ./run-mixed.sh [--legacy N] [--modern-client geth|xone|reth|besu|nethermind] [--no-ethstats] [--localStats]" >&2; exit 1;;
   esac
 done
+# --localStats: report to a locally hosted SkyNet ethstats ingest (ws, no TLS)
+# instead of the public stats server.
+if [ "$LOCAL_STATS" = 1 ]; then
+  STATS_SECRET="${LOCAL_STATS_SECRET:-local_skynet_stats}"
+  ETHSTATS_HOST="${LOCAL_STATS_HOSTPORT:-localhost:3007}"
+  echo "localStats: reporting to local SkyNet at $ETHSTATS_HOST"
+fi
 
 ensure_bins
 XDC="$XDC_BIN"; BOOTNODE="$BOOTNODE_BIN"

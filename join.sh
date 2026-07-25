@@ -98,6 +98,11 @@
 #                        is SECRET@HOST:PORT (node name prepended) or a full
 #                        NAME:SECRET@HOST:PORT used verbatim.
 #   --no-ethstats        disable ethstats reporting
+#   --localStats         report to a LOCALLY hosted SkyNet ethstats ingest
+#                        instead of the public stats server. Shorthand for
+#                        --ethstats "$LOCAL_STATS_SECRET@$LOCAL_STATS_HOSTPORT"
+#                        (defaults: local_skynet_stats @ localhost:3007, plain
+#                        ws -- no TLS). --ethstats / --no-ethstats override it.
 #
 # This joins as a read/sync node by default (no mining). It does NOT touch your
 # local 4-node network in ./nodes.
@@ -141,6 +146,10 @@ MAXPEERS="${MAXPEERS:-}"; ETHERBASE="${ETHERBASE:-}"
 # ethstats reporting is ON by default (same endpoint as run.sh); --no-ethstats
 # disables it, --ethstats SPEC overrides the target.
 ETHSTATS="xdc_openscan_stats_2026@stats.xdcindia.com:443"
+# --localStats: repoint ethstats at a locally hosted SkyNet ingest (plain ws).
+# ETHSTATS_EXPLICIT tracks an explicit --ethstats so it always wins over
+# --localStats regardless of flag order; --no-ethstats wins too (empties ETHSTATS).
+LOCAL_STATS=0; ETHSTATS_EXPLICIT=0
 # nethermind's chainspec name (NETHERMIND_DIST/chainspec/$NM_CONFIG.json via
 # --config); env-overridable, defaults to devnet 5151. --nm-config wins over both.
 NM_CONFIG="${NM_CONFIG:-xdc-devnet5151}"
@@ -169,12 +178,20 @@ while [ $# -gt 0 ]; do
     --etherbase)   ETHERBASE=$2; shift 2;;
     --mine)        MINEADDR=$2; shift 2;;
     --staticpeers) STATICPEERS=$2; STATICPEERS_EXPLICIT=1; shift 2;;
-    --ethstats)    ETHSTATS=$2; shift 2;;
+    --ethstats)    ETHSTATS=$2; ETHSTATS_EXPLICIT=1; shift 2;;
     --no-ethstats) ETHSTATS=""; shift;;
-    -h|--help)     sed -n '2,96p' "$0" | sed 's/^# \{0,1\}//'; exit 0;;
+    --localStats)  LOCAL_STATS=1; shift;;
+    -h|--help)     sed -n '2,101p' "$0" | sed 's/^# \{0,1\}//'; exit 0;;
     *) echo "unknown flag: $1" >&2; exit 1;;
   esac
 done
+
+# --localStats: point ethstats at the local SkyNet ingest unless --ethstats gave
+# an explicit target or --no-ethstats disabled reporting.
+if [ "$LOCAL_STATS" = 1 ] && [ "$ETHSTATS_EXPLICIT" = 0 ] && [ -n "$ETHSTATS" ]; then
+  ETHSTATS="${LOCAL_STATS_SECRET:-local_skynet_stats}@${LOCAL_STATS_HOSTPORT:-localhost:3007}"
+  echo "localStats: reporting to local SkyNet at ${LOCAL_STATS_HOSTPORT:-localhost:3007}"
+fi
 
 # Sync mode. Default: snap for the PUBLIC networks (mainnet/testnet) so a node
 # bounds its disk to recent state (~10x smaller than full/archive) and syncs in
@@ -302,6 +319,24 @@ if [ -z "$BOOTNODES" ] \
   BOOTNODES="enode://$("$bn" -nodekey ./bootnode.key -writeaddress)@${bhost}:${bport}"
   echo "Using key-based bootnode: $BOOTNODES"
   LOCAL_BOOTNODE=1
+fi
+
+# besu/nethermind/reth are excluded from key-based bootnode derivation above
+# (a discovery-only bootnode is useless to them -- they need real validator
+# enodes). But when they join THIS machine's own local run.sh network (--ip
+# pointing at this host, or defaulting to it) the local-sealer harvest below is
+# exactly what supplies those validator enodes -- so arm LOCAL_BOOTNODE for
+# them here when BOOTNODES is still empty, or they exit with "needs peers".
+if [ "$LOCAL_BOOTNODE" != 1 ] && [ "$STATICPEERS_EXPLICIT" != 1 ] && [ -z "$BOOTNODES" ]; then
+  case "$CLIENT" in
+    besu|nethermind|reth)
+      _this_ip=$(detect_ip)
+      _join_target="${HOST_IP:-$_this_ip}"; _join_target="${_join_target%:*}"
+      case "$_join_target" in
+        "$_this_ip"|127.0.0.1|localhost)
+          LOCAL_BOOTNODE=1; bhost="$_join_target";;
+      esac ;;
+  esac
 fi
 
 # LOCAL_BOOTNODE=1 means we're joining THIS machine's own local run.sh network
@@ -630,7 +665,9 @@ if [ -n "$ETHSTATS" ]; then
   ETHSTATS_ARG="--ethstats $full"
   # Split NAME:SECRET@HOST:PORT into pieces -- reth and nethermind want the parts
   # separately and a wss:// scheme rather than geth's bare NAME:SECRET@host:port.
+  # A local SkyNet ingest (--localStats) is plain ws (no TLS), so scheme downgrades.
   ES_NAME="${full%%:*}"; _es_rest="${full#*:}"; ES_SECRET="${_es_rest%%@*}"; ES_HOSTPORT="${_es_rest#*@}"
+  ES_SCHEME=wss; [ "$LOCAL_STATS" = 1 ] && ES_SCHEME=ws
   echo "  ethstats: $full"
 fi
 
@@ -723,7 +760,7 @@ elif [ "$CLIENT" = reth ]; then
   [ -n "$MINEADDR" ] && echo "note: --mine ignored (reth join is sync-only)" >&2
   [ -n "$BOOTNODES" ] || { echo "reth join needs peers: set DEFAULT_BOOTNODES in network.env or pass --bootnodes" >&2; exit 1; }
   mkdir -p "$DATADIR"
-  RETH_ES=""; [ -n "$full" ] && RETH_ES="--ethstats ${ES_NAME}:${ES_SECRET}@wss://${ES_HOSTPORT}"
+  RETH_ES=""; [ -n "$full" ] && RETH_ES="--ethstats ${ES_NAME}:${ES_SECRET}@${ES_SCHEME}://${ES_HOSTPORT}"
   MP_ARG=""; [ -n "$MAXPEERS" ] && MP_ARG="--max-peers $MAXPEERS"
   # reth now achieves strict net5151 state parity natively: it applies the
   # TIPSigning 0x89 wipe and the net5151 calldata-gas / basefee-floor corrections,
@@ -754,7 +791,7 @@ elif [ "$CLIENT" = nethermind ]; then
   # stale DB there, ignoring the intended (and chainspec-fresh) datadir.
   NM_DATADIR="$(cd "$DATADIR" && pwd)"
   WS_PORT=$((RPCPORT + 1))
-  NM_ES=""; [ -n "$full" ] && NM_ES="--EthStats.Enabled true --EthStats.Name $ES_NAME --EthStats.Secret $ES_SECRET --EthStats.Server wss://${ES_HOSTPORT}/api"
+  NM_ES=""; [ -n "$full" ] && NM_ES="--EthStats.Enabled true --EthStats.Name $ES_NAME --EthStats.Secret $ES_SECRET --EthStats.Server ${ES_SCHEME}://${ES_HOSTPORT}/api"
   MP_ARG=""; [ -n "$MAXPEERS" ] && MP_ARG="--Network.MaxActivePeers $MAXPEERS"
   # nethermind sync mode is config-driven (no --syncmode). Map $SYNCMODE to its
   # Sync.* toggles: snap => SnapSync (+FastSync), fast => FastSync; full => neither

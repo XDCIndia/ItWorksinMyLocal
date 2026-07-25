@@ -7,6 +7,8 @@
 #   ./setup.sh                    # use the keys already in .env
 #   ./setup.sh --new              # generate 4 fresh keys into .env first
 #   ./setup.sh --new 4            # generate N fresh keys into .env first
+#   ./setup.sh --localStats       # report nodes to a locally hosted SkyNet
+#                                 # ethstats ingest (ws://localhost:3007)
 #   ./setup.sh --client geth      # build-only: the modern go-ethereum client
 #
 # Default (no --client, i.e. CLIENT=oldxdc): builds the 4 legacy oldxdc
@@ -23,13 +25,15 @@
 set -e
 cd "$(dirname "$0")"
 
-NEW=0; N=4; CLIENT_EXPLICIT=0
+NEW=0; N=4; CLIENT_EXPLICIT=0; LOCAL_STATS=0; CHAINID=20118
 while [ $# -gt 0 ]; do
   case "$1" in
     --new) NEW=1; shift; case "$1" in [0-9]*) N=$1; shift;; esac;;
     --client) export CLIENT=$2; CLIENT_EXPLICIT=1; shift 2;;
-    -h|--help) sed -n '2,15p' "$0" | sed 's/^# \{0,1\}//'; exit 0;;
-    *) echo "usage: ./setup.sh [--new [N]] [--client oldxdc|geth]" >&2; exit 1;;
+    --localStats) LOCAL_STATS=1; shift;;
+    --chainid) CHAINID=$2; shift 2;;
+    -h|--help) sed -n '2,17p' "$0" | sed 's/^# \{0,1\}//'; exit 0;;
+    *) echo "usage: ./setup.sh [--new [N]] [--client oldxdc|geth] [--localStats] [--chainid N]" >&2; exit 1;;
   esac
 done
 
@@ -75,6 +79,13 @@ echo "Signers from .env: $SIGNERS"
 # genesis (a gas-accounting mismatch between the modern go-ethereum XDC fork
 # and legacy oldxdc on those specific transactions; see gen-genesis.sh's
 # --skip-v1-validation doc). Doesn't affect the genesis hash.
-bash ./gen-genesis.sh --signers "$SIGNERS" --skip-v1-validation true
+bash ./gen-genesis.sh --signers "$SIGNERS" --chainid "$CHAINID" --skip-v1-validation true
 bash ./reset.sh
-bash ./run.sh --mixed
+# --localStats flows through to run.sh, which points every node's --ethstats at
+# the locally hosted SkyNet ingest (ws://localhost:3007) instead of the public
+# stats server. --chainid sets BOTH the genesis chainId and run.sh's networkid
+# (via NETWORKID) so nodes, join.sh clients, and the dashboard's per-network
+# tip/behind all agree on the same id.
+export NETWORKID="$CHAINID"
+RUN_ARGS=(--mixed); [ "$LOCAL_STATS" = 1 ] && RUN_ARGS+=(--localStats)
+bash ./run.sh "${RUN_ARGS[@]}"

@@ -14,15 +14,21 @@ cd "$(dirname "$0")" || exit 1
 # the 4 legacy oldxdc sealers below. Default is unchanged (4 legacy sealers
 # only).
 MIXED="${MIXED:-0}"
+LOCAL_STATS=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --mixed) MIXED=1; shift;;
+    --localStats) LOCAL_STATS=1; shift;;
     -h|--help)
-      echo "usage: ./run.sh [--mixed]"
-      echo "  --mixed   also start node 5: modern geth, sync-only, from genesis"
-      echo "            (same as MIXED=1 ./run.sh)"
+      echo "usage: ./run.sh [--mixed] [--localStats]"
+      echo "  --mixed      also start node 5: modern geth, sync-only, from genesis"
+      echo "               (same as MIXED=1 ./run.sh)"
+      echo "  --localStats report nodes to a locally hosted SkyNet ethstats ingest"
+      echo "               (ws://\${LOCAL_STATS_HOSTPORT:-localhost:3007}, secret"
+      echo "               \${LOCAL_STATS_SECRET:-local_skynet_stats}) instead of the"
+      echo "               public stats server"
       exit 0;;
-    *) echo "usage: ./run.sh [--mixed]" >&2; exit 1;;
+    *) echo "usage: ./run.sh [--mixed] [--localStats]" >&2; exit 1;;
   esac
 done
 
@@ -128,9 +134,17 @@ fi
 
 VERBOSITY=3
 GASPRICE="1"
-STATS_SECRET="xdc_openscan_stats_2026"
+STATS_SECRET="${STATS_SECRET:-xdc_openscan_stats_2026}"
+STATS_HOSTPORT="${STATS_HOSTPORT:-stats.xdcindia.com:443}"
+# --localStats: report to a locally hosted SkyNet ethstats ingest (plain ws,
+# no TLS) instead of the public stats server.
+if [ "$LOCAL_STATS" = 1 ]; then
+  STATS_SECRET="${LOCAL_STATS_SECRET:-local_skynet_stats}"
+  STATS_HOSTPORT="${LOCAL_STATS_HOSTPORT:-localhost:3007}"
+  echo "localStats: reporting to local SkyNet at $STATS_HOSTPORT"
+fi
 VERSION=$("$XDC" version 2>/dev/null | awk '/^Version:/{print $2}')
-networkid=20118
+networkid="${NETWORKID:-20118}"
 
 # Local bootnode enode, built from bootnode.key + this machine's IP so every
 # node connects to a bootnode within the network.
@@ -150,7 +164,7 @@ for i in $(seq 1 $NUM_NODES); do
   RPC_PORT=$((BASE_RPC_PORT + i))   # default 8545..8548
   NODE_NAME="${Bin_NAME}-v${VERSION}-${HOST}-MasterNode-${n}"
   NODE_IDENTITY="${HOST}-MasterNode-${n}"
-  ETHSTATS="${NODE_NAME}:${STATS_SECRET}@stats.xdcindia.com:443"
+  ETHSTATS="${NODE_NAME}:${STATS_SECRET}@${STATS_HOSTPORT}"
   "$XDC" --bootnodes "$BOOTNODE_ENODE" --syncmode "full" --datadir ./nodes/$i \
     --networkid "${networkid}" --port $P2P_PORT --nat "extip:${IP}" --identity "${NODE_IDENTITY}" \
     --rpc --rpccorsdomain "*" --ws --wsaddr="0.0.0.0" --wsorigins "*" --wsport $WS_PORT \
@@ -174,7 +188,7 @@ if [ "$MIXED" = 1 ]; then
   # its own offset, well clear of the BASE+1..BASE+5 range used above.
   AUTHRPC_PORT5=$((BASE_RPC_PORT + 55))
   NODE5_IDENTITY="${HOST}-ModernGeth-05"
-  ETHSTATS5="itlocal-modern-geth-${HOST}-05:${STATS_SECRET}@stats.xdcindia.com:443"
+  ETHSTATS5="itlocal-modern-geth-${HOST}-05:${STATS_SECRET}@${STATS_HOSTPORT}"
   "$MODERN_GETH_BIN" --datadir ./nodes/5 --networkid "${networkid}" --syncmode full \
     --bootnodes "$BOOTNODE_ENODE" --port "$P2P_PORT5" --nat "extip:${IP}" \
     --http --http.addr 0.0.0.0 --http.port "$RPC_PORT5" --http.vhosts "*" --http.corsdomain "*" \

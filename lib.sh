@@ -102,6 +102,10 @@ PUPPETH_BIN="$BIN_DIR/puppeth"       # only exists for the oldxdc client
 
 # Best-effort LAN IP on macOS or Linux (falls back to 127.0.0.1).
 detect_ip() {
+  # Explicit override for single-machine local testnets: advertising 127.0.0.1
+  # keeps peering working across Wi-Fi/hotspot changes (en0 IP churn breaks
+  # every enode/static-peer entry that embedded the old LAN IP).
+  if [ -n "$LOCAL_IP" ]; then echo "$LOCAL_IP"; return; fi
   local ip=""
   if command -v ipconfig >/dev/null 2>&1; then
     ip=$(ipconfig getifaddr en0 2>/dev/null || ipconfig getifaddr en1 2>/dev/null)
@@ -276,8 +280,13 @@ download_bins() {
 
   local distdir="$BIN_DIR/.dist-$CLIENT"
   if [ "$_BJ_ARCHIVE" = tar.gz ]; then
-    rm -rf "$distdir"; mkdir -p "$distdir"
-    tar xzf "$dl" -C "$distdir" || { echo "extract failed: $dl" >&2; return 1; }
+    # Skip re-extraction when the dist dir is already populated: the tarball was
+    # sha256-verified above, and re-extracting every run wipes local patches
+    # applied inside the dist (e.g. replacing a mispackaged bundled JRE).
+    if [ ! -d "$distdir" ] || [ -z "$(ls -A "$distdir" 2>/dev/null)" ]; then
+      rm -rf "$distdir"; mkdir -p "$distdir"
+      tar xzf "$dl" -C "$distdir" || { echo "extract failed: $dl" >&2; return 1; }
+    fi
   fi
 
   local i name relpath src_path dest
