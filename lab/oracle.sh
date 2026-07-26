@@ -151,7 +151,19 @@ if [ -z "$TO" ]; then
   TO=$(lab_block_number "$REF") || { echo "oracle: cannot reach reference $REF" >&2; exit 1; }
 fi
 
-case "$GAS_PLATEAU" in ''|*[!0-9]*) GAS_PLATEAU=0 ;; esac
+# A malformed --gas-plateau (non-numeric, e.g. a hex string like 0x1908B100,
+# or an explicit empty value) used to be silently coerced to 0 here, which
+# is the SAME VALUE as "flag not given" (see GAS_PLATEAU's own default just
+# above) -- so a typo'd/malformed invariant silently disabled the whole
+# gasLimit-plateau check instead of failing loudly: the check would print
+# gas=SKIP and the run would report PARITY OK, a silent pass on a malformed
+# invariant. Hard-error instead; 0 (or simply omitting the flag) remains
+# the explicit, intentional way to disable the check.
+case "$GAS_PLATEAU" in
+  ''|*[!0-9]*)
+    echo "oracle: malformed --gas-plateau '$GAS_PLATEAU' (expected a non-negative integer, e.g. 42000000 -- omit the flag, or pass 0, to disable the gasLimit-plateau check)" >&2
+    exit 1 ;;
+esac
 
 echo "oracle: ref=$REF clients=[$CLIENTS] range=${FROM}..${TO} step=$INTERVAL gas-plateau=${GAS_PLATEAU:-<unset, skipped>}" >&2
 
@@ -175,12 +187,12 @@ declare -A GAS_PREV=() GAS_ATPLATEAU=()
 GAS_CHECK_RESULT=""
 _oracle_check_gas() {
   local name="$1" url="$2" height="$3" gl
-  if ! [ "$GAS_PLATEAU" -gt 0 ] 2>/dev/null; then GAS_CHECK_RESULT="SKIP"; return 0; fi
+  if ! [ "$GAS_PLATEAU" -gt 0 ]; then GAS_CHECK_RESULT="SKIP"; return 0; fi
   gl=$(lab_block_gas_limit "$url" "$height" 2>/dev/null) || { GAS_CHECK_RESULT="MISS"; return 0; }
   if [ -n "${GAS_PREV[$name]:-}" ] && [ "$gl" -lt "${GAS_PREV[$name]}" ] 2>/dev/null; then
     GAS_CHECK_RESULT="DOWN|${GAS_PREV[$name]}|$gl"; return 0
   fi
-  if [ "$gl" -gt "$GAS_PLATEAU" ] 2>/dev/null; then
+  if [ "$gl" -gt "$GAS_PLATEAU" ]; then
     GAS_CHECK_RESULT="OVER|$GAS_PLATEAU|$gl"; return 0
   fi
   if [ "${GAS_ATPLATEAU[$name]:-0}" = 1 ] && [ "$gl" != "$GAS_PLATEAU" ]; then
