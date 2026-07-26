@@ -13,11 +13,26 @@
 # nodes/<topoName>/<nodeId>/ datadir (never touches ./nodes/1..4 or
 # ./nodes/<client>-<type> -- see netlab/TOPOLOGY.md "Run-state layout").
 #
-# Graceful-only teardown (D3): `stop` SIGTERMs the tracked pid, polls up to
-# 45s, then (still alive) SIGTERMs any child process directly as one more
-# nudge and polls a further 5s. SIGKILL happens ONLY behind --force, with an
-# explicit corruption warning -- matches the project-wide rule to never
-# kill -9 a live XDPoS/reth/nethermind node.
+# Graceful-only teardown (D3, hardened per ItWorksinMyLocal#97): `stop`
+# resolves every live pid for this node (pidfile, primary -- see
+# _node_target_pids below for why that alone isn't enough with this repo's
+# join.sh wrapper -- unioned with a /proc/*/cmdline+exe fallback scan, see
+# lib.sh's proc_pids_for_datadir), then sends REPEATED SIGTERM, polling
+# between rounds, up to 10 rounds -- ported from the proven
+# /data/mint-r3/netv12/stop.sh: XDPoSChain's shutdown can hang indefinitely
+# (observed live: 40+ minutes stuck after "Got interrupt, shutting down..."
+# while the V2 consensus loop kept spinning "[sendTimeout] Timeout message
+# generated" every 10s, with SIGTERM confirmed caught via
+# /proc/<pid>/status, not blocked/ignored), and the client itself counts
+# repeated interrupts and force-exits via its OWN panic path at 10
+# ("Already shutting down, interrupt more to panic. times=N" counting
+# down). SIGKILL is NEVER sent here -- not even behind --force -- because
+# SIGKILL on a live XDPoS validator corrupts its state DB and deadlocks the
+# node on restart (the whole class of incident the 5551 recovery playbook
+# exists for). If 10 SIGTERMs don't clear it, `stop` reports failure and
+# tells the operator to investigate by hand; --force no longer changes
+# that (kept as an accepted, now-inert flag so existing callers don't
+# break).
 #
 # --bootnodes: a `sealer` node derives its own bootnode enode from the
 # shared ./bootnode.key (same derivation run.sh uses) unless --bootnodes
@@ -139,6 +154,47 @@ _node_resolve || exit 1
 _pid_alive() { [ -n "${1:-}" ] && kill -0 "$1" 2>/dev/null; }
 
 _read_pid() { [ -f "$NODE_PIDFILE" ] && cat "$NODE_PIDFILE" 2>/dev/null; }
+
+# ---------------------------------------------------------------------------
+# _node_target_pids: prints every LIVE pid that is actually this node's
+# client process right now, one per line, deduplicated (ItWorksinMyLocal#97).
+#
+# cmd_start backgrounds join.sh (NOT the client binary directly), so the
+# pidfile holds join.sh's own pid. join.sh traps INT/TERM with
+# `kill -TERM $child_proc; exit` -- it forwards the signal to the real
+# client exactly ONCE and exits ITSELF immediately, without waiting for the
+# child. That means the pidfile pid can vanish within about a second of a
+# SIGTERM while the real client -- which is what can hang for 40+ minutes
+# per #97's defect B -- is still running, now reparented to init and
+# invisible to a naive `pgrep -P <pidfile pid>` (its parent is already
+# gone). Trusting the pidfile pid alone would make `stop` declare victory
+# the instant join.sh exits, while an actually-wedged validator keeps
+# holding its datadir's LOCK files open -- defect A's failure mode, reached
+# by a different route.
+#
+# So resolution is: pidfile (primary) -> its still-live child, found via
+# `pgrep -P` WHILE join.sh is still around -- UNIONED WITH a
+# /proc/*/cmdline+exe scan for this node's own datadir (lib.sh's
+# proc_pids_for_datadir), which independently rediscovers that same child
+# whether join.sh has already exited (orphaned) or the pidfile is missing
+# or stale entirely. NEVER `pgrep -f <datadir path>` -- see
+# proc_pids_for_datadir's own header in lib.sh for why (it kills its own
+# caller).
+# ---------------------------------------------------------------------------
+_node_target_pids() {
+  local pid; pid="$(_read_pid)"
+  local -a out=()
+  if _pid_alive "$pid"; then
+    out+=("$pid")
+    local c
+    for c in $(pgrep -P "$pid" 2>/dev/null); do out+=("$c"); done
+  fi
+  local scanned s
+  scanned=$(proc_pids_for_datadir "$NODE_DIR" $(client_exe_names "$NODE_CLIENT"))
+  for s in $scanned; do out+=("$s"); done
+  [ "${#out[@]}" -eq 0 ] && return 0
+  printf '%s\n' "${out[@]}" | sort -un
+}
 
 # ---------------------------------------------------------------------------
 # _ensure_sealer_account: idempotent. Imports NODE_KEYREF's env value into
@@ -274,46 +330,61 @@ cmd_start() {
 }
 
 # ---------------------------------------------------------------------------
-# cmd_stop: SIGTERM -> poll 45s -> SIGTERM any child -> poll 5s -> (--force
-# only) SIGKILL with a corruption warning. Never escalates to SIGKILL
-# without --force.
+# cmd_stop: resolve every live pid for this node (_node_target_pids above),
+# then repeated SIGTERM -- poll up to 10s -- repeat, up to 10 rounds (the
+# client's own documented forced-exit threshold; see the header comment).
+# SIGKILL is NEVER sent here, not even behind --force (see header).
 # ---------------------------------------------------------------------------
 cmd_stop() {
-  local pid; pid="$(_read_pid)"
-  if ! _pid_alive "$pid"; then
+  local -a targets=()
+  local t; while IFS= read -r t; do [ -n "$t" ] && targets+=("$t"); done < <(_node_target_pids)
+
+  if [ "${#targets[@]}" -eq 0 ]; then
     echo "node.sh: ${NODE_ID}: not running" >&2
     rm -f "$NODE_PIDFILE"
     return 0
   fi
 
-  echo "node.sh: stopping ${NODE_ID} (pid $pid, SIGTERM)..." >&2
-  kill -TERM "$pid" 2>/dev/null
-  local waited=0
-  while _pid_alive "$pid" && [ "$waited" -lt 45 ]; do sleep 1; waited=$((waited + 1)); done
-
-  if _pid_alive "$pid"; then
-    echo "node.sh: ${NODE_ID}: still alive after 45s; nudging any child process..." >&2
-    local child
-    for child in $(pgrep -P "$pid" 2>/dev/null); do kill -TERM "$child" 2>/dev/null; done
-    waited=0
-    while _pid_alive "$pid" && [ "$waited" -lt 5 ]; do sleep 1; waited=$((waited + 1)); done
+  if [ "$OPT_FORCE" = 1 ]; then
+    echo "node.sh: note: --force no longer escalates to SIGKILL (ItWorksinMyLocal#97) -- 'stop' only ever sends repeated SIGTERM" >&2
   fi
+  echo "node.sh: stopping ${NODE_ID} (pid(s): ${targets[*]})" >&2
 
-  if _pid_alive "$pid"; then
-    if [ "$OPT_FORCE" = 1 ]; then
-      echo "node.sh: WARNING: ${NODE_ID} (pid $pid) did not stop gracefully -- SIGKILL per --force (state DB corruption risk)" >&2
-      kill -KILL "$pid" 2>/dev/null
-      for child in $(pgrep -P "$pid" 2>/dev/null); do kill -KILL "$child" 2>/dev/null; done
-      sleep 1
-    else
-      echo "node.sh: ${NODE_ID} (pid $pid) did not stop within 45s; refusing to SIGKILL (state corruption risk)." >&2
-      echo "  rerun with --force to SIGKILL anyway." >&2
-      return 1
+  local round
+  for round in $(seq 1 10); do
+    local -a alive=()
+    for t in "${targets[@]}"; do _pid_alive "$t" && alive+=("$t"); done
+    if [ "${#alive[@]}" -eq 0 ]; then
+      rm -f "$NODE_PIDFILE"
+      echo "node.sh: ${NODE_ID}: stopped cleanly (round $round)" >&2
+      return 0
     fi
+    for t in "${alive[@]}"; do kill -TERM "$t" 2>/dev/null; done
+    [ "$round" -gt 1 ] && echo "node.sh: ${NODE_ID}: round $round: still up: ${alive[*]}" >&2
+    local waited=0
+    while [ "$waited" -lt 10 ]; do
+      sleep 1
+      local -a still=()
+      for t in "${alive[@]}"; do _pid_alive "$t" && still+=("$t"); done
+      alive=("${still[@]}")
+      [ "${#alive[@]}" -eq 0 ] && break
+      waited=$((waited + 1))
+    done
+    targets=("${alive[@]}")
+  done
+
+  if [ "${#targets[@]}" -eq 0 ]; then
+    rm -f "$NODE_PIDFILE"
+    echo "node.sh: ${NODE_ID}: stopped" >&2
+    return 0
   fi
 
-  rm -f "$NODE_PIDFILE"
-  echo "node.sh: ${NODE_ID}: stopped" >&2
+  echo "node.sh: WARNING: ${NODE_ID} still running after 10 SIGTERMs: ${targets[*]}" >&2
+  echo "  do NOT SIGKILL -- that corrupts the XDPoS state DB and deadlocks the node on" >&2
+  echo "  restart (ItWorksinMyLocal#97). Inspect the logs for a hung shutdown (repeated" >&2
+  echo "  '[sendTimeout] Timeout message generated' is the known symptom) before doing" >&2
+  echo "  anything else -- this script never sends SIGKILL itself, --force or not." >&2
+  return 1
 }
 
 # ---------------------------------------------------------------------------
@@ -321,22 +392,30 @@ cmd_stop() {
 # ---------------------------------------------------------------------------
 cmd_status() {
   local pid; pid="$(_read_pid)"
-  if [ -z "$pid" ]; then
-    echo "STOPPED  ${NODE_ID}  (${NODE_CLIENT}/${NODE_ROLE})"
-    return 1
+  if [ -n "$pid" ] && _pid_alive "$pid"; then
+    local url="http://127.0.0.1:${NODE_RPC}" block
+    if block=$(LAB_RPC_TIMEOUT=2 lab_block_number "$url" 2>/dev/null); then
+      echo "RUNNING  ${NODE_ID}  (${NODE_CLIENT}/${NODE_ROLE})  pid=$pid  rpc=$url  block=$block"
+    else
+      echo "RUNNING  ${NODE_ID}  (${NODE_CLIENT}/${NODE_ROLE})  pid=$pid  rpc=$url  block=<not up yet>"
+    fi
+    return 0
   fi
-  if ! _pid_alive "$pid"; then
-    echo "DEAD     ${NODE_ID}  (${NODE_CLIENT}/${NODE_ROLE})  stale pid=$pid"
-    rm -f "$NODE_PIDFILE"
-    return 1
+  [ -n "$pid" ] && rm -f "$NODE_PIDFILE"   # stale pidfile -- clean it up
+
+  # ItWorksinMyLocal#97: a missing/stale pidfile does NOT mean the node is
+  # actually stopped -- fall back to the same /proc scan `stop`/`wipe` use
+  # (_node_target_pids), so an orphaned or wedged process (mid-shutdown, RPC
+  # never bound, whatever) is reported RUNNING instead of silently looking
+  # STOPPED to an operator deciding whether it's safe to wipe or restart.
+  local orphan; orphan="$(_node_target_pids | head -1)"
+  if [ -n "$orphan" ]; then
+    echo "RUNNING  ${NODE_ID}  (${NODE_CLIENT}/${NODE_ROLE})  pid=$orphan  (orphaned -- no valid pidfile, found via /proc scan)"
+    return 0
   fi
-  local url="http://127.0.0.1:${NODE_RPC}" block
-  if block=$(LAB_RPC_TIMEOUT=2 lab_block_number "$url" 2>/dev/null); then
-    echo "RUNNING  ${NODE_ID}  (${NODE_CLIENT}/${NODE_ROLE})  pid=$pid  rpc=$url  block=$block"
-  else
-    echo "RUNNING  ${NODE_ID}  (${NODE_CLIENT}/${NODE_ROLE})  pid=$pid  rpc=$url  block=<not up yet>"
-  fi
-  return 0
+
+  echo "STOPPED  ${NODE_ID}  (${NODE_CLIENT}/${NODE_ROLE})"
+  return 1
 }
 
 # ---------------------------------------------------------------------------
@@ -353,14 +432,19 @@ cmd_logs() {
 
 # ---------------------------------------------------------------------------
 # cmd_wipe: refuses on a running node unless --force (which stops it first,
-# via the same graceful cmd_stop path -- --force there still only SIGKILLs
-# if its own 45s+5s grace fails).
+# via the same graceful cmd_stop path -- which never SIGKILLs, --force or
+# not; see cmd_stop's header). Uses _node_target_pids (not just the
+# pidfile) for the running-check itself (ItWorksinMyLocal#97): a stale or
+# missing pidfile must NOT let `wipe` sail past this guard and rm -rf a
+# datadir a live/orphaned process still has open.
 # ---------------------------------------------------------------------------
 cmd_wipe() {
-  local pid; pid="$(_read_pid)"
-  if _pid_alive "$pid"; then
+  local -a targets=()
+  local t; while IFS= read -r t; do [ -n "$t" ] && targets+=("$t"); done < <(_node_target_pids)
+
+  if [ "${#targets[@]}" -gt 0 ]; then
     if [ "$OPT_FORCE" != 1 ]; then
-      echo "node.sh: ${NODE_ID}: refusing to wipe a running node (pid $pid); stop it first or pass --force" >&2
+      echo "node.sh: ${NODE_ID}: refusing to wipe a running node (pid(s): ${targets[*]}); stop it first or pass --force" >&2
       return 1
     fi
     cmd_stop || return 1

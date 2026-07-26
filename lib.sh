@@ -461,3 +461,162 @@ require_oldxdc() {
   echo "Use the default (oldxdc) to run a network: unset CLIENT" >&2
   exit 1
 }
+
+# ---------------------------------------------------------------------------
+# Safe process discovery for teardown (ItWorksinMyLocal#97).
+#
+# Shared by netlab/node.sh (`stop`/`wipe`/`status`) and netlab/fleet.sh
+# (`down`/`wipe`'s post-teardown assertion). Both need the SAME answer to
+# "is a real client process still holding this datadir, right now, no
+# matter what a pidfile or a listening-port check believes?" -- so it lives
+# here once rather than being reimplemented per caller.
+#
+# Two live incidents drove this:
+#   - A node whose RPC never bound (mid-shutdown, wedged, or a bind
+#     failure) is INVISIBLE to any resolution that only checks a listening
+#     RPC port. On netv12, exactly this let a stale node3 survive a full
+#     net wipe for ~40 minutes, still holding its XDCx LOCK -- so the real
+#     node3's restart failed outright ("Can't create new DB error=...
+#     resource temporarily unavailable"), and the net silently ran on 4 of
+#     5 seated validators. Every fair-share number measured in that window
+#     was meaningless.
+#   - The obvious "just pgrep for the datadir path" fix is worse:
+#     `pgrep -f <datadir path>` matches ANY process whose command line
+#     contains that path as a plain string -- including the shell running
+#     the teardown script itself, and any agent/tool/tmux shell whose own
+#     command line happens to mention the same path. That footgun killed a
+#     live session (exit 144) during this investigation. NEVER use it.
+#
+# The safe replacement requires BOTH a cmdline match AND that
+# /proc/<pid>/exe actually resolves to a known client binary -- and always
+# excludes our own pid and every ancestor pid (the calling shell, its
+# parent script, an agent shell, tmux/ssh, ...), so it can never signal or
+# report its own caller.
+# ---------------------------------------------------------------------------
+
+# client_exe_names <client>: prints (space-separated, possibly more than
+# one) the realistic /proc/<pid>/exe basename(s) for a running instance of
+# <client> -- what proc_pids_for_datadir below must match against. Most
+# clients are one self-contained binary (exe basename == the client name);
+# besu and nethermind are launched by their own JVM/.NET runtime, so the
+# OS-level exe is actually java/dotnet, not "besu"/"nethermind" -- for
+# those two, the cmdline-contains-this-datadir check (always a highly
+# specific, per-node absolute path) is what actually disambiguates; the exe
+# check there only rules out "some unrelated process whose args happen to
+# mention the same path", which is already the point of requiring it.
+client_exe_names() {
+  case "$1" in
+    oldxdc|xdc|XDC) echo "XDC" ;;
+    geth)           echo "geth" ;;
+    erigon)         echo "erigon" ;;
+    besu)           echo "besu java" ;;
+    nethermind)     echo "nethermind dotnet" ;;
+    reth)           echo "xdc-reth" ;;
+    xone)           echo "xone" ;;
+    bootnode)       echo "bootnode" ;;
+    *)              echo "" ;;
+  esac
+}
+
+# proc_pids_for_datadir <datadir_abspath> [exe_basename ...]: one live pid
+# per line -- any process whose /proc/<pid>/cmdline contains
+# datadir_abspath as a plain substring AND whose /proc/<pid>/exe resolves
+# to one of the given exe basenames (if none given, the exe check is
+# skipped -- not used by any caller today, kept only because it's the
+# natural degenerate case). Always excludes our own pid and every ancestor
+# pid, computed by walking /proc/<pid>/stat's ppid field up to 16 hops
+# (far deeper than any realistic shell/script/agent nesting).
+proc_pids_for_datadir() {
+  local datadir="$1"; shift
+  python3 - "$datadir" "$@" <<'PY'
+import os
+import sys
+
+datadir = sys.argv[1]
+exe_names = set(sys.argv[2:])
+
+anc, p = set(), os.getpid()
+for _ in range(16):
+    anc.add(p)
+    try:
+        p = int(open('/proc/%d/stat' % p).read().rsplit(')', 1)[1].split()[1])
+    except Exception:
+        break
+    if p <= 1:
+        anc.add(p)
+        break
+
+for d in os.listdir('/proc'):
+    if not d.isdigit() or int(d) in anc:
+        continue
+    try:
+        cmd = open('/proc/%s/cmdline' % d, 'rb').read().replace(b'\0', b' ').decode(errors='replace')
+        exe = os.path.realpath('/proc/%s/exe' % d)
+    except Exception:
+        continue
+    if datadir in cmd and (not exe_names or os.path.basename(exe) in exe_names):
+        print(d)
+PY
+}
+
+# proc_pids_holding_lockfiles <datadir_abspath>: one "<pid> <lockfile>"
+# pair per line -- a live process that currently has an open file
+# descriptor on one of this datadir's embedded-DB LOCK files (found by
+# walking the datadir, up to 4 levels deep, for files literally named
+# `LOCK` -- covers XDCx/LOCK, chaindata/LOCK, geth/chaindata/LOCK,
+# erigon/LOCK, rocksdb/LOCK, besu's database/LOCK, ...). This is the
+# PROXIMATE cause of ItWorksinMyLocal#97's "Can't create new DB ...
+# resource temporarily unavailable": a stale holder's flock on this exact
+# file is what blocks a fresh node from starting, even if that holder's
+# own /proc/<pid>/exe didn't happen to match a name proc_pids_for_datadir
+# knows about (a renamed/newer client binary, say). Always excludes our
+# own pid and every ancestor pid, same rule as proc_pids_for_datadir.
+proc_pids_holding_lockfiles() {
+  local datadir="$1"
+  [ -d "$datadir" ] || return 0
+  python3 - "$datadir" <<'PY'
+import os
+import sys
+
+datadir = os.path.realpath(sys.argv[1])
+
+locks = []
+for root, dirs, files in os.walk(datadir):
+    depth = root[len(datadir):].count(os.sep)
+    if depth >= 4:
+        dirs[:] = []
+    if 'LOCK' in files:
+        locks.append(os.path.join(root, 'LOCK'))
+if not locks:
+    sys.exit(0)
+locks = set(os.path.realpath(p) for p in locks)
+
+anc, p = set(), os.getpid()
+for _ in range(16):
+    anc.add(p)
+    try:
+        p = int(open('/proc/%d/stat' % p).read().rsplit(')', 1)[1].split()[1])
+    except Exception:
+        break
+    if p <= 1:
+        anc.add(p)
+        break
+
+for d in os.listdir('/proc'):
+    if not d.isdigit() or int(d) in anc:
+        continue
+    fddir = '/proc/%s/fd' % d
+    try:
+        fds = os.listdir(fddir)
+    except Exception:
+        continue
+    for fd in fds:
+        try:
+            target = os.path.realpath(os.path.join(fddir, fd))
+        except Exception:
+            continue
+        if target in locks:
+            print('%s %s' % (d, target))
+            break
+PY
+}

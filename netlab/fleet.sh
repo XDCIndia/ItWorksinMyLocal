@@ -38,9 +38,19 @@
 #
 # `down` stops in REVERSE declaration order (so followers stop before the
 # sealers they depend on), then the bootnode -- all via node.sh's graceful
-# stop (SIGTERM -> poll 45s -> SIGKILL only behind --force). `wipe` runs
-# `down` first (refusing on a still-running node unless --force, exactly
-# like node.sh wipe) then removes nodes/<name>/ entirely.
+# stop (repeated SIGTERM; see node.sh's own header -- SIGKILL is never
+# automatic there, --force or not). `wipe` runs `down` first (refusing on
+# a still-running node unless --force, exactly like node.sh wipe) then
+# removes nodes/<name>/ entirely.
+#
+# Both `down` and `wipe` finish with `_fleet_assert_torn_down`
+# (ItWorksinMyLocal#97): a fresh /proc scan of EVERY node's own datadir,
+# regardless of what each node.sh stop believed happened, plus a check for
+# any process still holding one of its embedded-DB LOCK files open. Either
+# hit is a hard FAIL -- `wipe` refuses to rm -rf, `down` refuses to report
+# success, and `up --wipe` refuses to restart on top of it. This is exactly
+# the check that would have caught netv12's stale node3 before it wasted a
+# whole net run (see node.sh's own header for the incident).
 #
 # Concurrency: up/down/wipe for the SAME topology take an exclusive
 # per-topology flock (nodes/.fleet-locks/<name>.lock) held for the whole
@@ -110,12 +120,12 @@ done
 # constraints; topo.sh already did both.
 # ---------------------------------------------------------------------------
 declare -a NODE_IDS
-declare -A ROLE_OF RPC_OF
+declare -A ROLE_OF RPC_OF CLIENT_OF DATADIR_OF
 
 _fleet_resolve() {
   local out
   out="$("$TOPO_SH" print "$TOPO_FILE")" || return 1
-  NODE_IDS=(); ROLE_OF=(); RPC_OF=()
+  NODE_IDS=(); ROLE_OF=(); RPC_OF=(); CLIENT_OF=(); DATADIR_OF=()
 
   local assigns
   assigns="$(printf '%s\n' "$out" | python3 -c "
@@ -145,6 +155,8 @@ print('NODE_IDS=(%s)' % ' '.join(shq(r['id']) for r in rows))
 for r in rows:
     print('ROLE_OF[%s]=%s' % (shq(r['id']), shq(r['role'])))
     print('RPC_OF[%s]=%s' % (shq(r['id']), shq(r['rpc'])))
+    print('CLIENT_OF[%s]=%s' % (shq(r['id']), shq(r['client'])))
+    print('DATADIR_OF[%s]=%s' % (shq(r['id']), shq(r['datadir'])))
 ")" || return 1
   eval "$assigns"
 
@@ -195,6 +207,55 @@ _fleet_up_abort() {
 }
 
 # ---------------------------------------------------------------------------
+# _fleet_assert_torn_down: the hard gate ItWorksinMyLocal#97 asked for.
+# node.sh's own stop/wipe are now robust per-node (see node.sh's
+# _node_target_pids), but the ORIGINAL live incident was at the fleet
+# level: `up --wipe` tore down by (then-pidfile-only) belief, then
+# unconditionally rm -rf'd the run dir and started fresh nodes on top of a
+# stale node3 that was still very much alive -- surviving a full wipe for
+# ~40 minutes, holding its XDCx LOCK, so the "fresh" node3 never actually
+# started and the net silently ran on 4 of 5 seated validators.
+#
+# So after any teardown, before anything destructive or a restart, re-scan
+# EVERY node's own datadir -- regardless of what node.sh's own stop
+# believed -- for (a) a live process whose cmdline names that datadir and
+# whose exe is that node's client binary (lib.sh's proc_pids_for_datadir),
+# and (b) any process still holding one of its LOCK files open (lib.sh's
+# proc_pids_holding_lockfiles -- the literal proximate cause of the "Can't
+# create new DB ... resource temporarily unavailable" that kept the real
+# node3 from starting). Either hit is a hard FAIL: callers must NOT proceed
+# to wipe or restart, they must surface this to the operator instead.
+# ---------------------------------------------------------------------------
+_fleet_assert_torn_down() {
+  local id fail=0
+  for id in "${NODE_IDS[@]}"; do
+    local node_dir="$REPO_ROOT/${DATADIR_OF[$id]}"
+    [ -d "$node_dir" ] || continue
+
+    local hits; hits=$(proc_pids_for_datadir "$node_dir" $(client_exe_names "${CLIENT_OF[$id]}"))
+    if [ -n "$hits" ]; then
+      echo "fleet.sh: FAIL: ${id}: still-live process(es) holding $node_dir: $(echo "$hits" | tr '\n' ' ')" >&2
+      fail=1
+    fi
+
+    local locks; locks=$(proc_pids_holding_lockfiles "$node_dir")
+    if [ -n "$locks" ]; then
+      echo "fleet.sh: FAIL: ${id}: LOCK file(s) still held open: $(echo "$locks" | tr '\n' '; ')" >&2
+      fail=1
+    fi
+  done
+
+  if [ "$fail" -eq 0 ]; then
+    echo "fleet.sh: teardown assertion OK -- no process anywhere still holds a node's datadir" >&2
+    return 0
+  fi
+  echo "fleet.sh: refusing to proceed -- a stale process is still holding a node's datadir" >&2
+  echo "  (see FAIL lines above). Do NOT wipe or restart over this: inspect and stop it by" >&2
+  echo "  hand ('node.sh status'/'stop' can help) before trying again (ItWorksinMyLocal#97)." >&2
+  return 1
+}
+
+# ---------------------------------------------------------------------------
 # cmd_up
 # ---------------------------------------------------------------------------
 cmd_up() {
@@ -202,6 +263,13 @@ cmd_up() {
     echo "fleet.sh: --wipe: tearing down and clearing any existing state first..." >&2
     cmd_down --best-effort
     _fleet_resolve || return 1
+    # ItWorksinMyLocal#97: this is the EXACT incident path -- best-effort
+    # teardown, then an unconditional rm -rf and a restart on top. Hard-gate
+    # it: refuse to wipe/restart if anything still holds a node's datadir.
+    _fleet_assert_torn_down || {
+      echo "fleet.sh: refusing --wipe for '$TOPO_NAME' -- see FAIL lines above (ItWorksinMyLocal#97)" >&2
+      return 1
+    }
     rm -rf "$RUN_DIR"
   fi
 
@@ -404,6 +472,14 @@ cmd_down() {
     rm -f "$BOOTNODE_PIDFILE"
   fi
 
+  # ItWorksinMyLocal#97: always run the assertion (even --best-effort, so
+  # its FAIL lines are visible either way) but only let it fail a
+  # non-best-effort `down` -- best-effort's own contract (never returns
+  # nonzero; used by _fleet_up_abort and cmd_up's --wipe teardown step,
+  # which re-asserts explicitly itself right before its rm -rf) is
+  # unchanged by this.
+  _fleet_assert_torn_down || { [ "$best_effort" = 1 ] || fail=1; }
+
   [ "$best_effort" = 1 ] && return 0
   return $fail
 }
@@ -443,6 +519,16 @@ cmd_wipe() {
   else
     cmd_down || return 1
   fi
+  # Independently re-assert right before the destructive rm -rf
+  # (ItWorksinMyLocal#97): the non-force branch above only checked node.sh's
+  # own belief of "running" via `status`, which is itself pidfile-based --
+  # re-running the full /proc+LOCK assertion here, unconditionally, closes
+  # that gap: a node can look STOPPED to node.sh's status while still very
+  # much alive and holding its LOCK files, and wiping over that is exactly
+  # how a "fresh" restart silently loses a seat. (The --force branch above
+  # already ran this same check inside cmd_down; redoing it here is cheap
+  # and read-only, and keeps this guard unconditional either way.)
+  _fleet_assert_torn_down || return 1
   rm -rf "$RUN_DIR"
   echo "fleet.sh: wiped $RUN_DIR" >&2
 }
