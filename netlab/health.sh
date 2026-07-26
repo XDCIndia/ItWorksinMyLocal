@@ -4,6 +4,7 @@
 #   health.sh wait-rpc    <url> [timeout_s=60]
 #   health.sh wait-peers  <url> <minPeers> [timeout_s=60]
 #   health.sh wait-block  <url> <N> [timeout_s=120]
+#   health.sh seated      <url> <expectedCount> [lookbackBlocks=50]
 #   health.sh preflight   <topology.json> [--min-disk-gb N] [--min-ram-gb N]
 #                                          [--min-cores N] [--force]
 #
@@ -12,6 +13,28 @@
 # before starting the next one" (D5's staggered bring-up), etc. Each prints
 # a one-line OK/TIMEOUT verdict and exits 0/1 accordingly -- safe to use
 # directly in a shell `if` without capturing output.
+#
+# seated (ItWorksinMyLocal#97 item 4): reports a seated-but-absent
+# masternode as a first-class FAILURE, not a quiet gap. The concrete
+# incident: netv12 ran on 4 of 5 seated validators for ~40 minutes (a stale
+# node3 the old teardown couldn't see -- see node.sh/fleet.sh's own #97
+# comments) with every OTHER health signal green (peers up, blocks
+# advancing) -- and every fair-share number measured in that window was
+# meaningless, because a dead seat changes the denominator. `seated` scans
+# the last `lookbackBlocks` blocks' `miner` field for distinct producers
+# and compares the count against `expectedCount` (the caller's own
+# masternode-set size, e.g. fleet.sh's TOPO_SEALER_COUNT):
+#   OK      producing count >= expectedCount
+#   FAIL    producing count <  expectedCount -- exit 1, loud
+#   UNKNOWN every block in the window had a zero `miner` (exit 2) -- this
+#           build's V1 header format doesn't populate `miner` as the actual
+#           signer (only V2/BFT blocks reliably do; verified live against
+#           netv12: block 10 and block 100, pre-V2, both read
+#           0x000...000, while a recent V2 block read a real address).
+#           Per-signer attribution for V1 needs a seal ecrecover this
+#           script does NOT implement -- reporting a fabricated 0/N would
+#           be worse than refusing to guess, so this returns a visibly
+#           distinct UNKNOWN instead of a false OK or a false FAIL.
 #
 # preflight resolves the topology (via topo.sh print) and hard-checks, all
 # BEFORE any process starts:
@@ -72,6 +95,7 @@ usage() {
 usage: $(basename "$0") wait-rpc    <url> [timeout_s=60]
        $(basename "$0") wait-peers  <url> <minPeers> [timeout_s=60]
        $(basename "$0") wait-block  <url> <N> [timeout_s=120]
+       $(basename "$0") seated      <url> <expectedCount> [lookbackBlocks=50]
        $(basename "$0") preflight   <topology.json> [--min-disk-gb N] [--min-ram-gb N]
 EOF
   exit 1
@@ -133,6 +157,73 @@ cmd_wait_block() {
     echo "TIMEOUT: $url did not reach block >= $target after ${timeout}s (at $(lab_block_number "$url" 2>/dev/null || echo '?'))" >&2
     return 1
   fi
+}
+
+# ---------------------------------------------------------------------------
+# seated -- see the file header for the full rationale (ItWorksinMyLocal#97
+# item 4). Scans the last <lookbackBlocks> blocks' `miner` field for
+# distinct nonzero producers and compares against <expectedCount>.
+# ---------------------------------------------------------------------------
+cmd_seated() {
+  [ $# -ge 2 ] || usage
+  local url="$1" expected="$2" lookback="${3:-50}"
+  [ "$expected" -gt 0 ] 2>/dev/null || { echo "health.sh seated: expectedCount must be a positive integer" >&2; return 1; }
+
+  local head
+  head=$(lab_block_number "$url" 2>/dev/null) || { echo "FAIL: seated: could not read block number at $url" >&2; return 1; }
+
+  local start=$((head - lookback + 1))
+  [ "$start" -lt 0 ] && start=0
+
+  local -A seen=()
+  local sawnonzero=0 n hexn blk miner
+  for ((n = start; n <= head; n++)); do
+    hexn=$(printf '0x%x' "$n")
+    blk=$(lab_rpc_call "$url" eth_getBlockByNumber "[\"${hexn}\",false]" 2>/dev/null) || continue
+    # int(miner,16)==0 (not a string-literal compare): this repo has seen
+    # the 0x-prefixed hex render with an odd digit count on some builds, so
+    # comparing the numeric value is the robust "is this the zero address"
+    # check rather than matching one specific zero-padding width.
+    miner=$(printf '%s' "$blk" | python3 -c "
+import json
+import sys
+
+try:
+    b = json.load(sys.stdin) or {}
+except Exception:
+    b = {}
+m = (b.get('miner') or '').lower()
+try:
+    zero = int(m, 16) == 0
+except Exception:
+    zero = True
+print('' if zero else m)
+" 2>/dev/null)
+    [ -n "$miner" ] || continue
+    sawnonzero=1
+    seen["$miner"]=1
+  done
+
+  local producing=${#seen[@]}
+  local window=$((head - start + 1))
+
+  if [ "$sawnonzero" -eq 0 ]; then
+    echo "UNKNOWN: seated: every block's miner/coinbase in the last $window blocks (#$start..#$head) at $url was the zero address" >&2
+    echo "  -- this build's V1 header format doesn't populate miner as the actual signer" >&2
+    echo "  (only V2/BFT blocks reliably do); per-signer attribution for V1 needs a seal" >&2
+    echo "  ecrecover this script does not implement. Treat this as UNKNOWN, not 0/$expected" >&2
+    echo "  -- that would be a fabricated number, not a measurement (ItWorksinMyLocal#97)." >&2
+    return 2
+  fi
+
+  if [ "$producing" -lt "$expected" ]; then
+    echo "FAIL: seated: only $producing of $expected masternode(s) produced a block in the last $window (#$start..#$head): ${!seen[*]}" >&2
+    echo "  every fair-share number measured while the set is short a seat is INVALID --" >&2
+    echo "  find and fix the absent validator(s) before trusting any measurement taken now." >&2
+    return 1
+  fi
+
+  echo "OK: seated: $producing of $expected masternode(s) produced a block in the last $window (#$start..#$head)"
 }
 
 # ---------------------------------------------------------------------------
@@ -327,6 +418,7 @@ case "$CMD" in
   wait-rpc)   cmd_wait_rpc "$@" ;;
   wait-peers) cmd_wait_peers "$@" ;;
   wait-block) cmd_wait_block "$@" ;;
+  seated)     cmd_seated "$@" ;;
   preflight)  cmd_preflight "$@" ;;
   *) usage ;;
 esac
