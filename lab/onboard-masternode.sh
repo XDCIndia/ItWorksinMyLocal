@@ -147,6 +147,14 @@
 #       (written by `run`) if present. `--follow` polls instead of a single
 #       check (same semantics as `run`'s own poll tail).
 #
+#   ./onboard-masternode.sh self-test
+#       Pure arithmetic regression check for _target_switch_for_block (the
+#       switch-attribution helper `run`'s post-mine step and `plan`'s timing
+#       table both share) -- no RPC, no node, no transactions. Covers one
+#       block % Epoch > Gap case and one block % Epoch <= Gap case against
+#       live-verified values (ItWorksinMyLocal#99); exits non-zero on any
+#       mismatch.
+#
 # Common options:
 #   --rpc URL               JSON-RPC endpoint (default: the lab producer,
 #                           node1 -- same default as masternode.sh)
@@ -464,6 +472,69 @@ _print_timing_table() {
   fi
 }
 
+# _target_switch_for_block <block> <epoch> <gap> <switch_block> [count]:
+# "which switch/checkpoint does a propose() MINED at <block> attribute to?"
+# -- answered by running _timing_table's OWN "smallest still-reachable
+# switch" search (the same RECOMMENDED-line logic `plan`/`_print_timing_table`
+# already use against the LIVE tip) as-of <block> instead of the live tip.
+#
+# THIS IS THE ONLY PLACE THAT SEARCH MAY BE IMPLEMENTED. `run`'s post-mine
+# attribution used to recompute it inline instead of calling here: it took
+# only the FIRST row _timing_table's k0 guess produced for <block> and, if
+# that row's gapNumber deadline had already passed <block>, bumped the mark
+# by exactly one Epoch and stopped -- never re-checking whether even the
+# bumped switch's OWN deadline had passed too. That one-Epoch bump is only
+# ever correct when <block> lands in the tail Gap blocks of its epoch
+# (block % Epoch <= Gap); for every other block (block % Epoch > Gap --
+# measured ~49.7% of the time live) the bumped switch's deadline has ALSO
+# already passed by <block>, and the true target is a second Epoch later
+# still. That inline reimplementation, independent of the search below, is
+# exactly how it drifted from `plan`'s (correct) answer -- see
+# ItWorksinMyLocal#99.
+#
+# Verified live (Epoch=900, Gap=450): S=4499 -> gapNumber 3150; S=5399 ->
+# gapNumber 4050; S=6299 -> gapNumber 4950. A propose MINED at block 4276
+# (4276 % 900 = 676 > 450 = Gap) must attribute to S=6299 (gapNumber 4950
+# is the first one still >= 4276), NOT S=5399 (whose gapNumber 4050 had
+# already passed by block 4276) -- see `self-test` below for this exact
+# case, plus a block % Epoch <= Gap case, as regression coverage.
+#
+# Sets TARGET_SWITCH_MARK / TARGET_SWITCH_DEADLINE; returns non-zero (both
+# left empty) only if _timing_table's own bounded search gave up (should
+# not happen in practice -- see its own comment).
+TARGET_SWITCH_MARK=""; TARGET_SWITCH_DEADLINE=""
+_target_switch_for_block() {
+  local block="$1" epoch="$2" gap="$3" switch_block="$4" count="${5:-5}" out
+  out=$(_timing_table "$block" "$epoch" "$gap" "$switch_block" "$count") || return 1
+  # Match only a NUMERIC mark ("RECOMMENDED 6299 4950 ..."), never the
+  # "RECOMMENDED NONE" line (also starts with "RECOMMENDED ").
+  TARGET_SWITCH_MARK=$(printf '%s\n' "$out" | awk '/^RECOMMENDED [0-9]/{print $2; exit}')
+  TARGET_SWITCH_DEADLINE=$(printf '%s\n' "$out" | awk '/^RECOMMENDED [0-9]/{print $3; exit}')
+  [ -n "$TARGET_SWITCH_MARK" ] && [ -n "$TARGET_SWITCH_DEADLINE" ]
+}
+
+# _assert_target_switch <label> <block> <epoch> <gap> <switch_block>
+#   <want_switch> <want_deadline>: regression coverage for
+# _target_switch_for_block, used by the `self-test` command below. Prints
+# PASS/FAIL and increments the global _SELFTEST_FAILURES counter on a
+# mismatch -- never exits by itself, so a caller can run several assertions
+# and report a single pass/fail summary.
+_SELFTEST_FAILURES=0
+_assert_target_switch() {
+  local label="$1" block="$2" epoch="$3" gap="$4" switch_block="$5" want_switch="$6" want_deadline="$7"
+  if ! _target_switch_for_block "$block" "$epoch" "$gap" "$switch_block" 5; then
+    echo "FAIL $label: _target_switch_for_block returned no result for block $block" >&2
+    _SELFTEST_FAILURES=$((_SELFTEST_FAILURES + 1))
+    return
+  fi
+  if [ "$TARGET_SWITCH_MARK" = "$want_switch" ] && [ "$TARGET_SWITCH_DEADLINE" = "$want_deadline" ]; then
+    echo "PASS $label: block=$block (block % epoch = $((block % epoch))) -> switch=$TARGET_SWITCH_MARK deadline=$TARGET_SWITCH_DEADLINE" >&2
+  else
+    echo "FAIL $label: block=$block -> got switch=$TARGET_SWITCH_MARK deadline=$TARGET_SWITCH_DEADLINE, want switch=$want_switch deadline=$want_deadline" >&2
+    _SELFTEST_FAILURES=$((_SELFTEST_FAILURES + 1))
+  fi
+}
+
 # ---------------------------------------------------------------------------
 # Key generation (owner + coinbase; must be two DIFFERENT accounts)
 # ---------------------------------------------------------------------------
@@ -764,18 +835,15 @@ cmd_run() {
   # _print_timing_table re-reads the LIVE tip, which has moved forward
   # since propose_block; but the deadline check that matters is against
   # propose_block itself (was propose mined before ITS relevant deadline).
-  local mined_check
-  mined_check=$(_timing_table "$propose_block" "$EPOCH" "$GAP" "$SWITCH_BLOCK" 1)
-  local mined_deadline
-  mined_deadline=$(printf '%s\n' "$mined_check" | awk '/^ROW /{print $3; exit}')
-  local target_switch
-  target_switch=$(printf '%s\n' "$mined_check" | awk '/^ROW /{print $2; exit}')
-  if [ -n "$mined_deadline" ] && [ "$propose_block" -le "$mined_deadline" ] 2>/dev/null; then
-    echo "onboard-masternode.sh: propose was mined in block $propose_block, at/before that switch's gapNumber deadline ($mined_deadline) -- ON TRACK to seat at switch/checkpoint $target_switch" >&2
-  else
-    echo "onboard-masternode.sh: propose was mined in block $propose_block, AFTER the immediately-following switch's gapNumber deadline ($mined_deadline) -- this candidate MISSED that snapshot and will instead seat one epoch later, at switch/checkpoint $((target_switch + EPOCH))" >&2
-    target_switch=$((target_switch + EPOCH))
-  fi
+  # Reuse _target_switch_for_block -- the SAME search `plan` uses -- run
+  # as-of propose_block instead of the live tip (see its own header comment,
+  # ItWorksinMyLocal#99, for why this must not be reimplemented inline).
+  local target_switch mined_deadline
+  _target_switch_for_block "$propose_block" "$EPOCH" "$GAP" "$SWITCH_BLOCK" "$COUNT" \
+    || _die "could not compute a target switch for propose mined in block $propose_block (see the timing table above)"
+  target_switch="$TARGET_SWITCH_MARK"
+  mined_deadline="$TARGET_SWITCH_DEADLINE"
+  echo "onboard-masternode.sh: propose was mined in block $propose_block -- on track to seat at switch/checkpoint $target_switch, whose gapNumber deadline ($mined_deadline) is the first still-reachable one as of block $propose_block" >&2
 
   local state_file="${KEYFILE}.state"
   {
@@ -801,6 +869,34 @@ cmd_run() {
   done
   echo "onboard-masternode.sh: PENDING -- not yet seated after ${POLL_TIMEOUT}s of polling. Candidate is confirmed proposed (isCandidate/getCandidates both true); target switch/checkpoint is $target_switch. Re-run: './onboard-masternode.sh status --keyfile $KEYFILE --follow'" >&2
   return 2
+}
+
+cmd_self_test() {
+  echo "== onboard-masternode.sh self-test == (pure arithmetic, no RPC/node/transactions)" >&2
+  _SELFTEST_FAILURES=0
+
+  # Epoch=900, Gap=450, switch_block=0 (always V2 regime for these
+  # positive block numbers) -- the exact worked example from the header
+  # comment / ItWorksinMyLocal#99, verified live: S=4499 -> gapNumber 3150,
+  # S=5399 -> gapNumber 4050, S=6299 -> gapNumber 4950.
+
+  # Case 1: block % Epoch (676) > Gap (450) -- the class of block the #99
+  # bug got wrong. The old inline recompute answered S=5399 (one Epoch too
+  # early: its gapNumber, 4050, had already passed by block 4276); correct
+  # is S=6299 (gapNumber 4950 is the first still >= 4276).
+  _assert_target_switch "block % Epoch > Gap" 4276 900 450 0 6299 4950
+
+  # Case 2: block % Epoch (0) <= Gap (450) -- the class the old inline
+  # recompute happened to already get right (a single +Epoch bump landed
+  # on the correct answer); must still hold after reusing the shared helper.
+  _assert_target_switch "block % Epoch <= Gap" 3600 900 450 0 5399 4050
+
+  if [ "$_SELFTEST_FAILURES" -eq 0 ]; then
+    echo "onboard-masternode.sh: self-test PASS (2/2)" >&2
+    return 0
+  fi
+  echo "onboard-masternode.sh: self-test FAILED ($_SELFTEST_FAILURES failure(s))" >&2
+  return 1
 }
 
 cmd_status() {
@@ -856,9 +952,10 @@ main() {
   esac
   shift
   case "$cmd" in
-    plan)    cmd_plan "$@" ;;
-    run)     cmd_run "$@" ;;
-    status)  cmd_status "$@" ;;
+    plan)       cmd_plan "$@" ;;
+    run)        cmd_run "$@" ;;
+    status)     cmd_status "$@" ;;
+    self-test)  cmd_self_test "$@" ;;
     *) echo "unknown command: $cmd" >&2; _usage >&2; exit 1 ;;
   esac
 }
