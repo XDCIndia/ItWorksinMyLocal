@@ -76,6 +76,29 @@ print(b.get('hash', '') if b else '')
 " "$block"
 }
 
+# lab_block_gas_limit <url> <N>: decimal gasLimit of block N, or "" (+
+# nonzero) if the node doesn't have that block yet. The first-class metric
+# ItWorksinMyLocal#94/#96 exists to watch: this must MOVE ONLY TOWARD, then
+# HOLD FLAT AT, the network's single mint/plateau target (never step away
+# from it once reached, and never step DOWN when it hasn't -- a down-step
+# is the exact signature of a second producer honing toward a LOWER target
+# than the one that just raised it, i.e. two different targets on one
+# chain). See lab/lib-assert.sh's assert_gas_limit_plateau.
+lab_block_gas_limit() {
+  local url="$1" n="$2" hexn block
+  hexn=$(printf '0x%x' "$n")
+  block=$(lab_rpc_call "$url" eth_getBlockByNumber "[\"${hexn}\",false]") || { printf ''; return 1; }
+  python3 -c "
+import json
+import sys
+
+b = json.loads(sys.argv[1])
+if not b or 'gasLimit' not in b:
+    sys.exit(1)
+print(int(b['gasLimit'], 16))
+" "$block"
+}
+
 # lab_peer_count <url>: decimal peer count via net_peerCount -- UNIVERSAL
 # across every client this framework can bring up, including erigon, whose
 # join.sh profile never enables the `admin` RPC namespace (--http.api

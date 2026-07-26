@@ -360,6 +360,21 @@ in the lab but not yet upstreamed. Design/status: [`docs/lab/DESIGN.md`](docs/la
 - Nodes report to the `ethstats` endpoint set in `run.sh` (`STATS_SECRET`) —
   change it if you don't want a shared dashboard.
 - `.env` holds **throwaway devnet keys** — never reuse them anywhere real.
+- **Gas limit — two different, deliberately different, numbers** (see
+  [`docs/lab/DESIGN.md`](docs/lab/DESIGN.md)'s "Gas-limit plateau" section,
+  [`netlab/TOPOLOGY.md`](netlab/TOPOLOGY.md)'s `gasLimit` field, issues #94/#96):
+  genesis `gasLimit` is only ever the ratchet's *starting point* (this repo never edits it —
+  `run.sh` uses whatever `genesis/genesis.json` already has); the **mint/plateau target** every
+  producer is actually launched with is a separate, explicit number (`run.sh`/`run-mixed.sh` pass
+  `--targetgaslimit 420000000`; `netlab/`'s topologies default their own `gasLimit` field to the
+  same 420,000,000). **Every producer of every client in one net must be given the identical
+  plateau target** — a producer left on its own client default (as `netlab/node.sh` briefly was,
+  before #96) silently disagrees with the others, and the legacy XDPoSChain arbiter hard-errors
+  instead of clamping once two producers' targets drift the gas limit apart, permanently locking
+  every validator out of proposing (issue #94's netv12 wedge). Never "fix" this by making genesis
+  equal the plateau, or by deriving the plateau from genesis — real XDC mainnet's own genesis is
+  4,700,000 while its live plateau is 420,000,000, so either "fix" would hone a mainnet-parity net
+  in the wrong direction.
 
 ---
 

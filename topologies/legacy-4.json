@@ -7,6 +7,7 @@
   "period": 1,
   "reward": 5000,
   "gap": 450,
+  "gasLimit": 420000000,
   "portBase": 34000,
   "staggerSeconds": 5,
   "nodes": [

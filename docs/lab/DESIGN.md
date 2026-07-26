@@ -176,6 +176,40 @@ generator be built in parallel — do not change these names.
   (v1 epoch boundaries, penalty carry-over via `LimitPenaltyEpoch`, reward cycles) set
   `LAB_SWITCH_BLOCK=2700` (v1 boundaries at 900/1800, switch at 2700).
 
+### Gas-limit plateau — a network policy constant, not a genesis field (ItWorksinMyLocal#94/#96)
+The block gas limit is **not** part of this lab's genesis contract above, and must never be added
+to it. It has two, deliberately different, meanings:
+- **Genesis `gasLimit`** is only ever the ratchet's *starting point*. It is FIXED at whatever
+  `gen-genesis.sh`/puppeth already produces (mainnet parity: real XDC mainnet's own genesis is
+  `0x47b760` = 4,700,000) and this lab never edits it.
+- **The mint/plateau target** is the number every producer client is actually launched with
+  (`join.sh --gas-limit`, `topologies/*.json`'s `gasLimit` field — default 420,000,000 =
+  `0x1908B100`). geth-xdc/erigon-xdc hard-code this as an "XDC plateau" they hone towards at
+  runtime, one legal `parent/1024` step per block — exactly how live XDC mainnet itself climbed
+  from its own 4,700,000 genesis to its current 420,000,000 plateau, without the genesis file ever
+  changing.
+
+**Never make these equal on purpose, and never derive the plateau from genesis** — a client that
+did (`erigon-xdc`'s `fix/94-xdc-gas-limit-genesis-plateau` branch; the geth proposal
+`XDCIndia/go-ethereum#1351`) would target 4,700,000 forever on a mainnet-parity net and hone the
+chain *down* off its real plateau, which is the wrong direction entirely.
+
+`ItWorksinMyLocal#94`'s netv12 wedge was never a genesis-vs-target mismatch. `netlab/node.sh` used
+to pass **no** gas flag to `join.sh` at all, so the legacy oldxdc arbiter fell back to its own
+compiled-in 50,000,000 default (`cmd/utils/flags.go`'s `MinerGasLimitFlag`) while geth/erigon
+elsewhere targeted a hard-coded 420,000,000 — **two different plateau targets on one chain**. The
+legacy arbiter's `misc.VerifyGaslimit` hard-errors (instead of clamping) once two producers' targets
+drift the parent gas limit more than one legal `parent/1024` step apart, permanently locking every
+validator out of proposing. The fix is to give **every** producer of **every** client the exact
+same explicit target (`join.sh --gas-limit`, threaded from `topologies/*.json`'s `gasLimit` →
+`netlab/topo.sh` → `netlab/node.sh`), never to touch the genesis.
+
+The gasLimit-per-block metric this invariant implies (`lab/lib-rpc.sh`'s `lab_block_gas_limit`,
+`lab/lib-assert.sh`'s `assert_gas_limit_plateau`, `oracle.sh`'s `gas=` column): across any run,
+gasLimit must be **monotonic non-decreasing** and must **converge on, then hold flat at, the single
+plateau**. A DOWN-step (a value LOWER than the previous block) is the bug signature — it is exactly
+what a second producer honing toward a lower target than the one that just raised it looks like.
+
 ### uploadKYC gotcha (finding F2)
 `propose()` has an `onlyKYCWhitelisted` modifier — a fresh owner account MUST call
 `uploadKYC(string)` once before its first `propose()`, or every propose reverts. `masternode.sh`
@@ -227,6 +261,8 @@ lab_rpc <client>            # echoes that client's rpc URL (e.g. http://127.0.0.
 lab_rpc_call <url> <method> <json-params>      # returns raw JSON-RPC result (curl+parse)
 lab_block_number <url>                          # decimal head height
 lab_block_hash <url> <N>                        # 0x… hash of block N (or "" if absent)
+lab_block_gas_limit <url> <N>                   # decimal gasLimit of block N (or "" if absent) --
+                                                 # ItWorksinMyLocal#94/#96's first-class metric
 lab_call_0x88 <url> <selector-with-args>        # eth_call to 0x88, returns hex
 lab_get_candidates <url>                         # decoded, sorted, comma-joined address list
 lab_wait_block <url> <N> [timeout_s]            # block until head ≥ N (or timeout → nonzero)
@@ -243,11 +279,18 @@ warning` clean (respect the conventions already in the repo — see the shellche
 
 ### `oracle.sh` output contract (scenario.sh parses this)
 - Streams one line per checked height:
-  `H=<n> ref=<hash8> geth=<hash8|MISS|DIFF> erigon=… …  set=<OK|DIFF>`
-- On first divergence: prints `DIVERGENCE at H=<n> field=<hash|candidates|head>` plus a diff
-  block (differing header fields decoded), then exits nonzero.
+  `H=<n> ref=<hash8> geth=<hash8|MISS|DIFF> erigon=… …  set=<OK|DIFF> gas=<OK|SKIP|MISS|DOWN|OVER|OFF>`
+- On first divergence: prints `DIVERGENCE at H=<n> field=<hash|candidates|head|gaslimit>` plus a
+  diff block (differing header fields decoded), then exits nonzero.
 - Clean run to target height: prints `PARITY OK 0..<n> across <k> clients` and exits 0.
-- Flags `--from N --to M --clients "geth,erigon,…" --interval-blocks K`.
+- Flags `--from N --to M --clients "geth,erigon,…" --interval-blocks K --gas-plateau N`.
+- `gas=` (ItWorksinMyLocal#94/#96) is checked on the reference AND every client when
+  `--gas-plateau N` (or env `GAS_LIMIT_PLATEAU`) is given: `SKIP` if no plateau was given, `MISS`
+  if the node doesn't have the block yet, `DOWN` if its gasLimit decreased since the last checked
+  height (the #94 signature -- two different mint targets on one chain), `OVER` if it exceeds the
+  given plateau, `OFF` if it moved away from the plateau after reaching it exactly. `DOWN`/`OVER`/
+  `OFF` are DIVERGENCEs, same severity as a hash/candidates mismatch. This is **not** a check
+  against the genesis header's own `gasLimit` -- see topologies/*.json's `gasLimit` field.
 
 ### `scenario.sh` contract
 - `scen_<id>()` returns 0 = PASS (parity held as expected / expected-divergence caught),
