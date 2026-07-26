@@ -21,3 +21,10 @@ lab/*/peer/
 lab/**/datadir
 lab/genesis-lab-*.json
 genesis/genesis-*-0x.json
+
+# onboard-masternode.sh (ItWorksinMyLocal#62) -- brand-new owner/coinbase
+# private keys, chmod 600, NEVER committed. Default --keyfile already lands
+# under lab/results/ (covered above); this pattern is a safety net for any
+# --keyfile path a caller points elsewhere under lab/ instead.
+lab/onboard-*.env
+lab/onboard-*.env.state

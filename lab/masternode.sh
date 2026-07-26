@@ -50,10 +50,19 @@
 #                       errors on this client, and --from sidesteps that by
 #                       supplying the address up front instead of relying on
 #                       the (one-time-only) import response for it.
+#   --key-stdin          same as --key, but reads the raw private key from
+#                       stdin (one line) instead of argv. Added for
+#                       lab/onboard-masternode.sh (ItWorksinMyLocal#62), which
+#                       drives brand-new owner/coinbase keys that must never
+#                       appear on a command line (visible to any other user
+#                       via `ps`/`/proc/<pid>/cmdline`, and to shell history).
+#                       --key is kept as-is for existing lab-accounts.env-based
+#                       callers (scenario files, etc.) -- this is purely
+#                       additive, same _resolve_sender path either way.
 #   --from ADDR          an address already unlocked on the node (e.g. a
 #                       producer sealer account), used instead of --key; or,
-#                       combined with --key, the known address for that key
-#                       (recommended -- see above)
+#                       combined with --key/--key-stdin, the known address for
+#                       that key (recommended -- see above)
 #   --rpc URL            JSON-RPC endpoint (default: the producer, node1)
 #   --value XDC          XDC amount to send with propose/vote (defaults:
 #                       propose=11000000, vote=25000 -- just above the
@@ -86,12 +95,13 @@ SEL_CANDIDATE_WITHDRAW_DELAY=d161c767
 
 RPC=""
 KEY=""
+KEY_STDIN=""
 FROM=""
 VALUE=""
 GAS=2000000
 UNLOCK_SECS=300
 
-_usage() { sed -n '2,62p' "$_SELF" | sed 's/^# \{0,1\}//'; }
+_usage() { sed -n '2,71p' "$_SELF" | sed 's/^# \{0,1\}//'; }
 
 # Parses the trailing --opt value pairs common to every subcommand.
 _parse_common_opts() {
@@ -99,6 +109,7 @@ _parse_common_opts() {
     case "$1" in
       --rpc)          RPC=$2; shift 2 ;;
       --key)          KEY=$2; shift 2 ;;
+      --key-stdin)    KEY_STDIN=1; shift 1 ;;
       --from)         FROM=$2; shift 2 ;;
       --value)        VALUE=$2; shift 2 ;;
       --gas)          GAS=$2; shift 2 ;;
@@ -108,10 +119,19 @@ _parse_common_opts() {
   done
 }
 
-# Prints the sending address: unlocks --key if given, else --from (assumed
-# already unlocked on the node), else errors.
+# Prints the sending address: unlocks --key/--key-stdin if given, else --from
+# (assumed already unlocked on the node), else errors.
 _resolve_sender() {
   local rpc="$1"
+  if [ -n "$KEY_STDIN" ]; then
+    # Read exactly one line from stdin -- the raw private key never touches
+    # argv (see the --key-stdin header note: `ps`/`/proc/<pid>/cmdline`
+    # otherwise expose it to every other user on the box).
+    local key_from_stdin
+    IFS= read -r key_from_stdin || { echo "masternode.sh: --key-stdin given but stdin had no line" >&2; return 1; }
+    lab_unlock_key "$rpc" "$key_from_stdin" "$UNLOCK_SECS" "$FROM"
+    return $?
+  fi
   if [ -n "$KEY" ]; then
     # Passing --from alongside --key (recommended for lab accounts, whose
     # address is already known from lab/lab-accounts.env) makes repeated
@@ -123,7 +143,7 @@ _resolve_sender() {
     printf '%s\n' "$FROM"
     return 0
   fi
-  echo "masternode.sh: need --key <privkey> or --from <address>" >&2
+  echo "masternode.sh: need --key <privkey>, --key-stdin, or --from <address>" >&2
   return 1
 }
 
