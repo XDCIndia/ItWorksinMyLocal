@@ -196,3 +196,63 @@ assert_no_validation_bypass() {
     _assert_pass "no-validation-bypass: $name's log shows no swallowed ValidateState mismatch"
   fi
 }
+
+# ---------------------------------------------------------------------------
+# assert_gas_limit_plateau <name=url> <plateau> <from_height> <to_height>
+#
+# The gasLimit-per-block health metric ItWorksinMyLocal#94/#96 exists to
+# make first-class. genesis gasLimit is only ever the RATCHET'S STARTING
+# POINT (mainnet parity: mainnet genesis is 4,700,000, its live plateau is
+# 420,000,000 -- it climbed there over blocks, the genesis field was never
+# touched), not a value this lab compares against. <plateau> is the single
+# mint/plateau target every producer in the run was launched with
+# (join.sh --gas-limit / topologies/*.json's gasLimit field).
+#
+# Over [from_height, to_height] this asserts, per block on the named node:
+#   - gasLimit never DECREASES block-over-block. A down-step is the exact
+#     signature of #94's wedge: a producer honing toward a LOWER target
+#     than the one that just raised it -- i.e. two different mint targets
+#     live on the same chain. (The legal per-block step is at most
+#     parent/1024 in EITHER direction per XDPoSChain's misc.VerifyGaslimit,
+#     but with every producer sharing one target the chain only ever climbs
+#     towards it, never away.)
+#   - gasLimit never exceeds <plateau> (a producer targeting something
+#     ABOVE the shared plateau is the same class of bug from the other
+#     side).
+#   - once a block's gasLimit reaches <plateau> exactly, EVERY later block
+#     in range must hold flat at <plateau> -- moving away from it after
+#     arriving is still evidence of an inconsistent target somewhere.
+# A single node missing a block in range is a FAIL, not a skip (same
+# posture as assert_hash_agreement) -- call this only over a range the
+# caller has already gated on via lab_wait_block.
+# ---------------------------------------------------------------------------
+assert_gas_limit_plateau() {
+  [ $# -ge 4 ] || { _assert_fail "assert_gas_limit_plateau: usage: assert_gas_limit_plateau <name=url> <plateau> <from_height> <to_height>"; return 1; }
+  local pair="$1" plateau="$2" from="$3" to="$4"
+  local name url h gl prev="" reached_plateau=0
+  name=$(_pair_name "$pair"); url=$(_pair_url "$pair")
+  h="$from"
+  while [ "$h" -le "$to" ]; do
+    gl=$(lab_block_gas_limit "$url" "$h") || gl=""
+    if [ -z "$gl" ]; then
+      _assert_fail "gas-limit plateau: $name is missing block $h"
+      return 1
+    fi
+    if [ -n "$prev" ] && [ "$gl" -lt "$prev" ]; then
+      _assert_fail "gas-limit plateau: $name down-stepped at H=$h: $prev -> $gl (gasLimit must never decrease -- two different mint targets on one chain, ItWorksinMyLocal#94/#96)"
+      return 1
+    fi
+    if [ "$gl" -gt "$plateau" ]; then
+      _assert_fail "gas-limit plateau: $name exceeded the plateau at H=$h: $gl > $plateau (some producer is targeting a HIGHER ceiling than the network's shared plateau)"
+      return 1
+    fi
+    if [ "$reached_plateau" = 1 ] && [ "$gl" -ne "$plateau" ]; then
+      _assert_fail "gas-limit plateau: $name moved off the plateau after reaching it: H=$h is $gl, expected flat at $plateau"
+      return 1
+    fi
+    [ "$gl" -eq "$plateau" ] && reached_plateau=1
+    prev="$gl"
+    h=$((h + 1))
+  done
+  _assert_pass "gas-limit plateau: $name H=$from..$to monotonic non-decreasing, converges to/holds flat at $plateau"
+}

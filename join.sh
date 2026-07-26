@@ -90,6 +90,38 @@
 #                        --Network.MaxActivePeers, xone -maxpeers. Omitted
 #                        (client's own default applies) unless given --
 #                        geth's own default of 25 is unchanged either way.
+#   --gas-limit N        the mint/plateau target this producer is launched
+#                        with (also env GAS_LIMIT; default 420000000 =
+#                        0x1908B100). UNLIKE --maxpeers above, this is
+#                        NEVER omitted -- a missing gas-ceiling flag is
+#                        exactly ItWorksinMyLocal#94's netv12 wedge: no
+#                        flag was passed, so the legacy oldxdc arbiter fell
+#                        back to its own compiled-in 50,000,000 default
+#                        (cmd/utils/flags.go MinerGasLimitFlag) while
+#                        geth-xdc/erigon-xdc elsewhere targeted a hard-coded
+#                        420,000,000 "XDC plateau" -- two different targets
+#                        on one chain, which the legacy arbiter's
+#                        misc.VerifyGaslimit hard-errors on (instead of
+#                        clamping) once they drift more than one legal
+#                        parent/1024 step apart, permanently locking every
+#                        validator out of proposing. This is NOT the
+#                        genesis header's own gasLimit field, and must
+#                        never be set to force the two to match -- they are
+#                        legitimately different (see netlab/TOPOLOGY.md's
+#                        gasLimit field, ItWorksinMyLocal#96). Passed as
+#                        --targetgaslimit for oldxdc, --miner.gaslimit for
+#                        geth/erigon (both geth-derived: erigon inherited
+#                        the same miner flag set, even though it currently
+#                        only mints via the genesis-derived path on its own
+#                        fix/94-xdc-gas-limit-genesis-plateau branch), and
+#                        -miner.gaslimit for xone (also go-ethereum-derived,
+#                        single-dash flags). besu/reth/nethermind are
+#                        deliberately NOT given a flag here: join.sh never
+#                        offers a --mine path for any of them (always
+#                        sync-only in this harness -- see their sections
+#                        below), so there is no local mint target for them
+#                        to silently default on, and none of the three has
+#                        a confirmed-safe equivalent CLI flag to guess at.
 #   --etherbase ADDR     oldxdc --mine only: block-reward address (also env
 #                        ETHERBASE). Omitted (client default) unless given.
 #   --mine KEY           also mine, unlocking this address (oldxdc only; needs a
@@ -138,6 +170,12 @@ PRIVAPI="${PRIVAPI:-}"; MCP_PORT="${MCP_PORT:-}"
 # MAXPEERS/ETHERBASE: unset by default (client's own default applies / no
 # --etherbase passed) unless a flag or env var provides one.
 MAXPEERS="${MAXPEERS:-}"; ETHERBASE="${ETHERBASE:-}"
+# GAS_LIMIT: UNLIKE MAXPEERS/ETHERBASE above, this is NEVER left empty --
+# see the --gas-limit flag comment above (ItWorksinMyLocal#94/#96). Honors a
+# pre-set env var (same "${VAR:-}" pattern as AUTHRPC_PORT etc, so netlab/
+# node.sh's per-node --gas-limit flag still wins) but always resolves to a
+# real value before the per-client launch sections below.
+GAS_LIMIT="${GAS_LIMIT:-420000000}"
 # ethstats reporting is ON by default (same endpoint as run.sh); --no-ethstats
 # disables it, --ethstats SPEC overrides the target.
 ETHSTATS="xdc_openscan_stats_2026@stats.xdcindia.com:443"
@@ -166,12 +204,13 @@ while [ $# -gt 0 ]; do
     --privapi)     PRIVAPI=$2; shift 2;;
     --mcp-port)    MCP_PORT=$2; shift 2;;
     --maxpeers)    MAXPEERS=$2; shift 2;;
+    --gas-limit)   GAS_LIMIT=$2; shift 2;;
     --etherbase)   ETHERBASE=$2; shift 2;;
     --mine)        MINEADDR=$2; shift 2;;
     --staticpeers) STATICPEERS=$2; STATICPEERS_EXPLICIT=1; shift 2;;
     --ethstats)    ETHSTATS=$2; shift 2;;
     --no-ethstats) ETHSTATS=""; shift;;
-    -h|--help)     sed -n '2,96p' "$0" | sed 's/^# \{0,1\}//'; exit 0;;
+    -h|--help)     sed -n '2,135p' "$0" | sed 's/^# \{0,1\}//'; exit 0;;
     *) echo "unknown flag: $1" >&2; exit 1;;
   esac
 done
@@ -395,6 +434,12 @@ if [ "$CLIENT" = all ]; then
   [ -n "$MINEADDR" ]    && shared+=(--mine "$MINEADDR")   # only oldxdc seals; others print "ignored"
   [ -n "$MAXPEERS" ]    && shared+=(--maxpeers "$MAXPEERS")
   [ -n "$ETHERBASE" ]   && shared+=(--etherbase "$ETHERBASE")   # only the oldxdc --mine child uses it
+  # --gas-limit is ALWAYS forwarded (unlike the optional flags above): GAS_LIMIT
+  # is never empty (see its default above), and each `bash "$SELF" ...` child
+  # below is a fresh process that would otherwise re-default it independently
+  # instead of inheriting an explicit --gas-limit override from the parent
+  # invocation -- the same reasoning --etherbase/--maxpeers already document.
+  shared+=(--gas-limit "$GAS_LIMIT")
   if [ -n "$ETHSTATS" ]; then shared+=(--ethstats "$ETHSTATS"); else shared+=(--no-ethstats); fi
   # Base directory for the per-client chaindata: a custom --datadir wins, else the
   # shared ./nodes tree (clear of run.sh's numbered nodes/1..N local net).
@@ -655,6 +700,16 @@ if [ "$CLIENT" = erigon ]; then
   SP_ARG=""; [ -n "$STATICPEERS" ] && SP_ARG="--staticpeers $STATICPEERS"
   [ -z "$STATICPEERS" ] && echo "  note: no --staticpeers given; erigon may not discover XDPoS peers via the bootnode alone" >&2
   MP_ARG=""; [ -n "$MAXPEERS" ] && MP_ARG="--maxpeers $MAXPEERS"
+  # --miner.gaslimit: erigon inherited the same geth-derived miner flag set
+  # (cmd/utils/flags.go's MinerGasLimitFlag), so it's accepted here even
+  # though a plain sync-only join (no --mine) never actually mints -- it
+  # ensures erigon never silently carries a stale/default target if it's
+  # later seated as a proposer (ItWorksinMyLocal#62/#94/#96). Its own
+  # fix/94-xdc-gas-limit-genesis-plateau branch instead derives the
+  # plateau from the chain's genesis when it mines; passing this flag too
+  # is a harmless, defence-in-depth belt-and-braces default, never a
+  # requirement erigon's mint path relies on.
+  GL_ARG="--miner.gaslimit $GAS_LIMIT"
   # erigon's default --p2p.allowed-ports is a HARDCODED [30303,30304,30305,30306,
   # 30307] (from its own flag default, independent of --port) with our --port only
   # prepended, not substituted -- so it still tries to bind that classic range and
@@ -664,7 +719,7 @@ if [ "$CLIENT" = erigon ]; then
   # 5 ports comfortably covers its eth-protocol version count (seen up to 4).
   ALLOWED_PORTS="$PORT,$((PORT+1)),$((PORT+2)),$((PORT+3)),$((PORT+4))"
   "$XDC" --datadir "$DATADIR" --chain "$ERC" --discv4 \
-    --port "$PORT" --p2p.allowed-ports "$ALLOWED_PORTS" --nat "extip:${IP}" $BN_ARG $SP_ARG $MP_ARG \
+    --port "$PORT" --p2p.allowed-ports "$ALLOWED_PORTS" --nat "extip:${IP}" $BN_ARG $SP_ARG $MP_ARG $GL_ARG \
     --http --http.addr 0.0.0.0 --http.port "$RPCPORT" --http.vhosts "*" \
     --http.corsdomain "*" --http.api eth,net,web3,erigon,debug,txpool \
     --ws --ws.port "$WSPORT" \
@@ -687,8 +742,15 @@ elif [ "$CLIENT" = geth ]; then
   # every OTHER join.sh client, which already gets an explicit, non-default
   # authrpc port unconditionally.
   [ -n "$MINEADDR" ] && echo "note: --mine ignored (geth join is sync-only)" >&2
+  # --miner.gaslimit: geth-xdc hard-codes params.XDCBlockGasLimit and
+  # DELIBERATELY IGNORES this flag (miner/xdpos_worker.go's xdcGasCeil) --
+  # passed anyway so the invocation is never silently missing it (an
+  # operator diffing invocations for #94/#96 compliance should see the
+  # same --gas-limit-derived flag on every client, even a client that
+  # happens to disregard it).
   "$XDC" --datadir "$DATADIR" --networkid "$NETWORKID" --syncmode "$SYNCMODE" \
     --bootnodes "$BOOTNODES" --port "$PORT" --nat "extip:${IP}" --identity "$NAME" --maxpeers "${MAXPEERS:-25}" \
+    --miner.gaslimit "$GAS_LIMIT" \
     --http --http.corsdomain "*" --http.addr 0.0.0.0 --http.port "$RPCPORT" --http.vhosts "*" \
     --http.api eth,net,web3,txpool,debug,admin,XDPoS \
     --ws --ws.addr 0.0.0.0 --ws.origins "*" --ws.port "$WSPORT" --ws.api eth,net,web3,XDPoS \
@@ -801,7 +863,7 @@ elif [ "$CLIENT" = xone ]; then
   MP_ARG=""; [ -n "$MAXPEERS" ] && MP_ARG="-maxpeers $MAXPEERS"
   "$XDC" -override.genesis "$GENESIS" -networkid "$NETWORKID" -syncmode "$SYNCMODE" \
     -datadir "$DATADIR" -port "$PORT" -discovery.port "$PORT" -nat "extip:${IP}" \
-    -bootnodes "$BOOTNODES" $MP_ARG \
+    -bootnodes "$BOOTNODES" $MP_ARG -miner.gaslimit "$GAS_LIMIT" \
     -http -http.addr 0.0.0.0 -http.port "$RPCPORT" -http.vhosts "*" \
     -http.api eth,net,web3,admin,debug,txpool,XDPoS \
     -authrpc.port "$AUTHRPC_PORT" \
@@ -816,8 +878,18 @@ else
     [ -n "$ETHERBASE" ] && MINE_FLAGS="$MINE_FLAGS --etherbase $ETHERBASE"
   fi
   MP_ARG=""; [ -n "$MAXPEERS" ] && MP_ARG="--maxpeers $MAXPEERS"
+  # --targetgaslimit: THE flag that was missing entirely before #96 -- with
+  # no flag passed at all, this legacy arbiter falls back to its own
+  # compiled-in 50,000,000 default (cmd/utils/flags.go MinerGasLimitFlag),
+  # silently different from whatever geth-xdc/erigon-xdc target elsewhere
+  # on the same chain (their own hard-coded 420,000,000 "XDC plateau").
+  # That mismatch is exactly netv12's #94 wedge. Passed unconditionally
+  # (not just inside MINE_FLAGS) since even a non-mining oldxdc join
+  # should never silently carry a different ceiling than every other node
+  # in the same topology.
   "$XDC" --datadir "$DATADIR" --networkid "$NETWORKID" --syncmode full \
     --bootnodes "$BOOTNODES" --port "$PORT" --nat "extip:${IP}" --identity "$NAME" $MP_ARG \
+    --targetgaslimit "$GAS_LIMIT" \
     --rpc --rpccorsdomain "*" --rpcaddr 0.0.0.0 --rpcport "$RPCPORT" --rpcvhosts "*" \
     --ws --wsaddr 0.0.0.0 --wsorigins "*" --wsport "$WSPORT" \
     --rpcapi admin,db,eth,debug,miner,net,shh,txpool,personal,web3,XDPoS \

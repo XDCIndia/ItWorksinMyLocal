@@ -230,6 +230,17 @@ cmd_start() {
     --authrpc-port "$NODE_AUTHRPC" --torrent-port "$NODE_TORRENT" --mcp-port "$NODE_MCP" --privapi "$NODE_PRIVAPI"
     --bootnodes "$bootnodes" --name "${TOPO_NAME}-${NODE_ID}" --no-ethstats)
   [ -n "$NODE_MAXPEERS" ] && args+=(--maxpeers "$NODE_MAXPEERS")
+  # --gas-limit: NODE_GASLIMIT comes straight out of topo.sh print's resolved
+  # "gasLimit" column (picked up generically by _node_resolve's NODE_* eval
+  # above -- no per-column code needed here), always non-empty (topo.sh
+  # defaults it to 420000000). Passed unconditionally, unlike --maxpeers
+  # above, because leaving it off is exactly the #94 bug: node.sh used to
+  # pass NO gas flag at all, so join.sh's oldxdc branch fell back to the
+  # legacy arbiter's own compiled-in 50,000,000 default while geth/erigon
+  # elsewhere targeted 420,000,000 -- two different mint targets on one
+  # chain. Every node in a topology -- sealer or follower, every client --
+  # now gets the SAME explicit target (ItWorksinMyLocal#96).
+  args+=(--gas-limit "$NODE_GASLIMIT")
   if [ "$NODE_ROLE" = sealer ]; then
     args+=(--mine "$seal_addr" --etherbase "$seal_addr")
   fi

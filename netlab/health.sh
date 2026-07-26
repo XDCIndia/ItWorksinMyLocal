@@ -45,6 +45,23 @@
 #            a short backoff before declaring FAIL), which still catches
 #            a REAL listener (busy on every attempt) but rides out a
 #            one-sample ephemeral-port collision.
+#   - gas-limit: every resolved node's mint/plateau target (topo.sh print's
+#            "gasLimit" column -- topologies/*.json's `gasLimit` field,
+#            threaded to join.sh --gas-limit) must be IDENTICAL across the
+#            whole topology. This is NOT a check against the genesis
+#            header's own gasLimit field (that field legitimately differs
+#            -- see topologies/*.json's gasLimit doc, ItWorksinMyLocal#96);
+#            it is the guard that would have caught #94's netv12 wedge
+#            before a single process started: node.sh used to pass NO gas
+#            flag at all, so the legacy oldxdc arbiter fell back to its
+#            own compiled-in 50,000,000 default while geth/erigon
+#            elsewhere targeted a hard-coded 420,000,000 -- two different
+#            mint targets on one chain. A node whose resolved gasLimit
+#            column is empty/non-positive (meaning it would silently fall
+#            back to ITS OWN client default) is a WARN, not a hard FAIL --
+#            topo.sh's own default (420000000) already makes this
+#            practically unreachable today, but it is a real signal if a
+#            future schema/regression ever lets it happen.
 #
 # ENFORCEMENT (T3.1): any real shortfall above is a hard FAIL and preflight
 # exits nonzero -- fleet.sh's `up` treats that as fatal and aborts before
@@ -307,6 +324,51 @@ print(' '.join(str(p) for p in sorted(ports)))
     echo "FAIL: ports: already in use (bind test):$busy" >&2
     fail=1
   fi
+
+  # -- gas-limit consistency (ItWorksinMyLocal#94/#96) --
+  # Every resolved node's mint/plateau target (topo.sh print's "gasLimit"
+  # column) must be the SAME number across the whole topology -- see this
+  # file's header for why this is deliberately NOT a check against the
+  # genesis header's own gasLimit field (those are legitimately different).
+  local gl_report
+  gl_report=$(printf '%s\n' "$out" | python3 -c "
+import sys
+
+header = None
+rows = []
+for line in sys.stdin:
+    line = line.rstrip('\n')
+    if line.startswith('#') or not line:
+        continue
+    if header is None:
+        header = line.split('\t')
+        continue
+    rows.append(dict(zip(header, line.split('\t'))))
+
+missing = [r['id'] for r in rows if not r.get('gasLimit') or not r['gasLimit'].lstrip('-').isdigit() or int(r['gasLimit']) <= 0]
+present = [(r['id'], r['gasLimit']) for r in rows if r.get('gasLimit') and r['gasLimit'].lstrip('-').isdigit() and int(r['gasLimit']) > 0]
+targets = sorted(set(v for _, v in present))
+
+if missing:
+    print('WARN missing=%s' % ','.join(missing))
+if len(targets) > 1:
+    detail = ', '.join('%s=%s' % (i, v) for i, v in present)
+    print('FAIL multiple=%s detail=%s' % (','.join(targets), detail))
+if not missing and len(targets) <= 1:
+    print('OK target=%s' % (targets[0] if targets else 'n/a'))
+")
+  while IFS= read -r gl_line; do
+    [ -n "$gl_line" ] || continue
+    case "$gl_line" in
+      OK\ *)
+        echo "PASS: gas-limit: every resolved node targets the same mint ceiling (${gl_line#OK target=})" ;;
+      WARN\ missing=*)
+        echo "WARN: gas-limit: node(s) [${gl_line#WARN missing=}] resolved no explicit gasLimit -- they would silently fall back to their OWN client default (this is exactly ItWorksinMyLocal#94's netv12 wedge: no flag passed, arbiter defaulted to 50,000,000 while geth/erigon elsewhere targeted 420,000,000)" >&2 ;;
+      FAIL\ multiple=*)
+        echo "FAIL: gas-limit: topology resolves DIFFERENT mint ceilings across its nodes (${gl_line#FAIL multiple=}) -- every node must target the SAME plateau or a client-sealed block ratchets the gas limit until the legacy arbiter's misc.VerifyGaslimit permanently locks every validator out of proposing (ItWorksinMyLocal#94)" >&2
+        fail=1 ;;
+    esac
+  done <<<"$gl_report"
 
   if [ "$fail" -eq 0 ]; then
     echo "PREFLIGHT OK"

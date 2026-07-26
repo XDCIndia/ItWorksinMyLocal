@@ -35,13 +35,27 @@
 #                           REQUIRED when --targets is given)
 #   --timeout-per-block S    how long to wait for a follower to reach a
 #                           height before marking it MISS (default 60s)
+#   --gas-plateau N          the network's single mint/plateau target (also
+#                           env GAS_LIMIT_PLATEAU) -- when given, every
+#                           checked height's gasLimit-per-block is watched
+#                           as a first-class metric (ItWorksinMyLocal#94/#96)
+#                           on the reference AND every client: it must never
+#                           decrease block-over-block, never exceed
+#                           <plateau>, and once it reaches <plateau> it must
+#                           hold flat there for the rest of the run. Any
+#                           violation is a DIVERGENCE (field=gaslimit), same
+#                           severity as a hash/candidates mismatch -- see
+#                           lab/lib-assert.sh's assert_gas_limit_plateau for
+#                           the single-node version of this same check.
+#                           Omitted (or 0): the gas= column still prints but
+#                           the check is skipped (SKIP, never a false PASS).
 #   --self-test              decode a canned getCandidates() hex blob with
 #                           no live node, assert the expected address list
 #
 # Output contract (docs/lab/DESIGN.md §7):
 #   one line per checked height:
-#     H=<n> ref=<hash8> geth=<hash8|MISS|DIFF> erigon=... set=<OK|DIFF>
-#   on first divergence: "DIVERGENCE at H=<n> field=<hash|candidates|head>"
+#     H=<n> ref=<hash8> geth=<hash8|MISS|DIFF> erigon=... set=<OK|DIFF> gas=<OK|SKIP|DOWN|OVER|OFF>
+#   on first divergence: "DIVERGENCE at H=<n> field=<hash|candidates|head|gaslimit>"
 #   plus a diff block, then exits nonzero.
 #   on a clean run: "PARITY OK <from>..<to> across <k> clients", exits 0.
 
@@ -81,6 +95,7 @@ INTERVAL=1
 REF=""
 TIMEOUT=60
 SELFTEST=0
+GAS_PLATEAU="${GAS_LIMIT_PLATEAU:-0}"
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -91,6 +106,7 @@ while [ $# -gt 0 ]; do
     --interval-blocks)   INTERVAL=$2; shift 2 ;;
     --ref)               REF=$2; shift 2 ;;
     --timeout-per-block) TIMEOUT=$2; shift 2 ;;
+    --gas-plateau)       GAS_PLATEAU=$2; shift 2 ;;
     --self-test)         SELFTEST=1; shift ;;
     -h|--help) _usage; exit 0 ;;
     *) echo "unknown flag: $1" >&2; exit 1 ;;
@@ -135,7 +151,45 @@ if [ -z "$TO" ]; then
   TO=$(lab_block_number "$REF") || { echo "oracle: cannot reach reference $REF" >&2; exit 1; }
 fi
 
-echo "oracle: ref=$REF clients=[$CLIENTS] range=${FROM}..${TO} step=$INTERVAL" >&2
+case "$GAS_PLATEAU" in ''|*[!0-9]*) GAS_PLATEAU=0 ;; esac
+
+echo "oracle: ref=$REF clients=[$CLIENTS] range=${FROM}..${TO} step=$INTERVAL gas-plateau=${GAS_PLATEAU:-<unset, skipped>}" >&2
+
+# ---------------------------------------------------------------------------
+# _oracle_check_gas <name> <url> <height>: the gasLimit-per-block metric
+# (ItWorksinMyLocal#94/#96) -- see lab/lib-assert.sh's
+# assert_gas_limit_plateau for the same invariant as a standalone assertion.
+# Tracks per-name state across calls via the GAS_PREV/GAS_ATPLATEAU
+# associative arrays (declared just below), so a single pass over the
+# height range is enough. Sets GAS_CHECK_RESULT to one of: SKIP (no
+# --gas-plateau given), MISS (node doesn't have this block), OK, DOWN
+# (decreased -- the #94 signature), OVER (exceeded the plateau), OFF
+# (moved away after reaching it) -- called DIRECTLY (never via `$(...)`):
+# a command substitution runs the function in a SUBSHELL, and bash does
+# not propagate associative-array mutations back out of a subshell, which
+# would silently reset GAS_PREV/GAS_ATPLATEAU to empty on every single
+# call and defeat the whole monotonic check (confirmed with a standalone
+# repro while building this).
+# ---------------------------------------------------------------------------
+declare -A GAS_PREV=() GAS_ATPLATEAU=()
+GAS_CHECK_RESULT=""
+_oracle_check_gas() {
+  local name="$1" url="$2" height="$3" gl
+  if ! [ "$GAS_PLATEAU" -gt 0 ] 2>/dev/null; then GAS_CHECK_RESULT="SKIP"; return 0; fi
+  gl=$(lab_block_gas_limit "$url" "$height" 2>/dev/null) || { GAS_CHECK_RESULT="MISS"; return 0; }
+  if [ -n "${GAS_PREV[$name]:-}" ] && [ "$gl" -lt "${GAS_PREV[$name]}" ] 2>/dev/null; then
+    GAS_CHECK_RESULT="DOWN|${GAS_PREV[$name]}|$gl"; return 0
+  fi
+  if [ "$gl" -gt "$GAS_PLATEAU" ] 2>/dev/null; then
+    GAS_CHECK_RESULT="OVER|$GAS_PLATEAU|$gl"; return 0
+  fi
+  if [ "${GAS_ATPLATEAU[$name]:-0}" = 1 ] && [ "$gl" != "$GAS_PLATEAU" ]; then
+    GAS_CHECK_RESULT="OFF|$GAS_PLATEAU|$gl"; return 0
+  fi
+  [ "$gl" = "$GAS_PLATEAU" ] && GAS_ATPLATEAU[$name]=1
+  GAS_PREV[$name]="$gl"
+  GAS_CHECK_RESULT="OK"
+}
 
 h=$FROM
 while [ "$h" -le "$TO" ]; do
@@ -177,6 +231,30 @@ while [ "$h" -le "$TO" ]; do
     done
   fi
   line="$line set=$set_status"
+
+  # gas=<OK|SKIP|MISS|DOWN|OVER|OFF> (ItWorksinMyLocal#94/#96): checked on
+  # the reference too, not just the followers -- the reference IS a
+  # producer, and #94's wedge was a producer-vs-producer target mismatch,
+  # not a follower-side bug. _oracle_check_gas is called directly (not via
+  # `$(...)`) so its GAS_PREV/GAS_ATPLATEAU updates actually persist --
+  # see its own header comment.
+  _oracle_check_gas "ref" "$REF" "$h"; gas_status="$GAS_CHECK_RESULT"
+  if [ -z "$divergence" ] && [ "$gas_status" != OK ] && [ "$gas_status" != SKIP ] && [ "$gas_status" != MISS ]; then
+    divergence="gaslimit|ref|${gas_status#*|}"
+  fi
+  if [ -z "$divergence" ]; then
+    for pair in $client_urls; do
+      c="${pair%%=*}"
+      u="${pair#*=}"
+      _oracle_check_gas "$c" "$u" "$h"; c_gas_status="$GAS_CHECK_RESULT"
+      if [ "$c_gas_status" != OK ] && [ "$c_gas_status" != SKIP ] && [ "$c_gas_status" != MISS ]; then
+        gas_status="$c_gas_status"
+        divergence="gaslimit|$c|${c_gas_status#*|}"
+        break
+      fi
+    done
+  fi
+  line="$line gas=${gas_status%%|*}"
   echo "$line"
 
   if [ -n "$divergence" ]; then

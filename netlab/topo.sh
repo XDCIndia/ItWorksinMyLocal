@@ -14,17 +14,23 @@
 #                                       # to stdout: a few "# key=value"
 #                                       # topology-level comment lines
 #                                       # (name/chainId/epoch/v2block/period/
-#                                       # reward/gap/skipV1Validation/
+#                                       # reward/gap/gasLimit/skipV1Validation/
 #                                       # portBase/staggerSeconds/
 #                                       # bootnode_port/node_count/
 #                                       # sealer_count), then a TSV header +
 #                                       # one row per resolved (post {A..B}
 #                                       # expansion) node: id, client, role,
-#                                       # keyref, maxpeers, p2p, rpc, ws,
-#                                       # authrpc, torrent, mcp, privapi,
-#                                       # datadir. This is exactly what
-#                                       # fleet.sh writes to
+#                                       # keyref, maxpeers, gasLimit, p2p,
+#                                       # rpc, ws, authrpc, torrent, mcp,
+#                                       # privapi, datadir. This is exactly
+#                                       # what fleet.sh writes to
 #                                       # nodes/<name>/topo.resolved.tsv.
+#                                       # gasLimit (ItWorksinMyLocal#96) is
+#                                       # the mint/plateau target every
+#                                       # producer is launched with -- NOT
+#                                       # the genesis header's own gasLimit,
+#                                       # which this framework never
+#                                       # generates or changes here.
 #
 # ONE hard requirement for `print`'s keyRef check: this process's
 # environment must already have .env's PRIVATE_KEY_* vars loaded (topo.sh
@@ -123,6 +129,24 @@ v2block = require_int("v2block")
 period = require_int("period", required=False, default=1)
 reward = require_int("reward", required=False, default=5000)
 gap = require_int("gap", required=False, default=450)
+# gasLimit: the MINT/PLATEAU target every producer in this topology is
+# launched with (join.sh --gas-limit -> the per-client gas-ceiling flag),
+# NOT the genesis header's own gasLimit field -- those are legitimately
+# DIFFERENT numbers and must stay that way (ItWorksinMyLocal#94/#96).
+# geth-xdc/erigon-xdc hard-code a 420,000,000 "XDC plateau" they hone
+# towards at runtime (parent/1024 per block, same mechanism live XDC
+# mainnet's own history shows: mainnet genesis is 4,700,000 and its current
+# plateau is 420,000,000 -- it got there by ratcheting up over blocks, the
+# genesis field was never edited). #94's netv12 wedge was never a
+# genesis-vs-target mismatch -- it was the legacy arbiter falling back to
+# ITS OWN 50,000,000 default (no --targetgaslimit passed) while geth/erigon
+# targeted 420,000,000: TWO DIFFERENT TARGETS on one chain. This field
+# forces every producer of every client onto the SAME target so that can
+# never happen again; it must never be derived from (or made equal to
+# forcing a change of) any genesis file.
+gas_limit = require_int("gasLimit", required=False, default=420000000)
+if gas_limit is not None and gas_limit < 1:
+    err("gasLimit must be a positive integer (got %r)" % gas_limit)
 port_base = require_int("portBase")
 stagger_seconds = require_int("staggerSeconds", required=False, default=5)
 skip_v1_validation = bool(topo.get("skipV1Validation", False))
@@ -254,6 +278,11 @@ for idx, entry in enumerate(nodes_raw):
             "role": role or "",
             "keyref": keyref,
             "maxpeers": maxpeers,
+            # Every node in a topology shares the SAME mint/plateau target --
+            # there is no per-node override (unlike maxpeers) -- precisely so
+            # health.sh's preflight can assert "every resolved node agrees"
+            # trivially by construction, not by hoping nothing diverges.
+            "gasLimit": gas_limit,
         })
 
 sealer_count = sum(1 for n in resolved if n["role"] == "sealer")
@@ -330,6 +359,7 @@ meta = [
     ("period", period),
     ("reward", reward),
     ("gap", gap),
+    ("gasLimit", gas_limit),
     ("skipV1Validation", "true" if skip_v1_validation else "false"),
     ("peering", peering),
     ("portBase", port_base),
@@ -341,7 +371,7 @@ meta = [
 for k, v in meta:
     print("# %s=%s" % (k, v))
 
-cols = ["id", "client", "role", "keyref", "maxpeers", "p2p", "rpc", "ws", "authrpc", "torrent", "mcp", "privapi", "datadir"]
+cols = ["id", "client", "role", "keyref", "maxpeers", "gasLimit", "p2p", "rpc", "ws", "authrpc", "torrent", "mcp", "privapi", "datadir"]
 print("\t".join(cols))
 for n in resolved:
     print("\t".join(str(n[c]) for c in cols))
