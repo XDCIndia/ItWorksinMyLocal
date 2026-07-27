@@ -12,6 +12,13 @@
 # separate account files). Override the id with --chainid, the path with
 # --out. This file holds private keys -- accounts/ is gitignored.
 #
+# gen-genesis.sh then rewrites the same file into the full picture of the
+# network -- every role (signers, owner, foundation, foundation/team owners,
+# swap, prefund), each one's genesis balance, the consensus parameters and the
+# total supply -- preserving the private keys written here by matching on
+# address. Roles that are plain genesis addresses have no key and carry
+# privateKey: null.
+#
 # Usage:
 #   ./gen-address.sh                   # 4 keypairs (default, matches the 4-node setup)
 #   ./gen-address.sh 1                 # a single keypair
@@ -91,4 +98,8 @@ with open(os.environ["ACCOUNTS_OUT"], "w") as f:
     json.dump(out, f, indent=2)
     f.write("\n")
 '
+# Private keys: same treatment as the other keyfiles in this repo (see
+# lab/gen-lab-genesis.sh, lab/onboard-masternode.sh). gitignore keeps it out of
+# commits; this keeps it off a shared host's other accounts.
+chmod 600 "$ACCOUNTS_OUT" 2>/dev/null || true
 echo "Wrote $COUNT accounts (chain id $CHAINID) to ./$ACCOUNTS_OUT"
