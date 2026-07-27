@@ -13,7 +13,7 @@ brings up/tears down the whole topology.
 |-------------------|---------|----------|---------|-------|
 | `name`            | string  | yes      | --      | Must equal the filename stem (`topologies/legacy-4.json` -> `"legacy-4"`). Used as the `nodes/<name>/` run-state directory. |
 | `description`     | string  | no       | `""`    | Free text, shown by `topo.sh print`. |
-| `chainId`         | int     | yes      | --      | Passed to `gen-genesis.sh --chainid` and `join.sh --networkid`. |
+| `chainId`         | int     | yes      | --      | Passed to `gen-genesis.sh --chainid` and `join.sh --chainid`. |
 | `epoch`           | int     | yes      | --      | **Must be `900`.** Legacy oldxdc hardcodes its own internal checkpoint constant (`EpocBlockRandomize=900`) independent of this genesis field; any other value freezes the chain at the first checkpoint (see `gen-genesis.sh`'s own `--epoch` warning). `topo.sh validate` hard-errors otherwise. |
 | `v2block`         | int     | yes      | --      | V1->V2 BFT switch block. **Must be a multiple of `epoch`** (i.e. of 900) -- the switch only happens at an epoch/checkpoint boundary. `topo.sh validate` hard-errors otherwise. |
 | `period`          | int     | no       | `1`     | Block time in seconds (post-processed into the genesis like `gen-genesis.sh --period`). |

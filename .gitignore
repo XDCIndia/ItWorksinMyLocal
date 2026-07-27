@@ -6,6 +6,8 @@ localdpos.json
 one.json
 .pwd
 network-roles.env
+# gen-address.sh accounts JSON -- holds private keys, never commit.
+accounts/
 bin/
 gethtest
 gethjoin
