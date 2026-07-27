@@ -59,7 +59,7 @@ fi
 echo "Building the modern geth client (for node 5 in the mixed topology) ..."
 ( CLIENT=geth; source ./lib.sh; ensure_bins ) || { echo "setup.sh: modern geth build failed" >&2; exit 1; }
 
-[ "$NEW" = 1 ] && bash ./gen-address.sh "$N" --env --chainid "$CHAINID"
+[ "$NEW" = 1 ] && bash ./gen-address.sh "$N" --env --roles --chainid "$CHAINID"
 [ -f .env ] || { echo ".env not found -- run: ./setup.sh --new" >&2; exit 1; }
 
 # Derive signer addresses from the .env private keys (dynamic).
@@ -78,12 +78,45 @@ done
 [ -n "$SIGNERS" ] || { echo "no PRIVATE_KEY_* found in .env" >&2; exit 1; }
 echo "Signers from .env: $SIGNERS"
 
+# Seed the genesis with the role accounts gen-address.sh --roles just generated
+# (owner, foundation, its confirmers, team confirmers, swap, prefund) instead of
+# gen-genesis.sh's built-in defaults. Those defaults are the public XDC
+# addresses nobody here holds keys for, which is what left them as
+# privateKey: null in the accounts JSON. Reading the addresses back out of that
+# JSON keeps it the single source of truth -- no second derivation to drift.
+#
+# Absent or key-less (an .env from before --roles, or a hand-written one), ROLE_ARGS
+# stays empty and gen-genesis.sh falls back to its defaults exactly as before.
+ROLE_ARGS=()
+_acct_json="accounts/accounts-${CHAINID}.json"
+if [ -f "$_acct_json" ]; then
+  while IFS= read -r _flag_val; do
+    [ -n "$_flag_val" ] && ROLE_ARGS+=("$_flag_val")
+  done < <(python3 -c '
+import json, sys
+d = json.load(open(sys.argv[1]))
+by = {}
+for a in d.get("accounts", []):
+    if not a.get("privateKey"):
+        continue
+    for r in a.get("roles", []):
+        by.setdefault(r, []).append(a["address"][2:])
+for role, flag in (("owner", "--owner"), ("foundation", "--foundation"),
+                   ("foundationOwner", "--foundation-owners"),
+                   ("teamOwner", "--team-owners"), ("swap", "--swap"),
+                   ("prefund", "--prefund")):
+    if by.get(role):
+        print(flag); print(",".join(by[role]))
+' "$_acct_json" 2>/dev/null)
+fi
+[ ${#ROLE_ARGS[@]} -gt 0 ] && echo "Seeding genesis with generated role accounts (${#ROLE_ARGS[@]} args from $_acct_json)"
+
 # --skip-v1-validation true: the mixed topology's node 5 (modern geth) needs
 # this -- without it, the 4 legacy sealers' per-block v1 double-validation
 # "blocksigner" system transactions (0x...89) desync it a few blocks after
 # genesis (a gas-accounting mismatch between the modern go-ethereum XDC fork
 # and legacy oldxdc on those specific transactions; see gen-genesis.sh's
 # --skip-v1-validation doc). Doesn't affect the genesis hash.
-bash ./gen-genesis.sh --chainid "$CHAINID" --signers "$SIGNERS" --skip-v1-validation true
+bash ./gen-genesis.sh --chainid "$CHAINID" --signers "$SIGNERS" "${ROLE_ARGS[@]}" --skip-v1-validation true
 bash ./reset.sh
 bash ./run.sh --mixed --chainid "$CHAINID"
