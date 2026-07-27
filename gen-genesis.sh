@@ -191,6 +191,14 @@ print('timestamp set to', d['timestamp'], 'in', path)
     echo "PREFUND=$PREFUND"
     echo "SIGNERS=$SIGNERS"
   } > network-roles.env
+  # Also keep a per-network-id copy so different chains don't overwrite each
+  # other's genesis (matches the genesis/genesis-<id>.json convention). run.sh
+  # still boots from $OUT (genesis/genesis.json); this is the archival copy.
+  GENESIS_BY_ID="$(dirname "$OUT")/genesis-${CHAINID}.json"
+  if [ "$GENESIS_BY_ID" != "$OUT" ]; then
+    cp "$OUT" "$GENESIS_BY_ID"
+    echo "Saved per-network genesis copy: $GENESIS_BY_ID"
+  fi
   echo "OK: $OUT generated (chainId $CHAINID, network '$NETWORK')"
   echo "Reset node data before restart:  rm -rf ./nodes/*/XDC ./nodes/*/XDCx ./nodes/*/keystore"
 else

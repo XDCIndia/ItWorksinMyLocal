@@ -14,15 +14,18 @@ cd "$(dirname "$0")" || exit 1
 # the 4 legacy oldxdc sealers below. Default is unchanged (4 legacy sealers
 # only).
 MIXED="${MIXED:-0}"
+NETWORKID="${NETWORKID:-20118}"
 while [ $# -gt 0 ]; do
   case "$1" in
     --mixed) MIXED=1; shift;;
+    --networkid) NETWORKID=$2; shift 2;;
     -h|--help)
-      echo "usage: ./run.sh [--mixed]"
-      echo "  --mixed   also start node 5: modern geth, sync-only, from genesis"
-      echo "            (same as MIXED=1 ./run.sh)"
+      echo "usage: ./run.sh [--mixed] [--networkid N]"
+      echo "  --mixed       also start node 5: modern geth, sync-only, from genesis"
+      echo "                (same as MIXED=1 ./run.sh)"
+      echo "  --networkid N network id (default: 20118; env: NETWORKID)"
       exit 0;;
-    *) echo "usage: ./run.sh [--mixed]" >&2; exit 1;;
+    *) echo "usage: ./run.sh [--mixed] [--networkid N]" >&2; exit 1;;
   esac
 done
 
@@ -130,7 +133,10 @@ VERBOSITY=3
 GASPRICE="1"
 STATS_SECRET="xdc_openscan_stats_2026"
 VERSION=$("$XDC" version 2>/dev/null | awk '/^Version:/{print $2}')
-networkid=20118
+# networkid is dynamic: setup.sh or the operator can pass NETWORKID in the
+# environment or --networkid on the command line. All nodes (legacy + modern)
+# must share the same value or peering will fail.
+networkid="$NETWORKID"
 
 # Local bootnode enode, built from bootnode.key + this machine's IP so every
 # node connects to a bootnode within the network.
