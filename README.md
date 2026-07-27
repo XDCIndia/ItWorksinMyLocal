@@ -256,7 +256,7 @@ needs the network's **`genesis.json`** and the host's **IP**:
 ./join.sh --genesis g.json --bootnodes "enode://KEY@HOST:30301" # explicit enode
 ```
 
-Useful flags: `--networkid` (defaults to the genesis chainId), `--datadir`
+Useful flags: `--chainid` (defaults to the genesis chainId), `--datadir`
 (default `./peer`), `--port` / `--rpcport` / `--wsport`, `--name`,
 `--mine ADDR` (only if that address is a validator in the genesis and its key is
 in `.env`). By default it joins as a **read/sync** node and **reports to the same

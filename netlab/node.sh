@@ -282,7 +282,7 @@ cmd_start() {
   fi
 
   local args=(--genesis "$GENESIS_FILE" --client "$NODE_CLIENT" --datadir "$NODE_DIR"
-    --networkid "$TOPO_CHAINID" --port "$NODE_P2P" --rpcport "$NODE_RPC" --wsport "$NODE_WS"
+    --chainid "$TOPO_CHAINID" --port "$NODE_P2P" --rpcport "$NODE_RPC" --wsport "$NODE_WS"
     --authrpc-port "$NODE_AUTHRPC" --torrent-port "$NODE_TORRENT" --mcp-port "$NODE_MCP" --privapi "$NODE_PRIVAPI"
     --bootnodes "$bootnodes" --name "${TOPO_NAME}-${NODE_ID}" --no-ethstats)
   [ -n "$NODE_MAXPEERS" ] && args+=(--maxpeers "$NODE_MAXPEERS")

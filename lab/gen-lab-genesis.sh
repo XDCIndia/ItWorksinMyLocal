@@ -32,7 +32,7 @@
 # gen-address.sh), so ensure_bins still runs once.
 #
 # The chain id is deliberately left untouched (stays whatever
-# genesis/genesis.json already has): run.sh hardcodes --networkid 20118 for
+# genesis/genesis.json already has): run.sh defaults its chain id to 20118 for
 # its p2p handshake regardless of the genesis file, and join.sh derives a
 # follower's --networkid from the genesis chainId -- so changing it here
 # would desync followers from the producer's p2p network id.

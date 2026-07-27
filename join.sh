@@ -57,7 +57,8 @@
 #   --staticpeers LIST   comma-separated enode URLs to connect directly (erigon
 #                        needs these to peer with an XDPoS net; its discv4 doesn't
 #                        discover peers through an XDPoSChain bootnode)
-#   --networkid N        network id (default: chainId from the genesis)
+#   --chainid N          chain / network id (default: chainId from the genesis).
+#                        (--networkid is accepted as a deprecated alias)
 #   --datadir DIR        where to store this peer's data (default
 #                        nodes/<client>-<nodetype>, e.g. nodes/geth-sync)
 #   --name NAME          node identity shown to peers/ethstats (default
@@ -220,7 +221,11 @@ while [ $# -gt 0 ]; do
     --ip)          HOST_IP=$2; shift 2;;
     --host)        HOST_IP=$2; shift 2;;
     --client)      export CLIENT=$2; shift 2;;
-    --networkid)   NETWORKID=$2; shift 2;;
+    --chainid)     NETWORKID=$2; shift 2;;
+    # Deprecated spelling of --chainid, kept so existing command lines and
+    # scripts don't break. Every script here now takes --chainid.
+    --networkid)   NETWORKID=$2; shift 2
+                   echo "join.sh: --networkid is deprecated; use --chainid" >&2;;
     --datadir)     DATADIR=$2; shift 2;;
     --name)        NAME=$2; shift 2;;
     --port)        PORT=$2; shift 2;;
@@ -266,7 +271,7 @@ source ./lib.sh
 # --network mainnet|testnet: sync a PUBLIC XDC network using the genesis +
 # bootnodes vendored from XinFinOrg/XinFin-Node (genesis/genesis-<net>.json,
 # bootnodes/<net>.list). Unset (or devnet5151) keeps the network.env default
-# (devnet 5151). Explicit --genesis/--bootnodes/--networkid still win; public
+# (devnet 5151). Explicit --genesis/--bootnodes/--chainid still win; public
 # bootnodes are used by default for mainnet/testnet.
 PUB_BOOTNODES_FILE=""
 # GAS_LIMIT_DEFAULT: the per-network mint/plateau default (see the
@@ -487,7 +492,7 @@ if [ "$CLIENT" = all ]; then
   [ -n "$BOOTNODES" ]   && shared+=(--bootnodes "$BOOTNODES")
   [ -n "$HOST_IP" ]     && shared+=(--ip "$HOST_IP")
   [ -n "$STATICPEERS" ] && shared+=(--staticpeers "$STATICPEERS")
-  [ -n "$NETWORKID" ]   && shared+=(--networkid "$NETWORKID")
+  [ -n "$NETWORKID" ]   && shared+=(--chainid "$NETWORKID")
   [ -n "$CHAIN" ]       && shared+=(--chain "$CHAIN")
   [ -n "$MINEADDR" ]    && shared+=(--mine "$MINEADDR")   # only oldxdc seals; others print "ignored"
   [ -n "$MAXPEERS" ]    && shared+=(--maxpeers "$MAXPEERS")
@@ -654,7 +659,7 @@ if [ -z "$NETWORKID" ] && [ -f "$GENESIS" ]; then
   NETWORKID=$(python3 -c "import json,sys;print(json.load(open('$GENESIS'))['config']['chainId'])" 2>/dev/null)
 fi
 if [ "$CLIENT" != erigon ] && [ -z "$NETWORKID" ]; then
-  echo "could not read chainId from $GENESIS; pass --networkid" >&2; exit 1
+  echo "could not read chainId from $GENESIS; pass --chainid" >&2; exit 1
 fi
 
 # erigon can't discover XDPoS peers through the bootnode (its discv4 doesn't

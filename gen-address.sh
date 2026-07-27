@@ -7,33 +7,33 @@
 # matches exactly what run.sh imports.
 #
 # Every run also writes the generated keypairs to a per-network JSON file,
-# accounts/accounts-<networkid>.json, mapping each account to its address and
+# accounts/accounts-<chainid>.json, mapping each account to its address and
 # private key (keyed by the chain/network id, so different networks keep
-# separate account files). Override the id with --networkid, the path with
+# separate account files). Override the id with --chainid, the path with
 # --out. This file holds private keys -- accounts/ is gitignored.
 #
 # Usage:
 #   ./gen-address.sh                   # 4 keypairs (default, matches the 4-node setup)
 #   ./gen-address.sh 1                 # a single keypair
 #   ./gen-address.sh 4 --env           # also overwrite ./.env with the generated keys
-#   ./gen-address.sh 4 --networkid 12345   # tag the accounts JSON with network id 12345
+#   ./gen-address.sh 4 --chainid 12345   # tag the accounts JSON with chain id 12345
 #   ./gen-address.sh 4 --out keys.json     # write the accounts JSON to a custom path
 
 COUNT=4
 WRITE_ENV=0
-NETWORKID=20118
+CHAINID=20118
 ACCOUNTS_OUT=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --env) WRITE_ENV=1; shift;;
-    --networkid) NETWORKID=$2; shift 2;;
+    --chainid) CHAINID=$2; shift 2;;
     --out) ACCOUNTS_OUT=$2; shift 2;;
     [0-9]*) COUNT=$1; shift;;
     -h|--help) sed -n '2,20p' "$0" | sed 's/^# \{0,1\}//'; exit 0;;
     *) echo "unknown arg: $1" >&2; exit 1;;
   esac
 done
-[ -n "$ACCOUNTS_OUT" ] || ACCOUNTS_OUT="accounts/accounts-${NETWORKID}.json"
+[ -n "$ACCOUNTS_OUT" ] || ACCOUNTS_OUT="accounts/accounts-${CHAINID}.json"
 
 cd "$(dirname "$0")" || exit 1
 source ./lib.sh
@@ -71,7 +71,7 @@ fi
 # valid JSON. Holds private keys -- keep out of version control (accounts/ is
 # gitignored).
 mkdir -p "$(dirname "$ACCOUNTS_OUT")"
-NETWORKID="$NETWORKID" ACCOUNTS_OUT="$ACCOUNTS_OUT" \
+CHAINID="$CHAINID" ACCOUNTS_OUT="$ACCOUNTS_OUT" \
 PRIVS="$(IFS=,; echo "${privs[*]}")" ADDRS="$(IFS=,; echo "${addrs[*]}")" \
 python3 -c '
 import json, os
@@ -86,9 +86,9 @@ accounts = [
     }
     for i, (a, p) in enumerate(zip(addrs, privs))
 ]
-out = {"networkId": int(os.environ["NETWORKID"]), "accounts": accounts}
+out = {"chainId": int(os.environ["CHAINID"]), "accounts": accounts}
 with open(os.environ["ACCOUNTS_OUT"], "w") as f:
     json.dump(out, f, indent=2)
     f.write("\n")
 '
-echo "Wrote $COUNT accounts (network id $NETWORKID) to ./$ACCOUNTS_OUT"
+echo "Wrote $COUNT accounts (chain id $CHAINID) to ./$ACCOUNTS_OUT"

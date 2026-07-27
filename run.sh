@@ -14,20 +14,26 @@ cd "$(dirname "$0")" || exit 1
 # the 4 legacy oldxdc sealers below. Default is unchanged (4 legacy sealers
 # only).
 MIXED="${MIXED:-0}"
-NETWORKID="${NETWORKID:-20118}"
+CHAINID="${CHAINID:-20118}"
 while [ $# -gt 0 ]; do
   case "$1" in
     --mixed) MIXED=1; shift;;
-    --networkid) NETWORKID=$2; shift 2;;
+    --chainid) CHAINID=$2; shift 2;;
     -h|--help)
-      echo "usage: ./run.sh [--mixed] [--networkid N]"
+      echo "usage: ./run.sh [--mixed] [--chainid N]"
       echo "  --mixed       also start node 5: modern geth, sync-only, from genesis"
       echo "                (same as MIXED=1 ./run.sh)"
-      echo "  --networkid N network id (default: 20118; env: NETWORKID)"
+      echo "  --chainid N   chain id (default: 20118; env: CHAINID)"
       exit 0;;
-    *) echo "usage: ./run.sh [--mixed] [--networkid N]" >&2; exit 1;;
+    *) echo "usage: ./run.sh [--mixed] [--chainid N]" >&2; exit 1;;
   esac
 done
+
+# A non-numeric chain id is accepted by the node binary but produces a network
+# nothing else can join -- reject it here rather than at peering time.
+case "$CHAINID" in
+  ''|*[!0-9]*) echo "run.sh: --chainid must be a positive integer (got '$CHAINID')" >&2; exit 1;;
+esac
 
 source ./lib.sh
 require_oldxdc
@@ -69,6 +75,24 @@ fi
 HOST=$(hostname -s)
 IP=$(detect_ip)
 echo "Machine: host=$HOST ip=$IP platform=$PLATFORM mixed=$MIXED"
+
+# The chain id the nodes run with and the chainId baked into genesis.json must
+# agree. When they don't, nothing here fails loudly: the nodes start, seal, and
+# simply never peer (the eth handshake rejects a mismatched network), which
+# surfaces much later as an unexplained "peers=0". Assert it up front instead.
+# Checked on every run, not just first init -- the re-run path reuses chaindata
+# that may have been inited from a *different* genesis than the current one.
+if [ -f ./genesis/genesis.json ]; then
+  GENESIS_CHAINID=$(python3 -c "import json;print(json.load(open('./genesis/genesis.json'))['config']['chainId'])" 2>/dev/null)
+  if [ -n "$GENESIS_CHAINID" ] && [ "$GENESIS_CHAINID" != "$CHAINID" ]; then
+    echo "run.sh: --chainid $CHAINID != genesis chainId $GENESIS_CHAINID (./genesis/genesis.json)." >&2
+    echo "  The nodes would start but never peer. Regenerate genesis for this id:" >&2
+    echo "    ./gen-genesis.sh --chainid $CHAINID --signers <a,b,c> && ./reset.sh" >&2
+    echo "  or run with the genesis's own id:  ./run.sh --chainid $GENESIS_CHAINID" >&2
+    exit 1
+  fi
+  [ -n "$GENESIS_CHAINID" ] || echo "run.sh: warning: could not read chainId from ./genesis/genesis.json -- skipping the chain id match check." >&2
+fi
 
 # Import keys + init on first run, otherwise read the existing accounts.
 declare -a WALLETS
@@ -133,10 +157,10 @@ VERBOSITY=3
 GASPRICE="1"
 STATS_SECRET="xdc_openscan_stats_2026"
 VERSION=$("$XDC" version 2>/dev/null | awk '/^Version:/{print $2}')
-# networkid is dynamic: setup.sh or the operator can pass NETWORKID in the
-# environment or --networkid on the command line. All nodes (legacy + modern)
+# The node binaries' --networkid is dynamic: setup.sh or the operator can pass CHAINID in the
+# environment or --chainid on the command line. All nodes (legacy + modern)
 # must share the same value or peering will fail.
-networkid="$NETWORKID"
+networkid="$CHAINID"
 
 # Local bootnode enode, built from bootnode.key + this machine's IP so every
 # node connects to a bootnode within the network.
