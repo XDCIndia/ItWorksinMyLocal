@@ -168,6 +168,49 @@ BOOTNODE_PUBKEY=$("$BOOTNODE_BIN" -nodekey ./bootnode.key -writeaddress)
 BOOTNODE_ENODE="enode://${BOOTNODE_PUBKEY}@${IP}:30301"
 echo "Local bootnode: $BOOTNODE_ENODE"
 
+# Pre-flight: every port this topology needs must be free BEFORE anything
+# starts. A busy port doesn't stop the run today -- each node is launched into
+# the background and never checked, so the one that loses the bind dies alone
+# ("Fatal: listen udp :30304: bind: address already in use") while its siblings
+# keep sealing. The result is a silently degraded network -- 4 masternodes in
+# genesis but only 3 ever sealing -- with nothing in the output saying so.
+# Two checkouts of this repo on one host hit this instantly: both default to
+# the same BASE_*_PORT range.
+ports_in_use() {
+  command -v lsof >/dev/null 2>&1 || {
+    echo "run.sh: lsof not found -- skipping the port pre-flight check" >&2; return 1; }
+  local busy=1 spec p label holder h
+  for spec in "$@"; do
+    p="${spec%%:*}"; label="${spec#*:}"
+    holder=$( { lsof -nP -iTCP:"$p" -sTCP:LISTEN -t 2>/dev/null; lsof -nP -iUDP:"$p" -t 2>/dev/null; } | sort -u | tr '\n' ' ' )
+    holder="${holder% }"
+    [ -z "$holder" ] && continue
+    busy=0
+    echo "run.sh: port $p ($label) already in use by PID(s): $holder" >&2
+    for h in $holder; do
+      echo "          $(ps -p "$h" -o command= 2>/dev/null | cut -c1-96)" >&2
+    done
+  done
+  return $busy
+}
+
+PORT_SPECS=("30301:bootnode")
+for i in $(seq 1 $NUM_NODES); do
+  PORT_SPECS+=("$((BASE_P2P_PORT + i)):node $i p2p" "$((BASE_RPC_PORT + i)):node $i rpc" "$((BASE_WS_PORT + i)):node $i ws")
+done
+if [ "$MIXED" = 1 ]; then
+  PORT_SPECS+=("$((BASE_P2P_PORT + 5)):node 5 p2p" "$((BASE_RPC_PORT + 5)):node 5 rpc" \
+               "$((BASE_WS_PORT + 5)):node 5 ws" "$((BASE_RPC_PORT + 55)):node 5 authrpc")
+fi
+if ports_in_use "${PORT_SPECS[@]}"; then
+  echo "" >&2
+  echo "  Refusing to start: the node that loses the bind would die silently and" >&2
+  echo "  leave a degraded network. Stop whatever holds the port(s) above, or move" >&2
+  echo "  this whole topology out of the way:" >&2
+  echo "    BASE_P2P_PORT=31302 BASE_RPC_PORT=9544 BASE_WS_PORT=9554 ./run.sh$([ "$MIXED" = 1 ] && echo ' --mixed')" >&2
+  exit 1
+fi
+
 echo Starting the bootnode ...
 "$BOOTNODE_BIN" -nodekey ./bootnode.key -addr ${IP}:30301 &
 child_proc=$!
