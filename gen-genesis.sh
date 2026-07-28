@@ -120,6 +120,7 @@ require_oldxdc
 ensure_bins
 PUPPETH="$PUPPETH_BIN"
 rm -rf "$HOME/.puppeth/$NETWORK" "$NETWORK.json"
+LOG="$(mktemp "${TMPDIR:-/tmp}/gen-genesis.XXXXXX")" || { echo "gen-genesis.sh: mktemp failed" >&2; exit 1; }
 
 {
   echo "$NETWORK"      # network name
@@ -144,7 +145,7 @@ rm -rf "$HOME/.puppeth/$NETWORK" "$NETWORK.json"
   echo 2               # menu: Manage existing genesis
   echo 2               # submenu: Export genesis configuration
   echo                 # file (default <network>.json)
-} | "$PUPPETH" >/tmp/gen-genesis.log 2>&1
+} | "$PUPPETH" >"$LOG" 2>&1
 
 if [ -f "$NETWORK.json" ]; then
   mkdir -p "$(dirname "$OUT")"
@@ -301,7 +302,8 @@ print("Wrote %d accounts (%d with private keys) + total supply to %s" % (len(acc
   fi
   echo "OK: $OUT generated (chainId $CHAINID, network '$NETWORK')"
   echo "Reset node data before restart:  rm -rf ./nodes/*/XDC ./nodes/*/XDCx ./nodes/*/keystore"
+  rm -f "$LOG"
 else
-  echo "FAILED: $NETWORK.json not produced. See /tmp/gen-genesis.log" >&2
+  echo "FAILED: $NETWORK.json not produced. See $LOG" >&2
   exit 1
 fi

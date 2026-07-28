@@ -49,7 +49,9 @@ _S02_SETTLE_TO=920
 # private key is unlocked ONLY on that node's own process (run.sh gives each
 # sealer its own datadir/keystore), so node2's self-resign tx MUST be sent
 # via node2's own RPC, not node1's -- node1 does not have node2's key.
+_S02_NODE1_RPC="http://127.0.0.1:8545"
 _S02_NODE2_RPC="http://127.0.0.1:8546"
+_S02_NODE3_RPC="http://127.0.0.1:8547"
 _S02_NODE4_RPC="http://127.0.0.1:8548"
 
 # _s02_checkpoint_masternodes <url> <block-number>: decodes that checkpoint
@@ -93,8 +95,8 @@ print(','.join(addrs))
 # _s02_list_has <comma-list> <addr>: case-insensitive membership check.
 _s02_list_has() {
   local low_list low_addr
-  low_list=$(printf '%s' "$1" | tr 'A-Z' 'a-z')
-  low_addr=$(printf '%s' "$2" | tr 'A-Z' 'a-z')
+  low_list=$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')
+  low_addr=$(printf '%s' "$2" | tr '[:upper:]' '[:lower:]')
   case ",${low_list}," in
     *",${low_addr},"*) return 0 ;;
     *) return 1 ;;

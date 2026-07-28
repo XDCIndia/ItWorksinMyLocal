@@ -175,7 +175,7 @@ ACCOUNTS_JSON="$TMPD/accounts.json"
   while [ "$i" -le "$CANDIDATES" ]; do
     priv=$(openssl rand -hex 32)
     addr=$("$XDC" account import --password "$PW" --datadir "$TMPD/k$i" <(printf '%s' "$priv") 2>/dev/null \
-            | grep -oE 'xdc[0-9a-fA-F]{40}' | head -1 | sed 's/^xdc//' | tr 'A-Z' 'a-z')
+            | grep -oE 'xdc[0-9a-fA-F]{40}' | head -1 | sed 's/^xdc//' | tr '[:upper:]' '[:lower:]')
     if [ -z "$addr" ]; then
       echo "gen-lab-genesis: failed to derive an address for candidate $i" >&2
       exit 1

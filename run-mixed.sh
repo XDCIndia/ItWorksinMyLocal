@@ -44,13 +44,18 @@ touch .pwd
 
 # Resolve the modern client binary. Prefer an explicit env override, else the
 # repo's bin/<client>/<platform>/<binary> (build it with ./setup.sh --client <c>).
+# mbin_var holds the env var name quoted in the error below -- it replaces a
+# bash-4-only upper-casing parameter expansion that macOS bash 3.2 cannot
+# parse. Set alongside MBIN rather than in a second switch over the same
+# value: two switches drift apart the moment a client is added to one and not
+# the other, and it fails silently (the name renders empty: "set =/path").
 case "$MODERN" in
-  geth) MBIN="${GETH_BIN:-bin/geth/$PLATFORM/geth}";;
-  xone) MBIN="${XONE_BIN:-bin/xone/$PLATFORM/xone}";;
-  reth) MBIN="${RETH_BIN:-bin/reth/$PLATFORM/xdc-reth}";;
+  geth) MBIN="${GETH_BIN:-bin/geth/$PLATFORM/geth}"; mbin_var=GETH_BIN;;
+  xone) MBIN="${XONE_BIN:-bin/xone/$PLATFORM/xone}"; mbin_var=XONE_BIN;;
+  reth) MBIN="${RETH_BIN:-bin/reth/$PLATFORM/xdc-reth}"; mbin_var=RETH_BIN;;
   *) echo "modern client '$MODERN' not wired in run-mixed.sh yet" >&2; exit 1;;
 esac
-[ -x "$MBIN" ] || { echo "modern binary not found: $MBIN (set ${MODERN^^}_BIN=/path, or ./setup.sh --client $MODERN to build it)" >&2; exit 1; }
+[ -x "$MBIN" ] || { echo "modern binary not found: $MBIN (set ${mbin_var}=/path, or ./setup.sh --client $MODERN to build it)" >&2; exit 1; }
 
 # legacy wallets from keystores (setup.sh must have imported them)
 declare -a W
@@ -70,7 +75,7 @@ sleep 2
 # N legacy validators (mine, ethstats)
 for i in $(seq 1 "$LEGACY"); do
   P2P=$((30410 + i)); RPC=$((8610 + i)); WS=$((8620 + i))
-  ES=""; [ "$USE_STATS" = 1 ] && ES="--ethstats mixed5-legacy-${i}:${STATS_SECRET}@${ETHSTATS_HOST}"
+  ES=""; [ "$USE_STATS" = 1 ] && ES="--ethstats mixed5-legacy-${i}-${HOST}:${STATS_SECRET}@${ETHSTATS_HOST}"
   setsid "$XDC" --bootnodes "$ENODE" --syncmode full --datadir ./nodes/$i \
     --networkid "$NETWORKID" --port $P2P --nat "extip:${IP}" \
     --rpc --rpcaddr 0.0.0.0 --rpcport $RPC --rpccorsdomain "*" --rpcvhosts "*" \
@@ -79,13 +84,13 @@ for i in $(seq 1 "$LEGACY"); do
     --unlock "${W[$i]}" --etherbase "${W[$i]}" --password ./.pwd --mine \
     --gasprice 1 --targetgaslimit 420000000 --verbosity 3 $ES \
     > "$LOG/node$i.log" 2>&1 &
-  echo "legacy node$i (mine) rpc=$RPC etherbase=${W[$i]} stats=${ES:+mixed5-legacy-$i}"
+  echo "legacy node$i (mine) rpc=$RPC etherbase=${W[$i]} stats=${ES:+mixed5-legacy-$i-$HOST}"
 done
 sleep 3
 
 # modern node (validator/proposer when MODERN_MINE=1, else follower), ethstats
 DD="./nodes/5-${MODERN}"
-ES5=""; [ "$USE_STATS" = 1 ] && ES5="--ethstats mixed5-${MODERN}:${STATS_SECRET}@${ETHSTATS_HOST}"
+ES5=""; [ "$USE_STATS" = 1 ] && ES5="--ethstats mixed5-${MODERN}-${HOST}:${STATS_SECRET}@${ETHSTATS_HOST}"
 if [ "$MODERN" = geth ] || [ "$MODERN" = xone ]; then
   [ -d "$DD/geth/chaindata" ] || [ -d "$DD/XDC/chaindata" ] || "$MBIN" --datadir "$DD" init ./genesis/genesis.json >/dev/null 2>&1
   MINE=""
@@ -100,7 +105,7 @@ if [ "$MODERN" = geth ] || [ "$MODERN" = xone ]; then
     --http.api eth,net,web3,admin,debug,txpool,miner,personal,XDPoS \
     --authrpc.port 8645 --verbosity 3 $MINE $ES5 \
     > "$LOG/node5-${MODERN}.log" 2>&1 &
-  echo "modern $MODERN node5 ($([ "$MODERN_MINE" = 1 ] && echo validator/mint || echo follower)) http=8615 stats=mixed5-${MODERN}"
+  echo "modern $MODERN node5 ($([ "$MODERN_MINE" = 1 ] && echo validator/mint || echo follower)) http=8615 stats=mixed5-${MODERN}-${HOST}"
 else
   echo "note: $MODERN launch not scripted here; attach with join.sh instead" >&2
 fi

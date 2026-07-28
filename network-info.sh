@@ -21,7 +21,7 @@ if [ -f .env ] && [ -x "$XDC" ]; then
   while :; do
     var="PRIVATE_KEY_$i"; pk="${!var}"; [ -z "$pk" ] && break
     a=$("$XDC" account import --password "$TMP/pw" --datadir "$TMP/k$i" <(printf '%s' "$pk") 2>/dev/null \
-          | grep -oE 'xdc[0-9a-fA-F]{40}' | head -1 | sed 's/^xdc//' | tr 'A-Z' 'a-z')
+          | grep -oE 'xdc[0-9a-fA-F]{40}' | head -1 | sed 's/^xdc//' | tr '[:upper:]' '[:lower:]')
     HELD="$HELD $a"
     i=$((i+1))
   done
