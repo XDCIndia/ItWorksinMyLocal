@@ -44,16 +44,16 @@ touch .pwd
 
 # Resolve the modern client binary. Prefer an explicit env override, else the
 # repo's bin/<client>/<platform>/<binary> (build it with ./setup.sh --client <c>).
+# mbin_var holds the env var name quoted in the error below -- it replaces a
+# bash-4-only upper-casing parameter expansion that macOS bash 3.2 cannot
+# parse. Set alongside MBIN rather than in a second switch over the same
+# value: two switches drift apart the moment a client is added to one and not
+# the other, and it fails silently (the name renders empty: "set =/path").
 case "$MODERN" in
-  geth) MBIN="${GETH_BIN:-bin/geth/$PLATFORM/geth}";;
-  xone) MBIN="${XONE_BIN:-bin/xone/$PLATFORM/xone}";;
-  reth) MBIN="${RETH_BIN:-bin/reth/$PLATFORM/xdc-reth}";;
+  geth) MBIN="${GETH_BIN:-bin/geth/$PLATFORM/geth}"; mbin_var=GETH_BIN;;
+  xone) MBIN="${XONE_BIN:-bin/xone/$PLATFORM/xone}"; mbin_var=XONE_BIN;;
+  reth) MBIN="${RETH_BIN:-bin/reth/$PLATFORM/xdc-reth}"; mbin_var=RETH_BIN;;
   *) echo "modern client '$MODERN' not wired in run-mixed.sh yet" >&2; exit 1;;
-esac
-case "$MODERN" in
-  geth) mbin_var=GETH_BIN;;
-  xone) mbin_var=XONE_BIN;;
-  reth) mbin_var=RETH_BIN;;
 esac
 [ -x "$MBIN" ] || { echo "modern binary not found: $MBIN (set ${mbin_var}=/path, or ./setup.sh --client $MODERN to build it)" >&2; exit 1; }
 

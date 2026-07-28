@@ -31,10 +31,16 @@ cd "$(dirname "$0")" || exit 1
 
 SELF_NAME="check-portability.sh"
 
-# ---- 1. enumerate tracked shell scripts -----------------------------------
+# ---- 1. enumerate shell scripts -------------------------------------------
+# --cached AND --others (with --exclude-standard, so .gitignore still wins):
+# a new script is untracked until it is `git add`ed, and that is exactly when
+# this check earns its keep. Tracked-only enumeration meant an author could
+# write new.sh using `declare -A`, run this, get PASS because git ls-files
+# never listed the file, and commit the breakage -- the ratchet was blind at
+# the one moment it had to bite.
 FILES=""
 if command -v git >/dev/null 2>&1 && git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
-  FILES="$(git ls-files '*.sh' 2>/dev/null)"
+  FILES="$(git ls-files --cached --others --exclude-standard '*.sh' 2>/dev/null | sort -u)"
 fi
 if [ -z "$FILES" ]; then
   # Fallback for a non-git checkout: walk the tree, skip .git.

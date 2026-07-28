@@ -23,8 +23,6 @@ lab/*/peer/
 lab/**/datadir
 lab/genesis-lab-*.json
 genesis/genesis-*-0x.json
-# gen-genesis.sh per-chainid archival genesis copies (genesis/genesis-<chainid>.json)
-genesis/genesis-[0-9]*.json
 
 # gen-genesis.sh writes an archival genesis/genesis-<chainid>.json next to the
 # genesis.json it generates. Local/ad-hoc chain ids are throwaway, so ignore
