@@ -1,7 +1,7 @@
 {
   "_comment": "Prebuilt-binary manifest for lib.sh:download_bins() / join.sh. baseUrl + file (with {os}/{arch} substituted) form the download URL; archive says how to unpack it; produces maps a logical binary name to its path *inside* the download (\"\" = the download IS the binary, \".\" = the whole extracted directory is the product, e.g. a dist dir). platforms uses {os}-{arch} keys (darwin|linux, amd64|arm64); \"*\" = platform-independent. sha256 keys mirror platforms (or \"*\"), fetched from the upstream <file>.sha256 siblings on xdc.network. Re-run the fetch and bump 'updated' if xdc.network publishes new binaries.",
   "baseUrl": "https://xdc.network/snapshots/bin/",
-  "updated": "2026-07-24",
+  "updated": "2026-07-28",
   "clients": {
     "geth": {
       "_comment": "darwin-amd64/darwin-arm64 are now the SAME universal (lipo fat) binary built 2026-07-24 from main (arm64 native + amd64 cross-compiled, no Intel Mac needed since geth is pure Go) -- identical sha256 both filenames, runs natively on either Mac architecture. Verified via `lipo -info` (both slices present) and a live devnet 5151 join on the arm64 slice.",
@@ -19,8 +19,8 @@
       "sha256": {
         "darwin-amd64": "cdc74be3ebadfaad197c6445ab3aaf848d024f6aad09239583a9cfe8672a47be",
         "darwin-arm64": "cdc74be3ebadfaad197c6445ab3aaf848d024f6aad09239583a9cfe8672a47be",
-        "linux-amd64": "17890f1dce07a8072e984c17d3692d3755a3b0da6cbd39c890755e6ff6af8600",
-        "linux-arm64": "f56076efc6664a8ee0739b47879be16c53b1a935fb436a1bf43ab5058e399e11"
+        "linux-amd64": "705406e8c5b7339b0f429d841a7ba6d5568f2956a5d46d12fa3fcd09798f8d31",
+        "linux-arm64": "b74452cc43587f4aca482166c4214c2b6f72c37e77dd4424b4eeabfc15d9b7b7"
       }
     },
     "erigon": {
@@ -36,7 +36,7 @@
         "darwin-arm64"
       ],
       "sha256": {
-        "linux-amd64": "6618bd4fa9697c33e446f973b74d6cf47e96ffe468204fcaf42f6c8ed8dbe9df",
+        "linux-amd64": "1d0bfd166f2f573599e80fe23de79727fb32b0f5dd927c41ace061a6ea51fa0f",
         "darwin-amd64": "61b79adcf2fe4545e958c2868613c28e16bdb35b30201d3d9e45275cff60d070",
         "darwin-arm64": "61b79adcf2fe4545e958c2868613c28e16bdb35b30201d3d9e45275cff60d070"
       }
