@@ -3,6 +3,26 @@
   "baseUrl": "https://xdc.network/snapshots/bin/",
   "updated": "2026-07-28",
   "clients": {
+    "oldxdc": {
+      "_comment": "XDPoSChain (XDCIndia/OLDXDC), the legacy sealer client run.sh/setup.sh use by default. Previously ALWAYS built from source (lib.sh hardcoded this regardless of BIN_SOURCE) since no prebuilt existed anywhere -- every `run.sh --chainid N` / `setup.sh --new` clone+built from scratch even for a plain resume, adding minutes before any node came up. Published this tarball (XDC + bootnode + puppeth, linux-amd64) from XDCIndia/OLDXDC's pinned commit 0648a96a22affcc0b4dd2201614a118b084fe7bf (the 'XDPoSChain codebase snapshot with puppeth wizard genesis fix' XDPOS_REPO already points at) so lib.sh:download_bins() has something to fetch. Now respects BIN_SOURCE/BIN_SOURCE_oldxdc like every other client: download by default, `--build` (run.sh/setup.sh) or BIN_SOURCE_oldxdc=build forces a from-source clone+build instead. darwin/other-arch prebuilts not published yet -- falls back to a source build there same as before.",
+      "ghRelease": {
+        "repo": "XDCIndia/OLDXDC",
+        "tag": "v2.7.1-stable-linux-amd64"
+      },
+      "file": "oldxdc-{os}-{arch}.tar.gz",
+      "archive": "tar.gz",
+      "produces": {
+        "XDC": "XDC",
+        "bootnode": "bootnode",
+        "puppeth": "puppeth"
+      },
+      "platforms": [
+        "linux-amd64"
+      ],
+      "sha256": {
+        "linux-amd64": "e18dac588ce0c5ef4235f9f0aecf7a5030bac628352a487502d5c4a298e2ccca"
+      }
+    },
     "geth": {
       "_comment": "darwin-amd64/darwin-arm64 are now the SAME universal (lipo fat) binary built 2026-07-24 from main (arm64 native + amd64 cross-compiled, no Intel Mac needed since geth is pure Go) -- identical sha256 both filenames, runs natively on either Mac architecture. Verified via `lipo -info` (both slices present) and a live devnet 5151 join on the arm64 slice.",
       "file": "geth-{os}-{arch}",

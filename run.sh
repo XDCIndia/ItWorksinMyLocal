@@ -19,13 +19,17 @@ while [ $# -gt 0 ]; do
   case "$1" in
     --mixed) MIXED=1; shift;;
     --chainid) CHAINID=$2; shift 2;;
+    --build) BIN_SOURCE_oldxdc=build; shift;;
     -h|--help)
-      echo "usage: ./run.sh [--mixed] [--chainid N]"
+      echo "usage: ./run.sh [--mixed] [--chainid N] [--build]"
       echo "  --mixed       also start node 5: modern geth, sync-only, from genesis"
       echo "                (same as MIXED=1 ./run.sh)"
       echo "  --chainid N   chain id (default: 20118; env: CHAINID)"
+      echo "  --build       clone XDPoSChain (XDPOS_REPO) and build the oldxdc binary"
+      echo "                from source instead of downloading a prebuilt one (same as"
+      echo "                BIN_SOURCE_oldxdc=build ./run.sh). Default is download."
       exit 0;;
-    *) echo "usage: ./run.sh [--mixed] [--chainid N]" >&2; exit 1;;
+    *) echo "usage: ./run.sh [--mixed] [--chainid N] [--build]" >&2; exit 1;;
   esac
 done
 

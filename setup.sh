@@ -9,6 +9,11 @@
 #   ./setup.sh --new 4            # generate N fresh keys into .env first
 #   ./setup.sh --chainid 12345  # use a custom chain/network id
 #   ./setup.sh --client geth      # build-only: the modern go-ethereum client
+#   ./setup.sh --build            # clone XDPoSChain/go-ethereum and build from
+#                                  # source instead of downloading prebuilt
+#                                  # binaries (same as BIN_SOURCE=build). The
+#                                  # default (no --build) downloads a prebuilt
+#                                  # binary for every client, including oldxdc.
 #
 # Default (no --client, i.e. CLIENT=oldxdc): builds the 4 legacy oldxdc
 # sealers AND the modern go-ethereum client, generates genesis, wipes node
@@ -30,8 +35,9 @@ while [ $# -gt 0 ]; do
     --new) NEW=1; shift; case "$1" in [0-9]*) N=$1; shift;; esac;;
     --client) export CLIENT=$2; CLIENT_EXPLICIT=1; shift 2;;
     --chainid) CHAINID=$2; shift 2;;
+    --build) export BIN_SOURCE=build; shift;;
     -h|--help) sed -n '2,16p' "$0" | sed 's/^# \{0,1\}//'; exit 0;;
-    *) echo "usage: ./setup.sh [--new [N]] [--chainid N] [--client oldxdc|geth]" >&2; exit 1;;
+    *) echo "usage: ./setup.sh [--new [N]] [--chainid N] [--client oldxdc|geth] [--build]" >&2; exit 1;;
   esac
 done
 
