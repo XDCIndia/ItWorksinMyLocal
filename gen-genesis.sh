@@ -170,6 +170,54 @@ LOG="$(mktemp "${TMPDIR:-/tmp}/gen-genesis.XXXXXX")" || { echo "gen-genesis.sh: 
 if [ -f "$NETWORK.json" ]; then
   mkdir -p "$(dirname "$OUT")"
   cp "$NETWORK.json" "$OUT"
+
+  # Pin the post-Byzantium EVM fork schedule EXPLICITLY (always, not just for
+  # --new networks) instead of leaving constantinopleBlock/petersburgBlock/
+  # istanbulBlock/berlinBlock/londonBlock/eip1559Block/cancunBlock absent.
+  #
+  # Root cause (ItWorksinMyLocal#114 follow-up): puppeth's wizard only prompts
+  # for homestead/eip150/eip155/eip158/byzantium, leaving every later fork
+  # field nil/absent in the JSON it writes. geth/oldxdc treat "absent" as
+  # "this fork never activates" (standard go-ethereum semantics) -- so on an
+  # unmodified genesis this network is frozen at Byzantium forever on those
+  # clients. erigon-xdc does NOT share that semantics for XDPoS chains: any
+  # genesis loaded via SpecFromGenesisFile (i.e. not one of its own hardcoded,
+  # registered chainspecs) gets a code-side default profile
+  # (execution/chain/spec/config.go:applyDefaultXDPoSForkProfile) that fills
+  # every nil fork field with mainnet's own upgrade order -- Constantinople/
+  # Petersburg/Istanbul/Berlin/London all at block 0, matching XDC mainnet's
+  # historical schedule -- REGARDLESS of what this genesis's JSON says. Since
+  # Istanbul raised SLOAD from 200 to 800 gas, this alone was enough to
+  # disagree on gasUsed for the very first BlockSigner-contract-write
+  # transaction and hard-fork erigon (and besu, same client-side "assume
+  # mainnet's own progression" behavior) off this network at whatever block
+  # first exercises SLOAD/SSTORE -- diverging even though the genesis HASH
+  # itself already matched (chain-config fields are never part of the header,
+  # so this was invisible to the genesis-hash gate).
+  #
+  # Fix: stop relying on ANY client's implicit fallback -- explicitly pin the
+  # exact schedule erigon's default profile already assumes, so it becomes a
+  # no-op there (defaultForkBlock only touches nil fields) while geth/oldxdc
+  # now activate the SAME forks at the SAME blocks instead of never. eip1559Block
+  # is computed as v2block-gap (this genesis's own V2 switch minus its own gap)
+  # rather than hardcoding erigon's 2250 default, so it stays correct even if
+  # --v2block/--gap are customized away from their 2700/450 defaults.
+  python3 -c "
+import json, sys
+path, v2block, gap = sys.argv[1], int(sys.argv[2]), int(sys.argv[3])
+d = json.load(open(path))
+cfg = d['config']
+cfg.setdefault('constantinopleBlock', 0)
+cfg.setdefault('petersburgBlock', 0)
+cfg.setdefault('istanbulBlock', 0)
+cfg.setdefault('berlinBlock', 0)
+cfg.setdefault('londonBlock', 0)
+cfg.setdefault('eip1559Block', max(v2block - gap, 0))
+cfg.setdefault('cancunBlock', v2block + gap)
+json.dump(d, open(path, 'w'))
+print('pinned explicit post-Byzantium fork schedule (constantinople/petersburg/istanbul/berlin/london=0, eip1559Block=%d, cancunBlock=%d) in %s' % (cfg['eip1559Block'], cfg['cancunBlock'], path))
+" "$OUT" "$V2BLOCK" "$GAP"
+
   if [ -n "$SKIP_V1_VALIDATION" ]; then
     python3 -c "
 import json, sys
