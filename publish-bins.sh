@@ -523,6 +523,14 @@ plan_items() {
   PLAN_DONE=1
   [ "${#ITEM_CLIENT[@]}" -gt 0 ] || hard_abort "nothing to do: no (client, platform) combination matched --clients/--platforms"
   echo "Planned ${#ITEM_CLIENT[@]} item(s)."
+  # Per-client breakdown so it's clear up front exactly which clients (and
+  # which platform slugs of each) this run will build. Reuses the plan-phase
+  # locals c/s; runs after the arrays are populated by add_item above.
+  echo "Clients to build:"
+  for c in $ALL_CLIENTS; do
+    s="$(items_for_client "$c")"
+    [ -n "$s" ] && printf '  %-11s %s\n' "$c" "$s"
+  done
 }
 
 # ---------------------------------------------------------------------------
@@ -1073,12 +1081,41 @@ build_nethermind_rid() {
   rm -rf "$outdir" || true
 }
 
+# render_bar DONE TOTAL [WIDTH] -> a fixed-width ASCII bar like "[####------]".
+# Deliberately ASCII (no unicode blocks) so it renders identically in an
+# interactive terminal and in a piped/redirected CI log, and prints as a plain
+# line (no carriage-return trickery) so it interleaves cleanly with the
+# per-item BUILT/SKIPPED/FAILED status lines the build functions emit.
+render_bar() {
+  local done="$1" total="$2" width="${3:-20}" filled i bar=""
+  [ "$total" -gt 0 ] || total=1
+  filled=$(( done * width / total ))
+  [ "$filled" -gt "$width" ] && filled=$width
+  [ "$filled" -lt 0 ] && filled=0
+  for (( i = 0; i < width; i++ )); do
+    if [ "$i" -lt "$filled" ]; then bar="$bar#"; else bar="$bar-"; fi
+  done
+  printf '[%s]' "$bar"
+}
+
 build_items() {
   echo "== Build =="
-  local c slugs
+  # Collect the clients that actually have planned items so the progress bar
+  # counts real work (a client with no selected slugs is skipped entirely).
+  # Builds are multi-minute, so each client gets a banner up front naming it
+  # and showing "N/total" progress; the per-slug BUILT/SKIPPED/FAILED lines
+  # from set_item_status still print underneath each banner.
+  local c slugs build_clients="" total=0 done=0
   for c in $ALL_CLIENTS; do
+    [ -n "$(items_for_client "$c")" ] && build_clients="$build_clients $c"
+  done
+  build_clients="${build_clients# }"
+  for c in $build_clients; do total=$(( total + 1 )); done
+  for c in $build_clients; do
     slugs="$(items_for_client "$c")"
-    [ -n "$slugs" ] || continue
+    done=$(( done + 1 ))
+    printf '\n%s building %d/%d: %-11s (%s)\n' \
+      "$(render_bar "$done" "$total")" "$done" "$total" "$c" "$slugs"
     case "$c" in
       geth) build_geth "$slugs" ;;
       xone) build_xone "$slugs" ;;
@@ -1088,6 +1125,8 @@ build_items() {
       nethermind) build_nethermind "$slugs" ;;
     esac
   done
+  [ "$total" -gt 0 ] && printf '\n%s build phase complete (%d client(s))\n' \
+    "$(render_bar "$total" "$total")" "$total"
 }
 
 # ---------------------------------------------------------------------------
