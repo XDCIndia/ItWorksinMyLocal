@@ -39,3 +39,9 @@ genesis/genesis-*.json
 # --keyfile path a caller points elsewhere under lab/ instead.
 lab/onboard-*.env
 lab/onboard-*.env.state
+
+# publish-bins.sh -- build/publish staging area (checkouts, staged binaries,
+# logs, state.tsv) and the real publish.env (host/dir config; see
+# publish.env.sample for the template -- this one is never committed).
+dist/
+publish.env
