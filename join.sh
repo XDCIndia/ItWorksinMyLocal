@@ -209,6 +209,13 @@ GAS_LIMIT="${GAS_LIMIT:-}"
 ETHSTATS="xdc_openscan_stats_2026@stats.xdcindia.com:443"
 # nethermind's chainspec name (NETHERMIND_DIST/chainspec/$NM_CONFIG.json via
 # --config); env-overridable, defaults to devnet 5151. --nm-config wins over both.
+# NM_CONFIG_EXPLICIT tracks whether NM_CONFIG was actually chosen (env or
+# --nm-config) vs left at this default -- see the auto-convert block below
+# (ItWorksinMyLocal#114 / xdc-nethermind-private#250): only auto-convert a
+# genesis->chainspec when the caller did NOT ask for a specific chainspec by
+# name, so an explicit --nm-config always wins untouched.
+NM_CONFIG_EXPLICIT=""
+[ -n "${NM_CONFIG:-}" ] && NM_CONFIG_EXPLICIT=1
 NM_CONFIG="${NM_CONFIG:-xdc-devnet5151}"
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -216,7 +223,7 @@ while [ $# -gt 0 ]; do
     --syncmode)    SYNCMODE=$2; shift 2;;
     --genesis)     GENESIS=$2; shift 2;;
     --chain)       CHAIN=$2; shift 2;;
-    --nm-config)   NM_CONFIG=$2; shift 2;;
+    --nm-config)   NM_CONFIG=$2; NM_CONFIG_EXPLICIT=1; shift 2;;
     --bootnodes)   BOOTNODES=$2; shift 2;;
     --ip)          HOST_IP=$2; shift 2;;
     --host)        HOST_IP=$2; shift 2;;
@@ -293,12 +300,14 @@ case "${NETWORK:-}" in
     # `--client nethermind --network mainnet` abort ("missing chainspec/xdc-mainnet.json")
     # and crash-loop. Map to the actual bundled name.
     NM_CONFIG="${NM_CONFIG/xdc-devnet5151/xdc}"
+    NM_CONFIG_EXPLICIT=1   # a curated bundled chainspec, never auto-convert over it
     PUB_BOOTNODES_FILE="bootnodes/mainnet.list"
     GAS_LIMIT_DEFAULT=420000000 ;;
   testnet|apothem)
     [ -z "$GENESIS" ]   && GENESIS="genesis/genesis-testnet.json"
     [ -z "$NETWORKID" ] && NETWORKID=51
     NM_CONFIG="${NM_CONFIG/xdc-devnet5151/xdc-testnet}"
+    NM_CONFIG_EXPLICIT=1   # a curated bundled chainspec, never auto-convert over it
     PUB_BOOTNODES_FILE="bootnodes/testnet.list"
     GAS_LIMIT_DEFAULT=420000000 ;;
   ""|devnet5151|5151|devnet|5050|net5050|5152|net5152)
@@ -657,12 +666,52 @@ case "$CLIENT" in
       fi
     fi
     [ -x "$CLIENT_BIN" ] || { echo "nethermind not found. Build the xdc nethermind dist (XDCIndia/nethermind) and set NETHERMIND_DIST=/path/to/dist (containing ./nethermind and chainspec/$NM_CONFIG.json), put it on PATH, or let this script download it (unset BIN_SOURCE/BIN_SOURCE_nethermind if you set either to 'build')." >&2; exit 1; }
+    # ItWorksinMyLocal#114 / xdc-nethermind-private#250: nethermind ships only a
+    # handful of hand-authored chainspecs (5151/mainnet/testnet) and has no
+    # --genesis path of its own. When the caller didn't ask for a specific
+    # --nm-config/NM_CONFIG (NM_CONFIG_EXPLICIT unset), a geth-format --genesis
+    # WAS given, and that genesis's chainId does NOT match the chainspec
+    # NM_CONFIG currently resolves to (whether that chainspec is missing
+    # entirely, or just targets a different chain), auto-convert the genesis
+    # via netlab/nm-chainspec.sh into a fresh chainspec+config keyed off its
+    # own chainId ("xdc-custom-<chainId>") so nethermind can at least ATTEMPT
+    # to join a private/per-run network setup.sh generated. KNOWN LIMITATION
+    # (see nm-chainspec.sh's own header, xdc-nethermind-private#250): the
+    # converted chainspec loads and a genesis block validation actually runs,
+    # but nethermind's genesis-block loader deletes the 0x89 BlockSigners
+    # contract ("TIPSigning fork") unconditionally at block 0 for any
+    # non-hardcoded chainId, producing a genesis state-root/hash mismatch
+    # against every other client -- a client-side gap, not fixable from this
+    # script; still tracked as an open blocker, not silently papered over.
+    if [ -z "$NM_CONFIG_EXPLICIT" ] && [ -f "$GENESIS" ]; then
+      AUTO_NM_CHAINID=$(python3 -c "import json,sys
+try:
+    print(json.load(open(sys.argv[1]))['config']['chainId'])
+except Exception:
+    pass" "$GENESIS" 2>/dev/null)
+      CURRENT_NM_CHAINID=$(python3 -c "import json,sys
+try:
+    print(json.load(open(sys.argv[1]))['params']['chainId'])
+except Exception:
+    pass" "$NETHERMIND_DIST/chainspec/$NM_CONFIG.json" 2>/dev/null)
+      if [ -n "$AUTO_NM_CHAINID" ] && [ "$AUTO_NM_CHAINID" != "$CURRENT_NM_CHAINID" ]; then
+        AUTO_NM_CONFIG="xdc-custom-${AUTO_NM_CHAINID}"
+        echo "nethermind: no explicit --nm-config, and the resolved chainspec '$NM_CONFIG' (chainId ${CURRENT_NM_CHAINID:-<missing>}) doesn't match --genesis's chainId $AUTO_NM_CHAINID -- auto-converting $GENESIS into $NETHERMIND_DIST/chainspec/$AUTO_NM_CONFIG.json via netlab/nm-chainspec.sh" >&2
+        if "$(dirname "$0")/netlab/nm-chainspec.sh" --genesis "$GENESIS" --name "$AUTO_NM_CONFIG" --dist "$NETHERMIND_DIST"; then
+          NM_CONFIG="$AUTO_NM_CONFIG"
+        else
+          echo "nethermind: genesis->chainspec auto-conversion failed; falling back to the original chainspec-missing error below" >&2
+        fi
+      fi
+    fi
     if [ ! -f "$NETHERMIND_DIST/chainspec/$NM_CONFIG.json" ]; then
       echo "nethermind dist '$NETHERMIND_DIST' is missing chainspec/$NM_CONFIG.json." >&2
       echo "nethermind loads its own Parity-style chainspec matching the target chainId" >&2
       echo "-- it does NOT read the geth-format --genesis -- so joining a custom network" >&2
       echo "needs either a NETHERMIND_DIST that ships a chainspec for it, or --nm-config" >&2
-      echo "(env NM_CONFIG) set to a name that's already present. Chainspecs present in" >&2
+      echo "(env NM_CONFIG) set to a name that's already present, or a --genesis file this" >&2
+      echo "script can auto-convert via netlab/nm-chainspec.sh (see above for why that" >&2
+      echo "didn't happen/succeed here). Chainspecs present in" >&2
       echo "'$NETHERMIND_DIST/chainspec/':" >&2
       { ls "$NETHERMIND_DIST/chainspec/" 2>/dev/null || echo "  (directory not found)"; } >&2
       exit 1
