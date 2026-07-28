@@ -1545,7 +1545,13 @@ main() {
   check_required_tools
   validate_clients_arg
 
-  if [ "$MODE" != build-only ] && [ -z "$PUBLISH_DIR" ]; then
+  # --dry-run is exempt: it has no side effects, so demanding the production
+  # publish target before it will even describe itself made the header's own
+  # first usage example (`./publish-bins.sh --dry-run`) hard-abort on any
+  # checkout without a publish.env. Reviewing the plan is exactly what you
+  # want to do BEFORE configuring where things get written. Same
+  # MODE+DRY_RUN pairing the ssh_preflight/update_manifest gates below use.
+  if [ "$MODE" != build-only ] && [ "$DRY_RUN" != 1 ] && [ -z "$PUBLISH_DIR" ]; then
     hard_abort "PUBLISH_DIR is not set -- copy publish.env.sample to publish.env and set it (the remote web root serving $PUBLISH_BASE_URL), or pass --build-only."
   fi
 
