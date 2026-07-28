@@ -14,20 +14,61 @@ cd "$(dirname "$0")" || exit 1
 # the 4 legacy oldxdc sealers below. Default is unchanged (4 legacy sealers
 # only).
 MIXED="${MIXED:-0}"
+# --all: the 4 legacy sealers PLUS one sync-only follower per modern client, so
+# a single command gives a cross-client network on the local genesis. Each
+# follower is launched through join.sh rather than reimplemented here -- join.sh
+# already knows every client's flag dialect (geth's --http vs xone's single-dash
+# vs besu's --genesis-file vs erigon's --chain <file>), and netlab/node.sh
+# already drives it the same way.
+ALL="${ALL:-0}"
+# Modern clients --all will try, in port order. Override to narrow it, e.g.
+#   ALL_CLIENTS="geth erigon" ./run.sh --all
+# Two clients are deliberately absent from this default, both because they
+# START but never FOLLOW the chain -- the silent half-failure this flag exists
+# to avoid. Add either explicitly via ALL_CLIENTS if you are working on it.
+#
+#   nethermind: loads a Parity-style chainspec keyed to the chain id and does
+#     NOT read the geth-format --genesis (join.sh aborts saying so). A freshly
+#     generated local chain id can never have one.
+#
+#   erigon: instantiates the XDPoS *V2* BFT engine at startup ("[XDPoS] V2
+#     engine created switchBlock=2700", "V2 BFT engine started currentRound=1")
+#     and then sits at "[p2p] No GoodPeers", peers=0, block=0 while the sealers
+#     climb past 200. Our genesis is in V1 until v2block (2700), so there is
+#     nothing it will follow. Verified it is NOT a port or peer-discovery
+#     problem: it binds all four protocol listeners, receives all 4 sealer
+#     enodes via --staticpeers (confirmed in its own "Startup command" line),
+#     and behaves identically with --no-downloader. Devnet 5151, which erigon
+#     does join, is long past its own v2 switch. Worth retrying with
+#     `gen-genesis.sh --v2block 0`.
+ALL_CLIENTS="${ALL_CLIENTS:-geth xone besu reth}"
 CHAINID="${CHAINID:-20118}"
 while [ $# -gt 0 ]; do
   case "$1" in
     --mixed) MIXED=1; shift;;
+    --all) ALL=1; shift;;
     --chainid) CHAINID=$2; shift 2;;
     -h|--help)
-      echo "usage: ./run.sh [--mixed] [--chainid N]"
+      echo "usage: ./run.sh [--mixed | --all] [--chainid N]"
       echo "  --mixed       also start node 5: modern geth, sync-only, from genesis"
       echo "                (same as MIXED=1 ./run.sh)"
+      echo "  --all         also start ONE sync-only follower per modern client"
+      echo "                (default: $ALL_CLIENTS; env: ALL_CLIENTS -- erigon and"
+      echo "                nethermind are opt-in, see the comments in this file)"
+      echo "                Clients whose binary is absent are skipped with a"
+      echo "                reason rather than taking the network down."
       echo "  --chainid N   chain id (default: 20118; env: CHAINID)"
       exit 0;;
-    *) echo "usage: ./run.sh [--mixed] [--chainid N]" >&2; exit 1;;
+    *) echo "usage: ./run.sh [--mixed | --all] [--chainid N]" >&2; exit 1;;
   esac
 done
+
+# --all is a superset of --mixed (it starts a modern geth follower too), so
+# accepting both would launch two geth nodes fighting for the same ports.
+if [ "$ALL" = 1 ] && [ "$MIXED" = 1 ]; then
+  echo "run.sh: --all already includes a modern geth follower; drop --mixed (or MIXED=1)" >&2
+  exit 1
+fi
 
 # A non-numeric chain id is accepted by the node binary but produces a network
 # nothing else can join -- reject it here rather than at peering time.
@@ -51,9 +92,14 @@ NUM_NODES=4
 # --mixed is set node 5 uses BASE+5) -- override to move the entire topology
 # off a set of ports already in use on a shared host, e.g.:
 #   BASE_P2P_PORT=31302 BASE_RPC_PORT=9544 BASE_WS_PORT=9554 ./run.sh --mixed
+_BASE_P2P_EXPLICIT="${BASE_P2P_PORT:+1}"
 BASE_P2P_PORT="${BASE_P2P_PORT:-30302}"
 BASE_RPC_PORT="${BASE_RPC_PORT:-8544}"
 BASE_WS_PORT="${BASE_WS_PORT:-8554}"
+# --all only: p2p ports per follower. A client may need more than one
+# listener (erigon: one per eth protocol version), so each follower gets a
+# block this wide rather than a single port.
+ALL_P2P_STRIDE="${ALL_P2P_STRIDE:-10}"
 
 # Ensure platform-native binaries exist (builds from XDPoSChain if needed).
 ensure_bins
@@ -70,11 +116,103 @@ if [ "$MIXED" = 1 ] && [ ! -x "$MODERN_GETH_BIN" ]; then
   exit 1
 fi
 
+# --all: resolve which modern clients can actually run here, BEFORE starting
+# anything. Same reasoning as the port pre-flight below -- a follower whose
+# binary is missing would have join.sh exit in the background where nobody sees
+# it, leaving a topology quietly smaller than the one that was asked for.
+#
+# The binary name per client mirrors lib.sh's NODE_NAME_BIN (reth's is
+# "xdc-reth", not "reth"); besu/reth/nethermind additionally honour the
+# BESU_BIN/RETH_BIN/NETHERMIND_DIST overrides join.sh itself uses, so a client
+# installed outside bin/ is still found.
+_client_binary() {   # -> prints the path it will look for
+  case "$1" in
+    geth)       echo "${MODERN_GETH_BIN:-$_LIB_DIR/bin/geth/$PLATFORM/geth}" ;;
+    xone)       echo "$_LIB_DIR/bin/xone/$PLATFORM/xone" ;;
+    erigon)     echo "$_LIB_DIR/bin/erigon/$PLATFORM/erigon" ;;
+    besu)       echo "${BESU_BIN:-$_LIB_DIR/bin/besu/$PLATFORM/besu}" ;;
+    reth)       echo "${RETH_BIN:-$_LIB_DIR/bin/reth/$PLATFORM/xdc-reth}" ;;
+    nethermind) echo "${NETHERMIND_DIST:-$_LIB_DIR/bin/nethermind/$PLATFORM}/nethermind" ;;
+    *)          echo "" ;;
+  esac
+}
+
+# besu is a Java app with no bundled JRE in this dist: without a JVM it prints
+# "Unable to determine Java version" and exits, so having the launcher script is
+# not enough to call it runnable.
+_client_runnable() {
+  case "$1" in
+    # macOS ships a /usr/bin/java SHIM that exists, satisfies `command -v`, and
+    # then exits 1 with "Unable to locate a Java Runtime". So run it.
+    besu) java -version >/dev/null 2>&1 || "${JAVA_HOME:-/nonexistent}/bin/java" -version >/dev/null 2>&1 ;;
+    *) : ;;
+  esac
+}
+_client_unrunnable_reason() {
+  case "$1" in
+    besu) echo "no Java runtime (install a JDK or set JAVA_HOME)" ;;
+    *) echo "binary not found" ;;
+  esac
+}
+
+ALL_SELECTED=""
+ALL_SKIPPED=""
+ALL_SKIP_WHY=""
+if [ "$ALL" = 1 ]; then
+  for _c in $ALL_CLIENTS; do
+    _bin="$(_client_binary "$_c")"
+    if { [ -n "$_bin" ] && [ -x "$_bin" ]; } || command -v "$_c" >/dev/null 2>&1; then
+      if _client_runnable "$_c"; then
+        ALL_SELECTED="${ALL_SELECTED:+$ALL_SELECTED }$_c"
+      else
+        ALL_SKIPPED="${ALL_SKIPPED:+$ALL_SKIPPED }$_c"
+        ALL_SKIP_WHY="${ALL_SKIP_WHY}  $_c -> $(_client_unrunnable_reason "$_c")
+"
+      fi
+    else
+      ALL_SKIPPED="${ALL_SKIPPED:+$ALL_SKIPPED }$_c"
+      ALL_SKIP_WHY="${ALL_SKIP_WHY}  $_c -> binary not found: $_bin
+"
+    fi
+  done
+
+  # erigon 3.5.2 binds ONE p2p port per eth protocol version and takes them from
+  # a HARDCODED 30303..30307, using our --port only for the XDC protocol (100).
+  # Verified: with that range free it came up on 30317(v100) + 30303(69) +
+  # 30304(68) + 30305(63). --p2p.allowed-ports, which older builds used to
+  # redirect them, is rejected outright by 3.5.2 ("flag provided but not
+  # defined"), so the range cannot be moved -- the SEALERS have to move instead.
+  # Their default 30303..30306 collides head-on, which is why the erigon follower
+  # died with "run out of allowed ports".
+  case " $ALL_SELECTED " in
+    *" erigon "*)
+      if [ "$_BASE_P2P_EXPLICIT" != 1 ] && [ "$BASE_P2P_PORT" = 30302 ]; then
+        BASE_P2P_PORT=31302
+        echo "run.sh --all: moving the local topology to BASE_P2P_PORT=$BASE_P2P_PORT"
+        echo "  (erigon needs the hardcoded 30303-30307 range free; override BASE_P2P_PORT to pin it)"
+      fi ;;
+  esac
+  if [ -z "$ALL_SELECTED" ]; then
+    echo "run.sh --all: none of the requested modern clients has a usable binary." >&2
+    echo "  looked for:" >&2
+    for _c in $ALL_CLIENTS; do echo "    $_c -> $(_client_binary "$_c")" >&2; done
+    echo "  build one, e.g.:  ./setup.sh --client geth" >&2
+    exit 1
+  fi
+fi
+
 # Machine identity: hostname + LAN IP (advertised to peers so this works across
 # machines on the same network, not just localhost).
 HOST=$(hostname -s)
 IP=$(detect_ip)
-echo "Machine: host=$HOST ip=$IP platform=$PLATFORM mixed=$MIXED"
+echo "Machine: host=$HOST ip=$IP platform=$PLATFORM mixed=$MIXED all=$ALL"
+if [ "$ALL" = 1 ]; then
+  echo "Modern followers: ${ALL_SELECTED:-<none>}"
+  if [ -n "$ALL_SKIPPED" ]; then
+    echo "Skipped:"
+    printf '%s' "$ALL_SKIP_WHY"
+  fi
+fi
 
 # The chain id the nodes run with and the chainId baked into genesis.json must
 # agree. When they don't, nothing here fails loudly: the nodes start, seal, and
@@ -202,6 +340,40 @@ if [ "$MIXED" = 1 ]; then
   PORT_SPECS+=("$((BASE_P2P_PORT + 5)):node 5 p2p" "$((BASE_RPC_PORT + 5)):node 5 rpc" \
                "$((BASE_WS_PORT + 5)):node 5 ws" "$((BASE_RPC_PORT + 55)):node 5 authrpc")
 fi
+if [ "$ALL" = 1 ]; then
+  # Followers continue the same index series as node 5, one index per client, so
+  # the ports stay derivable from BASE_* and a whole --all topology can still be
+  # moved aside with one set of overrides.
+  _idx=5
+  for _c in $ALL_SELECTED; do
+    # p2p strides by ALL_P2P_STRIDE, not 1: erigon opens one listener per
+    # --p2p.protocol version (default 69,70,71) counting upward from its --port,
+    # so consecutive followers would have erigon squatting the next client's p2p
+    # port. Reserve the whole block and check every port in it, so a collision
+    # shows up here instead of as a follower that dies in the background.
+    _p2p=$((BASE_P2P_PORT + 5 + (_idx - 5) * ALL_P2P_STRIDE))
+    _k=0
+    while [ "$_k" -lt "$ALL_P2P_STRIDE" ]; do
+      PORT_SPECS+=("$((_p2p + _k)):node $_idx ($_c) p2p block")
+      _k=$((_k + 1))
+    done
+    PORT_SPECS+=("$((BASE_RPC_PORT + _idx)):node $_idx ($_c) rpc" \
+                 "$((BASE_WS_PORT + _idx)):node $_idx ($_c) ws" \
+                 "$((BASE_RPC_PORT + 50 + _idx)):node $_idx ($_c) authrpc")
+    # erigon additionally takes its eth-protocol listeners from the hardcoded
+    # 30303..30307 (see the ALL_SELECTED block above). Reserve them so a clash
+    # is reported here by name instead of surfacing as "run out of allowed
+    # ports" in a background follower log.
+    if [ "$_c" = erigon ]; then
+      _e=30303
+      while [ "$_e" -le 30307 ]; do
+        PORT_SPECS+=("$_e:node $_idx (erigon) hardcoded eth-protocol port")
+        _e=$((_e + 1))
+      done
+    fi
+    _idx=$((_idx + 1))
+  done
+fi
 if ports_in_use "${PORT_SPECS[@]}"; then
   echo "" >&2
   echo "  Refusing to start: the node that loses the bind would die silently and" >&2
@@ -256,6 +428,75 @@ if [ "$MIXED" = 1 ]; then
     --authrpc.port "$AUTHRPC_PORT5" \
     --identity "${NODE5_IDENTITY}" --ethstats "${ETHSTATS5}" &
   child_proc="$child_proc $!"
+fi
+
+# --all: one sync-only follower per modern client, each via join.sh.
+#
+# Delegating rather than open-coding six launches is the whole point: join.sh
+# owns each client's flag dialect and its binary/genesis quirks (erigon wants
+# --chain <genesis file>, besu --genesis-file, xone single-dash flags, reth a
+# wss:// ethstats URL), and it is the same entry point netlab/node.sh uses. A
+# copy here would drift from it silently.
+#
+# --gas-limit is passed explicitly and NOT left to join.sh's per---network
+# default: this is a local genesis with no --network, and #94/#96/#98 were all
+# variants of a follower running on a gas-limit plateau that disagreed with the
+# sealers. 420000000 is exactly what the legacy sealers above use
+# (--targetgaslimit), so the followers agree by construction.
+if [ "$ALL" = 1 ]; then
+  # Followers get the live sealer enodes as --staticpeers, harvested from the
+  # sealers' own admin_nodeInfo once their RPC answers. The bootnode alone is
+  # not enough: erigon's discv4 does not discover peers through an XDPoSChain
+  # bootnode (join.sh says so in its --staticpeers doc), so without this it sits
+  # at "[p2p] No GoodPeers", peers=0, block=0 -- started but never syncing. Left
+  # to itself join.sh falls back to peers.list, which is the PUBLIC devnet-5151
+  # set and useless on a local chain id.
+  # Same approach netlab/fleet.sh uses to feed netlab/node.sh.
+  _sealer_enodes() {
+    local i p en out=""
+    for i in $(seq 1 $NUM_NODES); do
+      p=$((BASE_RPC_PORT + i))
+      en=$(curl -s -m 3 -X POST -H 'Content-Type: application/json' \
+             --data '{"jsonrpc":"2.0","method":"admin_nodeInfo","params":[],"id":1}' \
+             "http://127.0.0.1:$p" 2>/dev/null \
+           | python3 -c 'import sys,json;print(json.load(sys.stdin)["result"]["enode"])' 2>/dev/null)
+      # admin_nodeInfo advertises 127.0.0.1 for a locally-bound node; peers on
+      # the LAN need the routable address the sealers were started with.
+      en=$(printf '%s' "$en" | sed "s|@127\.0\.0\.1:|@${IP}:|")
+      [ -n "$en" ] && out="${out:+$out,}$en"
+    done
+    printf '%s' "$out"
+  }
+  STATIC_PEERS=""
+  _waited=0
+  while [ "$_waited" -lt 60 ]; do
+    STATIC_PEERS="$(_sealer_enodes)"
+    case "$STATIC_PEERS" in *enode://*) break ;; esac
+    sleep 3; _waited=$((_waited + 3))
+  done
+  if [ -n "$STATIC_PEERS" ]; then
+    echo "Harvested $(printf '%s' "$STATIC_PEERS" | tr ',' '\n' | grep -c enode://) sealer enode(s) for the followers"
+  else
+    echo "WARNING: no sealer enodes after ${_waited}s -- followers may not find peers" >&2
+  fi
+
+  idx=5
+  for c in $ALL_SELECTED; do
+    P2P=$((BASE_P2P_PORT + 5 + (idx - 5) * ALL_P2P_STRIDE)); RPC=$((BASE_RPC_PORT + idx))
+    WS=$((BASE_WS_PORT + idx));   AUTH=$((BASE_RPC_PORT + 50 + idx))
+    DD="./nodes/${idx}-${c}"
+    echo "Starting node $idx ($c, sync-only follower) rpc=$RPC ..."
+    bash ./join.sh --client "$c" --genesis ./genesis/genesis.json \
+      --chainid "$CHAINID" --bootnodes "$BOOTNODE_ENODE" --ip "$IP" \
+      --datadir "$DD" --port "$P2P" --rpcport "$RPC" --wsport "$WS" \
+      --authrpc-port "$AUTH" --gas-limit 420000000 \
+      ${STATIC_PEERS:+--staticpeers "$STATIC_PEERS"} \
+      --name "itlocal-${c}-${HOST}-$(printf '%02d' "$idx")" \
+      > "${DD}.log" 2>&1 &
+    child_proc="$child_proc $!"
+    idx=$((idx + 1))
+  done
+  echo "Follower logs: ./nodes/5-*.log ... (join.sh output per client)"
 fi
 
 wait

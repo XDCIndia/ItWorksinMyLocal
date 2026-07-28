@@ -8,6 +8,7 @@
 #   ./setup.sh --new              # generate 4 fresh keys into .env first
 #   ./setup.sh --new 4            # generate N fresh keys into .env first
 #   ./setup.sh --chainid 12345  # use a custom chain/network id
+#   ./setup.sh --new --all      # 4 legacy sealers + one follower per modern client
 #   ./setup.sh --client geth      # build-only: the modern go-ethereum client
 #
 # Default (no --client, i.e. CLIENT=oldxdc): builds the 4 legacy oldxdc
@@ -24,14 +25,15 @@
 set -e
 cd "$(dirname "$0")"
 
-NEW=0; N=4; CLIENT_EXPLICIT=0; CHAINID=20118
+NEW=0; N=4; CLIENT_EXPLICIT=0; CHAINID=20118; ALL=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --new) NEW=1; shift; case "$1" in [0-9]*) N=$1; shift;; esac;;
     --client) export CLIENT=$2; CLIENT_EXPLICIT=1; shift 2;;
+    --all) ALL=1; shift;;
     --chainid) CHAINID=$2; shift 2;;
     -h|--help) sed -n '2,16p' "$0" | sed 's/^# \{0,1\}//'; exit 0;;
-    *) echo "usage: ./setup.sh [--new [N]] [--chainid N] [--client oldxdc|geth]" >&2; exit 1;;
+    *) echo "usage: ./setup.sh [--new [N]] [--all] [--chainid N] [--client oldxdc|geth]" >&2; exit 1;;
   esac
 done
 
@@ -141,4 +143,11 @@ fi
 # Do not re-add it while node 5 is a modern-geth client.
 bash ./gen-genesis.sh --chainid "$CHAINID" --signers "$SIGNERS" "${ROLE_ARGS[@]}"
 bash ./reset.sh
-bash ./run.sh --mixed --chainid "$CHAINID"
+# --all launches one follower per modern client instead of just node 5 geth;
+# run.sh resolves which clients actually have a binary and skips the rest
+# with a reason rather than bringing the topology down.
+if [ "$ALL" = 1 ]; then
+  bash ./run.sh --all --chainid "$CHAINID"
+else
+  bash ./run.sh --mixed --chainid "$CHAINID"
+fi
