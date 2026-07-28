@@ -86,7 +86,7 @@ print(','.join(addrs))
 # _s06_lc <string>: lowercases (for case-insensitive, order-preserving
 # comma-list equality between independently-decoded client responses).
 _s06_lc() {
-  printf '%s' "$1" | tr 'A-Z' 'a-z'
+  printf '%s' "$1" | tr '[:upper:]' '[:lower:]'
 }
 
 scen_06() {

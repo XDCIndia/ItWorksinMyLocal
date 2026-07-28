@@ -83,8 +83,8 @@ print(','.join(addrs))
 # _s04_list_has <comma-list> <addr>: case-insensitive membership check.
 _s04_list_has() {
   local low_list low_addr
-  low_list=$(printf '%s' "$1" | tr 'A-Z' 'a-z')
-  low_addr=$(printf '%s' "$2" | tr 'A-Z' 'a-z')
+  low_list=$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')
+  low_addr=$(printf '%s' "$2" | tr '[:upper:]' '[:lower:]')
   case ",${low_list}," in
     *",${low_addr},"*) return 0 ;;
     *) return 1 ;;

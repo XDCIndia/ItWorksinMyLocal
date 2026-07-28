@@ -120,6 +120,7 @@ require_oldxdc
 ensure_bins
 PUPPETH="$PUPPETH_BIN"
 rm -rf "$HOME/.puppeth/$NETWORK" "$NETWORK.json"
+LOG="$(mktemp "${TMPDIR:-/tmp}/gen-genesis.XXXXXX")" || { echo "gen-genesis.sh: mktemp failed" >&2; exit 1; }
 
 {
   echo "$NETWORK"      # network name
@@ -144,7 +145,7 @@ rm -rf "$HOME/.puppeth/$NETWORK" "$NETWORK.json"
   echo 2               # menu: Manage existing genesis
   echo 2               # submenu: Export genesis configuration
   echo                 # file (default <network>.json)
-} | "$PUPPETH" >/tmp/gen-genesis.log 2>&1
+} | "$PUPPETH" >"$LOG" 2>&1
 
 if [ -f "$NETWORK.json" ]; then
   mkdir -p "$(dirname "$OUT")"
@@ -191,6 +192,106 @@ print('timestamp set to', d['timestamp'], 'in', path)
     echo "PREFUND=$PREFUND"
     echo "SIGNERS=$SIGNERS"
   } > network-roles.env
+
+  # Same mapping as network-roles.env above, but as the per-network JSON that
+  # accounts/accounts-<chainid>.json already holds the generated keypairs in --
+  # so one file per chain id describes the whole network: every role, its
+  # address, its genesis balance, the private key where we have one, the
+  # consensus parameters, and the total supply.
+  #
+  # gen-address.sh writes that file first (signers, with private keys); this
+  # merges on top of it and preserves those keys, matching on address. Roles
+  # that are plain genesis addresses (owner, foundation, swap, prefund) have no
+  # key here and get privateKey: null rather than being silently dropped.
+  #
+  # Balances are strings, not JSON numbers: the prefunded account alone exceeds
+  # 2**53, so a number would be silently rounded by any conformant JSON reader.
+  ACCOUNTS_JSON="accounts/accounts-${CHAINID}.json"
+  mkdir -p "$(dirname "$ACCOUNTS_JSON")"
+  ACCOUNTS_JSON="$ACCOUNTS_JSON" GENESIS_PATH="$OUT" NETWORK="$NETWORK" CHAINID="$CHAINID" \
+  OWNER="$(norm "$OWNER")" FOUNDATION="$(norm "$FOUNDATION")" SWAP="$(norm "$SWAP")" \
+  FOUNDATION_OWNERS="$FOUNDATION_OWNERS" TEAM_OWNERS="$TEAM_OWNERS" \
+  PREFUND="$PREFUND" SIGNERS="$SIGNERS" \
+  python3 -c '
+import json, os, re
+
+def norm(a):
+    return re.sub(r"^(0[xX]|xdc)", "", a.strip()).lower()
+
+def split(v):
+    return [norm(x) for x in os.environ.get(v, "").split(",") if x.strip()]
+
+path = os.environ["ACCOUNTS_JSON"]
+genesis = json.load(open(os.environ["GENESIS_PATH"]))
+alloc = {norm(k): v for k, v in genesis.get("alloc", {}).items()}
+
+# Private keys already generated for this chain id, keyed by address.
+keys = {}
+if os.path.exists(path):
+    try:
+        for a in json.load(open(path)).get("accounts", []):
+            if a.get("privateKey") and a.get("address"):
+                keys[norm(a["address"])] = a["privateKey"]
+    except (ValueError, KeyError):
+        pass   # unreadable/old format -- rebuild it rather than fail the run
+
+# role -> addresses, in the order they are most useful to a reader.
+roles = [("signer", split("SIGNERS")), ("owner", [norm(os.environ["OWNER"])]),
+         ("foundation", [norm(os.environ["FOUNDATION"])]),
+         ("foundationOwner", split("FOUNDATION_OWNERS")),
+         ("teamOwner", split("TEAM_OWNERS")),
+         ("swap", [norm(os.environ["SWAP"])]), ("prefund", split("PREFUND"))]
+
+accounts, seen = [], {}
+for role, addrs in roles:
+    for addr in addrs:
+        if not addr:
+            continue
+        if addr in seen:                      # one address, several roles
+            entry = seen[addr]
+            if role not in entry["roles"]:
+                entry["roles"].append(role)
+            continue
+        bal = int(alloc.get(addr, {}).get("balance", "0x0"), 16)
+        entry = {"roles": [role], "address": "0x" + addr, "xdc": "xdc" + addr,
+                 "privateKey": keys.get(addr), "balanceWei": str(bal),
+                 "balanceXdc": str(bal // 10**18)}
+        seen[addr] = entry
+        accounts.append(entry)
+
+# Contracts and any other funded genesis address, so the supply below adds up.
+others = []
+for addr, v in alloc.items():
+    if addr in seen:
+        continue
+    bal = int(v.get("balance", "0x0"), 16)
+    if bal or "code" in v:
+        others.append({"address": "0x" + addr, "xdc": "xdc" + addr,
+                       "isContract": "code" in v, "balanceWei": str(bal),
+                       "balanceXdc": str(bal // 10**18)})
+others.sort(key=lambda e: e["address"])
+
+total = sum(int(v.get("balance", "0x0"), 16) for v in alloc.values())
+xdpos = genesis.get("config", {}).get("XDPoS", {})
+out = {
+    "chainId": int(os.environ["CHAINID"]),
+    "network": os.environ["NETWORK"],
+    "genesis": os.environ["GENESIS_PATH"],
+    "consensus": {"period": xdpos.get("period"), "epoch": xdpos.get("epoch"),
+                  "gap": xdpos.get("gap"), "reward": xdpos.get("reward"),
+                  "v2SwitchBlock": (xdpos.get("v2") or {}).get("switchBlock"),
+                  "skipV1Validation": xdpos.get("SkipV1Validation")},
+    "totalSupply": {"wei": str(total), "xdc": str(total // 10**18)},
+    "accounts": accounts,
+    "genesisContractsAndOtherFunded": others,
+}
+with open(path, "w") as f:
+    json.dump(out, f, indent=2)
+    f.write("\n")
+os.chmod(path, 0o600)   # carries private keys -- same as gen-address.sh
+n = sum(1 for a in accounts if a["privateKey"])
+print("Wrote %d accounts (%d with private keys) + total supply to %s" % (len(accounts), n, path))
+'
   # Also keep a per-network-id copy so different chains don't overwrite each
   # other's genesis (matches the genesis/genesis-<id>.json convention). run.sh
   # still boots from $OUT (genesis/genesis.json); this is the archival copy.
@@ -201,7 +302,8 @@ print('timestamp set to', d['timestamp'], 'in', path)
   fi
   echo "OK: $OUT generated (chainId $CHAINID, network '$NETWORK')"
   echo "Reset node data before restart:  rm -rf ./nodes/*/XDC ./nodes/*/XDCx ./nodes/*/keystore"
+  rm -f "$LOG"
 else
-  echo "FAILED: $NETWORK.json not produced. See /tmp/gen-genesis.log" >&2
+  echo "FAILED: $NETWORK.json not produced. See $LOG" >&2
   exit 1
 fi
