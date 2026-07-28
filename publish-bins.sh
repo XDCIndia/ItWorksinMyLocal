@@ -809,9 +809,31 @@ build_pure_go_client() {
 
   for s in $requested; do case "$s" in darwin-amd64|darwin-arm64) want_darwin=1 ;; esac; done
   if [ "$want_darwin" = 1 ]; then
+    # Cross slice: `GOOS=darwin GOARCH=amd64 make <target>` does NOT work on a
+    # go-ethereum-derived tree. Its Makefile target is a thin wrapper around
+    # `go run build/ci.go install`, and ci.go cross-builds via its OWN -arch
+    # flag -- it never reads GOARCH, so the env var is silently ignored and the
+    # "amd64" slice comes out arm64. lipo then refuses the pair:
+    #   have the same architectures (arm64) and can't be in the same fat file
+    # so geth darwin builds failed outright on Apple Silicon.
+    #
+    # cgo flags do not rescue this: adding CGO_*FLAGS='-arch x86_64' (the trick
+    # erigon's recipe uses, correctly, because erigon's Makefile calls `go
+    # build` and so does honour GOARCH) only retargets the C half. The Go
+    # objects stay arm64 and the link fails with "found architecture 'arm64',
+    # required architecture 'x86_64'". Verified both failure modes here.
+    #
+    # Detected per-tree rather than hardcoded per-client: this helper is shared
+    # with xone, whose source is private and may not use ci.go at all. Trees
+    # with build/ci.go get the -arch invocation; anything else keeps the
+    # GOARCH+make path that already worked for them.
+    local amd64_cmd="GOOS=darwin GOARCH=amd64 make $make_target"
+    if [ -f "$srcdir/build/ci.go" ]; then
+      amd64_cmd="go run build/ci.go install -arch amd64 ./cmd/$make_target"
+    fi
     build_darwin_universal "$client" "$srcdir" "$commit" "$log" \
       "GOOS=darwin GOARCH=arm64 make $make_target" \
-      "GOOS=darwin GOARCH=amd64 make $make_target" \
+      "$amd64_cmd" \
       "build/bin/$make_target" "build/bin/$make_target" "go make"
   fi
   for s in $requested; do
