@@ -111,12 +111,34 @@ for role, flag in (("owner", "--owner"), ("foundation", "--foundation"),
 fi
 [ ${#ROLE_ARGS[@]} -gt 0 ] && echo "Seeding genesis with generated role accounts (${#ROLE_ARGS[@]} args from $_acct_json)"
 
-# --skip-v1-validation true: the mixed topology's node 5 (modern geth) needs
-# this -- without it, the 4 legacy sealers' per-block v1 double-validation
-# "blocksigner" system transactions (0x...89) desync it a few blocks after
-# genesis (a gas-accounting mismatch between the modern go-ethereum XDC fork
-# and legacy oldxdc on those specific transactions; see gen-genesis.sh's
-# --skip-v1-validation doc). Doesn't affect the genesis hash.
-bash ./gen-genesis.sh --chainid "$CHAINID" --signers "$SIGNERS" "${ROLE_ARGS[@]}" --skip-v1-validation true
+# NOTE: --skip-v1-validation is deliberately NOT passed. It used to be set here
+# "because the mixed topology needs it", but it was the direct cause of node 5
+# freezing a few blocks in:
+#
+#   WARN invalid difficulty number=8 have=1 want=4 creator=0x74C5...
+#   ERROR ########## BAD BLOCK #########  Error: invalid difficulty
+#
+# SkipV1Validation exists ONLY in legacy XDPoSChain -- `grep -r SkipV1Validation`
+# over the modern go-ethereum XDC fork (v1.17.4-xdc.7) finds nothing at all. So
+# setting it made the two clients disagree on the header itself: legacy honours
+# it and seals difficulty=1 (engine_v1/engine.go calcDifficulty returns
+# big.NewInt(1) under the flag), while modern geth has never heard of the field
+# and computes difficulty from the masternode count (=4), then rejects every
+# block the sealers produce. Peering and the genesis hash were fine; every
+# block simply failed verification.
+#
+# The gas mismatch it was originally added for is fixed upstream. That symptom
+# (+3600 gas/tx on the blocksigner 0x...89 calls) came from the modern client
+# INJECTING fork blocks our genesis never declares -- istanbul/berlin/london=0,
+# whose EIP-1884/2200/2929 repricing mispriced BlockSigners.sign(). The fork now
+# derives a ceiling from the highest fork the genesis actually declares and
+# refuses to inherit above it (see core/genesis.go
+# forkPatchGenesisAuthoritative, "mispriced ... by +3600 gas per tx"). Our
+# genesis declares nothing past byzantiumBlock, which is exactly that case.
+#
+# Verified with the flag off: 0 "invalid difficulty", 0 "invalid gas used",
+# node 5 tracking the sealers block-for-block and agreeing on the block hash.
+# Do not re-add it while node 5 is a modern-geth client.
+bash ./gen-genesis.sh --chainid "$CHAINID" --signers "$SIGNERS" "${ROLE_ARGS[@]}"
 bash ./reset.sh
 bash ./run.sh --mixed --chainid "$CHAINID"

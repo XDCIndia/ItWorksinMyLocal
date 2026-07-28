@@ -45,15 +45,35 @@
 #                             Setting true disables the v1 double-validation
 #                             "blocksigner" system transactions (calls to the
 #                             0x...89 contract each masternode submits per
-#                             block) -- needed for a mixed legacy+modern-geth
-#                             network: the modern go-ethereum XDC fork (as of
-#                             v1.17.4-xdc.7) computes a different gas cost for
-#                             those transactions than legacy oldxdc does
-#                             (observed: legacy 340232 vs modern 354632, a
-#                             consistent +3600/tx), which desyncs a modern
-#                             geth follower with "invalid gas used" a few
-#                             blocks after genesis. This does not change the
-#                             genesis hash (config isn't part of the header).
+#                             block). This does not change the genesis hash
+#                             (config isn't part of the header).
+#
+#                             DO NOT set this for a mixed legacy+modern-geth
+#                             network. This doc used to say the opposite --
+#                             that it was REQUIRED there, to dodge a +3600
+#                             gas/tx mismatch on those blocksigner calls. Both
+#                             halves of that are now wrong:
+#
+#                             (a) It BREAKS the mixed topology. The field
+#                             exists only in legacy XDPoSChain; the modern XDC
+#                             go-ethereum fork has no such config key at all.
+#                             Legacy honours it and seals difficulty=1, modern
+#                             computes difficulty from the masternode count and
+#                             rejects every block: "invalid difficulty have=1
+#                             want=4". A modern follower freezes a few blocks
+#                             in while peering and the genesis hash look fine.
+#
+#                             (b) The gas mismatch it dodged is fixed upstream.
+#                             It came from the modern client injecting fork
+#                             blocks the genesis never declared (istanbul/
+#                             berlin/london=0), whose EIP-1884/2200/2929
+#                             repricing mispriced BlockSigners.sign(). The fork
+#                             now caps inherited forks at the highest one the
+#                             genesis actually declares (core/genesis.go
+#                             forkPatchGenesisAuthoritative).
+#
+#                             Still useful for a legacy-only net where you
+#                             genuinely want v1 validation off.
 #   --timestamp N             post-process the header's "timestamp" field
 #                             (0x-hex or decimal; default: leave puppeth's
 #                             own default alone, the wall-clock time it ran
