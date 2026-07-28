@@ -431,13 +431,35 @@ fi
 # BOOTNODES (kept alongside the discovery bootnode) gives every client an
 # immediate, real, block-serving peer to dial instead of waiting on (or never
 # completing) Kademlia propagation through the bootnode alone.
+#
+# An EXPLICIT --bootnodes that points at THIS machine (127.0.0.1/localhost or
+# our own detected IP) is just as much a local join as a key-derived one, but
+# previously only the key-derived path set LOCAL_BOOTNODE=1 -- so
+# `join.sh --bootnodes <local-enode>` skipped this harvest entirely and left
+# modern clients pinned to the PUBLIC peers.list (wrong chain) -> 0 peers on
+# the local network. Promote such a bootnode to a local join so the harvest
+# runs for it too.
+if [ "$LOCAL_BOOTNODE" != 1 ] && [ -n "$BOOTNODES" ]; then
+  _myip=$(detect_ip 2>/dev/null)
+  case ",$BOOTNODES," in
+    *@127.0.0.1:*|*@localhost:*) LOCAL_BOOTNODE=1 ;;
+    *) [ -n "$_myip" ] && case "$BOOTNODES" in *"@${_myip}:"*) LOCAL_BOOTNODE=1 ;; esac ;;
+  esac
+fi
 if [ "$LOCAL_BOOTNODE" = 1 ] && [ "$STATICPEERS_EXPLICIT" != 1 ]; then
   _local_nid="$NETWORKID"
   if [ -z "$_local_nid" ] && [ -n "$GENESIS" ] && [ -f "$GENESIS" ]; then
     _local_nid=$(python3 -c "import json,sys;print(json.load(open('$GENESIS'))['config']['chainId'])" 2>/dev/null)
   fi
   _local_peers=""
-  for _lp in 8545 8546 8547 8548; do
+  # Probe the local sealers' JSON-RPC. run.sh/setup.sh honor BASE_RPC_PORT
+  # (default 8545) and assign nodes BASE_RPC_PORT, +1, +2, +3 -- so hardcoding
+  # 8545-8548 missed the sealers whenever the network was launched on a custom
+  # BASE_RPC_PORT (e.g. when 8545 was already taken), leaving _local_peers empty
+  # and modern clients unable to find a real peer. Derive the scan from the same
+  # env instead.
+  _brp="${BASE_RPC_PORT:-8545}"
+  for _lp in "$_brp" $((_brp + 1)) $((_brp + 2)) $((_brp + 3)); do
     _lenode=$(curl -s -m3 "http://127.0.0.1:${_lp}" -X POST -H 'Content-Type: application/json' \
       --data '{"jsonrpc":"2.0","method":"admin_nodeInfo","params":[],"id":1}' 2>/dev/null \
       | python3 -c "
@@ -447,16 +469,25 @@ try:
 except Exception:
     pass" 2>/dev/null)
     [ -n "$_lenode" ] || continue
-    # Normalise the host to $bhost (this machine's IP / --ip, resolved above)
-    # and strip any ?discport=... query, so it's a clean, dialable
-    # enode://<id>@<ip>:<tcpport> regardless of what the sealer self-reports.
-    _lenode=$(printf '%s' "$_lenode" | python3 -c "
-import sys
+    # Strip any ?discport=... query and normalise the host so it's a clean,
+    # dialable enode://<id>@<ip>:<tcpport>. Prefer $bhost (the --ip / resolved
+    # bootnode host) but fall back to the sealer's OWN self-reported host when
+    # that is already a real address -- $bhost is only set inside the
+    # bootnode-key-derivation block, so an explicit local --bootnodes join
+    # leaves it empty, which previously produced malformed `...@:<port>` enodes
+    # that geth rejects as a "bad bootstrap node". Only override a placeholder
+    # host ([::], 0.0.0.0, 127.0.0.1, localhost, empty).
+    _lenode=$(printf '%s' "$_lenode" | BHOST="$bhost" python3 -c "
+import sys, os
 e = sys.stdin.read().strip().split('?', 1)[0]
 try:
     head, hostport = e.split('@', 1)
-    _, port = hostport.split(':', 1)
-    print('%s@%s:%s' % (head, '$bhost', port))
+    host, port = hostport.rsplit(':', 1)
+    bhost = os.environ.get('BHOST', '').strip()
+    placeholder = host.strip('[]') in ('', '::', '0.0.0.0', '127.0.0.1', 'localhost')
+    if placeholder and bhost:
+        host = bhost
+    print('%s@%s:%s' % (head, host, port))
 except Exception:
     print(e)
 ")
