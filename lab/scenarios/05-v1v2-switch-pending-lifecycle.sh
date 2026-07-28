@@ -47,7 +47,7 @@ SCEN_MODE="OBSERVE"
 # instead of assuming the eth_sendTransaction call alone means it landed.
 _s05_wait_candidate_state() {
   local ref="$1" addr="$2" want_present="$3" timeout="$4" waited=0 set_str present
-  addr=$(printf '%s' "$addr" | tr 'A-Z' 'a-z')
+  addr=$(printf '%s' "$addr" | tr '[:upper:]' '[:lower:]')
   while :; do
     set_str=$(lab_get_candidates "$ref" 2>/dev/null) || set_str=""
     case ",$set_str," in
@@ -101,7 +101,7 @@ import sys
 a = json.loads(sys.argv[1])
 print(a[0] if a else '')
 " "$outgoing_json")
-  outgoing=$(printf '%s' "$outgoing" | tr 'A-Z' 'a-z')
+  outgoing=$(printf '%s' "$outgoing" | tr '[:upper:]' '[:lower:]')
   [ -n "$outgoing" ] || { echo "scen_05: FAIL - reference has no unlocked account to resign"; return 1; }
 
   "$LAB_DIR/masternode.sh" upload-kyc --rpc "$ref" --key "$incoming_key" --from "$incoming" \
