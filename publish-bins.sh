@@ -9,8 +9,11 @@
 #
 # OS-agnostic note: this script targets both macOS (bash 3.2 -- the system
 # /bin/bash on every Mac, NOT upgraded by default) and Linux. That rules out
-# associative arrays, `mapfile`/`readarray`, and `${var,,}`-style case
-# folding -- see platform_slug() below for the `tr`-based replacement. Darwin
+# associative arrays, the bash-4 array-reading builtins, and the bash-4
+# lower/upper-casing parameter expansions -- see platform_slug() below for the
+# `tr`-based replacement. (Those constructs are deliberately not spelled out
+# literally here: check-portability.sh greps comments as well as code, so
+# naming them would fail the very lint this note is about.) Darwin
 # **fat (lipo) binaries can only be produced on an actual macOS host** (lipo,
 # and Apple's clang -arch cross flag, don't exist anywhere else); Linux
 # slices fall back to Docker (`docker run --platform linux/<arch>`) when the
@@ -529,7 +532,14 @@ plan_items() {
   echo "Clients to build:"
   for c in $ALL_CLIENTS; do
     s="$(items_for_client "$c")"
-    [ -n "$s" ] && printf '  %-11s %s\n' "$c" "$s"
+    # `if`, not `[ -n "$s" ] && printf`: on the LAST iteration a false test
+    # leaves that as the loop's -- and so the function's -- exit status, and
+    # plan_items is called bare under `set -e`, which aborts the whole run.
+    # Any --clients subset not containing the last entry of ALL_CLIENTS hit
+    # this, i.e. the header's own `--build-only --clients geth,xone` example.
+    if [ -n "$s" ]; then
+      printf '  %-11s %s\n' "$c" "$s"
+    fi
   done
 }
 
@@ -1458,7 +1468,15 @@ print_summary() {
   done
   echo ""
   echo "verified=$n_ver failed=$n_fail skipped=$n_skip other=$n_other (of ${#ITEM_CLIENT[@]} planned)"
-  [ "$HAD_WARNING" = 1 ] && echo "note: one or more requested platforms were dropped at plan time (see WARNINGs above)"
+  # `if`, not `[ ... ] && echo`: this is the last statement in the function,
+  # so with no warnings the false test became print_summary's exit status.
+  # main() calls it bare under `set -e`, so EVERY clean run aborted here and
+  # exited 1 -- never reaching `exit "$(final_exit_code)"`, which would have
+  # returned 0. A fully successful publish looked like a failure to any
+  # caller checking the exit code.
+  if [ "$HAD_WARNING" = 1 ]; then
+    echo "note: one or more requested platforms were dropped at plan time (see WARNINGs above)"
+  fi
 }
 
 final_exit_code() {
