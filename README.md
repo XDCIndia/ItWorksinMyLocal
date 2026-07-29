@@ -78,7 +78,10 @@ Control it with `BIN_SOURCE`:
 | `BIN_SOURCE_<client>=build` | per-client override, e.g. `BIN_SOURCE_erigon=build` |
 | `REBUILD=1` | force a fresh build/redownload, ignoring any cache |
 
-Notes: `oldxdc` (XDC + bootnode + puppeth) has no prebuilt and always builds.
+Notes: `oldxdc` (XDC + bootnode + puppeth) is published as a GitHub release
+asset rather than on xdc.network, so a plain `curl` of the mirror 404s and the
+download falls back to `gh release download` automatically — that 404 in the log
+is expected, not an error. It still builds from source with `BIN_SOURCE=build`.
 `erigon` is published for `linux-amd64` only, so on macOS/arm it auto-falls back
 to a source build. `besu`/`reth`/`nethermind` are download-only here (the scripts
 don't build them) — an explicit `BESU_BIN` / `RETH_BIN` / `NETHERMIND_DIST` (or a
@@ -90,19 +93,19 @@ nethermind still needs a custom `NETHERMIND_DIST` (join.sh says so if missing).
 
 ## Choosing a client
 
-Six node clients are selectable with `--client` (or `CLIENT=`), joining **devnet
+Seven node clients are selectable with `--client` (or `CLIENT=`), joining **devnet
 5151** with `./join.sh --client <name>`. By default every client is fetched as a
 **prebuilt binary** (see [Prebuilt binaries vs local build](#prebuilt-binaries-vs-local-build));
 
 **Boot every client at once** with `--client all`:
 
 ```bash
-./join.sh --client all            # all six clients join devnet 5151 together
+./join.sh --client all            # all seven clients join devnet 5151 together
 ```
 
 This fans out to one process per client — each in its own datadir
-(`./peer-oldxdc`, `./peer-geth`, `./peer-erigon`, `./peer-besu`,
-`./peer-nethermind`, `./peer-reth`) with a distinct port set, all dialing the same
+(`nodes/<client>-<nodetype>`, e.g. `nodes/geth-follower`) with a distinct port set,
+all dialing the same
 genesis + bootnodes. `Ctrl-C` stops them all. Any shared flag is forwarded
 (`--genesis`, `--ip`/`--bootnodes`, `--mine`, `--ethstats`/`--no-ethstats`, …). A
 client whose extra inputs aren't provided (`erigon` needs `--chain`; `nethermind`
@@ -116,21 +119,52 @@ toolchains) are download-only unless you point `join.sh` at your own binary via
 
 | Client | Source repo | Binary source | Status (devnet 5151) |
 |--------|-------------|---------------|--------|
-| `oldxdc` (default) | [`XDCIndia/OLDXDC`](https://github.com/XDCIndia/OLDXDC) (XDPoSChain) | build (no prebuilt) | local run + genesis + seal ✅; **5151 join: 0 peers observed — under investigation ([#13](../../issues/13))** |
+| `oldxdc` (default) | [`XDCIndia/OLDXDC`](https://github.com/XDCIndia/OLDXDC) (XDPoSChain) | download (GitHub release) or build | local run + genesis + seal ✅; **5151 join: 0 peers observed — under investigation ([#13](../../issues/13))** |
 | `geth` | [`XDCIndia/go-ethereum`](https://github.com/XDCIndia/go-ethereum) (GP5) | download or build | **join/sync ✅ verified** (~400 blk/s); seal TODO; full-sync past the mid-history epoch switch needs the xdcSyncer fix |
 | `erigon` | [`XDCIndia/erigon-xdc`](https://github.com/XDCIndia/erigon-xdc) | download (`linux-amd64` only) or build | sync via built-in `--chain xdc\|xdc-apothem`; custom `--genesis` blocked ([#9](../../issues/9)) — fix proven in a lab (`PARITY OK 1..1054` incl. v1→v2 switch), not yet upstreamed |
 | `besu` | [`XDCIndia/besu-xdc`](https://github.com/XDCIndia/besu-xdc) | download or `BESU_BIN`/PATH | reads geth genesis natively; large prebuilt (**slow download**) and needs a modern JRE (11+) |
 | `nethermind` | [`XDCIndia/nethermind`](https://github.com/XDCIndia/nethermind) | download or `NETHERMIND_DIST`/PATH | **custom `NETHERMIND_DIST` required for 5151** — the prebuilt archive doesn't ship `chainspec/xdc-devnet5151.json` |
-| `reth` | [`XDCIndia/reth-xdc`](https://github.com/XDCIndia/reth-xdc) | download or `RETH_BIN`/PATH | reads geth genesis natively; **5151 join: 0 peers — falls back to ETH bootnodes for chainId 5151 ([#12](../../issues/12))** |
+| `reth` | [`XDCIndia/reth`](https://github.com/XDCIndia/reth) | download or `RETH_BIN`/PATH | reads geth genesis natively. Follows a private XDPoS net to tip with state-root parity **only from the build carrying the epoch-reward fix** — see the warning below |
+| `xone` | [`XDCIndia/xOneGo`](https://github.com/XDCIndia/xOneGo) | download (mirror, GitHub-release fallback) | Go XDPoS reference client. Follows a private net to tip, and seals in exact fair share when seated as a validator |
 
-> **Verification status.** Last full end-to-end matrix (download → spin up → sync)
-> was run on **macOS/arm64**: **geth** synced cleanly toward tip; **oldxdc** and
-> **reth** spun up but got 0 peers ([#13](../../issues/13), [#12](../../issues/12));
-> **besu** download didn't finish in-window (slow); **nethermind**/**erigon** are
-> blocked for 5151 as noted above. `linux/amd64` (where the erigon prebuilt exists
-> and a nethermind 5151 dist can be built) is the reference platform for the full
-> six-client matrix — expect better coverage there. Re-run it yourself with
-> `./join.sh --client <name>` per client.
+### Binary acquisition — verified 2026-07-29, linux/amd64
+
+From a **completely fresh clone**, `download_bins()` succeeds and the sha256 verifies
+for **all seven** clients:
+
+| Client | Result | Source actually used |
+|---|:---:|---|
+| `oldxdc` | ✅ | GitHub release (mirror 404s by design — see the note above) |
+| `geth` | ✅ | xdc.network mirror |
+| `erigon` | ✅ | xdc.network mirror |
+| `reth` | ✅ | xdc.network mirror |
+| `besu` | ✅ | xdc.network mirror (large — expect a slow download) |
+| `nethermind` | ✅ | xdc.network mirror |
+| `xone` | ✅ | xdc.network mirror |
+
+Reproduce it per client with:
+
+```bash
+CLIENT=<name> bash -c 'source ./lib.sh; download_bins'
+```
+
+This checks only that you get a verified binary — it is deliberately separate from
+whether that client then *syncs*, which is the table above.
+
+> **If a download reports `sha256 mismatch … (mirror may be stale)`** the manifest and
+> the mirror have drifted. That is the failure mode to expect after a binary is
+> republished without `binaries.json` being updated in the same change; the fetch is
+> then correctly refused rather than trusted. Clients with a `ghRelease` entry
+> (`oldxdc`, `xone`) recover automatically via `gh release download`; the others fail
+> loudly. If you hit it, open an issue rather than working around the checksum — the
+> check is the only thing standing between you and a silently substituted binary.
+
+> **reth: use a build newer than 2026-07-29.** Builds before XDCIndia/reth#265
+> mis-split the epoch reward when a masternode's registered owner is the foundation
+> wallet, which diverges the state root at the **first reward block** and then stalls
+> the node permanently — while it still looks healthy (process up, peers connected,
+> RPC answering a *stale* head). The published `reth-linux-amd64` was refreshed to a
+> fixed build on 2026-07-29; if you pinned an older one, replace it.
 
 **Local network (own `run.sh` net, chainId 20118).** A follower joining your own
 local net was also tested (macOS/arm64):
@@ -151,6 +185,11 @@ So on a stock macOS/arm64 host, **oldxdc, geth, and erigon sync a local network*
 ./setup.sh --new                 # default oldxdc — runs the 4-node network
 ./setup.sh --client geth         # builds the modern geth client
 CLIENT=geth ./gen-address.sh 2   # any script honors CLIENT=…
+
+# setup.sh's own --client is limited to oldxdc|geth (it builds the sealer set).
+# To attach any of the seven clients to a network, use join.sh:
+./join.sh --client xone          # or geth|erigon|besu|nethermind|reth|oldxdc
+./join.sh --client all           # one process per client, all seven at once
 ```
 
 Binaries are kept separate per client under `bin/<client>/<os>-<arch>/`, so the
