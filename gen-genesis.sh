@@ -195,28 +195,43 @@ if [ -f "$NETWORK.json" ]; then
   # itself already matched (chain-config fields are never part of the header,
   # so this was invisible to the genesis-hash gate).
   #
-  # Fix: stop relying on ANY client's implicit fallback -- explicitly pin the
-  # exact schedule erigon's default profile already assumes, so it becomes a
-  # no-op there (defaultForkBlock only touches nil fields) while geth/oldxdc
-  # now activate the SAME forks at the SAME blocks instead of never. eip1559Block
-  # is computed as v2block-gap (this genesis's own V2 switch minus its own gap)
-  # rather than hardcoding erigon's 2250 default, so it stays correct even if
-  # --v2block/--gap are customized away from their 2700/450 defaults.
+  # FIRST FIX ATTEMPT (reverted) pinned these to block 0 -- matching erigon's
+  # own DEFAULT, but NOT matching what oldxdc/geth actually do. That was wrong:
+  # unlike erigon's marker instruction sets (gas-schedule-only, no real
+  # behavior change pre-Eip1559Block), geth-GP5 genuinely EXECUTES Istanbul/
+  # EIP-1559 semantics once activated (real fee-market baseFee burning etc)
+  # while legacy oldxdc's codebase has NO such execution path at all,
+  # regardless of what the genesis says. Pinning eip1559Block to a small,
+  # reachable block (switchBlock-gap) made geth start actually running
+  # EIP-1559 the moment it crossed that block -- diverging from oldxdc's
+  # state at the very next block (verified: "invalid merkle root" on geth
+  # the block after eip1559Block, live on a real deployment).
+  #
+  # CORRECT fix: use the same giant sentinel XDC's own production configs use
+  # for "this fork never activates" (mainnet/apothem's own real configs pin
+  # unreached forks to 9,999,999,999, not 0 -- see XDCIndia/go-ethereum
+  # params/config.go) instead of 0. This is a no-op for erigon's default
+  # profile the same way 0 was (defaultForkBlock only touches nil fields), so
+  # its Istanbul-vs-Byzantium SLOAD-cost fix still applies -- but now geth and
+  # oldxdc genuinely agree to NEVER activate Constantinople/Istanbul/Berlin/
+  # London/EIP-1559/Cancun on this network, matching oldxdc's real, permanent
+  # Byzantium-only behavior instead of merely coinciding with erigon's default.
   python3 -c "
 import json, sys
-path, v2block, gap = sys.argv[1], int(sys.argv[2]), int(sys.argv[3])
+path = sys.argv[1]
+NEVER = 9999999999  # XDC's own 'this fork never activates' sentinel (see mainnet/apothem configs)
 d = json.load(open(path))
 cfg = d['config']
-cfg.setdefault('constantinopleBlock', 0)
-cfg.setdefault('petersburgBlock', 0)
-cfg.setdefault('istanbulBlock', 0)
-cfg.setdefault('berlinBlock', 0)
-cfg.setdefault('londonBlock', 0)
-cfg.setdefault('eip1559Block', max(v2block - gap, 0))
-cfg.setdefault('cancunBlock', v2block + gap)
+cfg.setdefault('constantinopleBlock', NEVER)
+cfg.setdefault('petersburgBlock', NEVER)
+cfg.setdefault('istanbulBlock', NEVER)
+cfg.setdefault('berlinBlock', NEVER)
+cfg.setdefault('londonBlock', NEVER)
+cfg.setdefault('eip1559Block', NEVER)
+cfg.setdefault('cancunBlock', NEVER)
 json.dump(d, open(path, 'w'))
-print('pinned explicit post-Byzantium fork schedule (constantinople/petersburg/istanbul/berlin/london=0, eip1559Block=%d, cancunBlock=%d) in %s' % (cfg['eip1559Block'], cfg['cancunBlock'], path))
-" "$OUT" "$V2BLOCK" "$GAP"
+print('pinned explicit post-Byzantium fork schedule (constantinople/petersburg/istanbul/berlin/london/eip1559Block/cancunBlock all = %d, i.e. never) in %s' % (NEVER, path))
+" "$OUT"
 
   if [ -n "$SKIP_V1_VALIDATION" ]; then
     python3 -c "

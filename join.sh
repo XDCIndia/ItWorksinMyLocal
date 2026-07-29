@@ -26,7 +26,9 @@
 #   --genesis FILE       the target network's genesis.json (overrides --network;
 #                        defaults to DEFAULT_GENESIS in network.env -- devnet 5151)
 #   --ip IP[:PORT]       just give the target machine's IP -- connects to its
-#                        bootnode (shared bootnode.key) at PORT (default 30301).
+#                        bootnode (shared bootnode.key) at PORT (default 30301,
+#                        or BOOTNODE_PORT/DEFAULT_BOOTNODE_PORT if that
+#                        network's run.sh was started with a custom one).
 #                        Simplest way to join a network on another host.
 #   --bootnodes LIST     full enode URL(s) to dial, if you have them
 #                        (overrides --ip; default: derived from ./bootnode.key)
@@ -408,7 +410,12 @@ if [ -z "$BOOTNODES" ] \
   target="${HOST_IP:-$(detect_ip)}"
   case "$target" in
     *:*) bhost="${target%:*}"; bport="${target##*:}";;
-    *)   bhost="$target";      bport=30301;;
+    # No explicit :PORT -- assume run.sh's own default (30301), overridable via
+    # BOOTNODE_PORT (the same var run.sh reads) for a run.sh network started
+    # with a custom bootnode port to avoid colliding with another topology on
+    # this host. Falls back to DEFAULT_BOOTNODE_PORT (network.env) then 30301,
+    # matching the other derivation path above (line ~380) for consistency.
+    *)   bhost="$target";      bport="${BOOTNODE_PORT:-${DEFAULT_BOOTNODE_PORT:-30301}}";;
   esac
   BOOTNODES="enode://$("$bn" -nodekey ./bootnode.key -writeaddress)@${bhost}:${bport}"
   echo "Using key-based bootnode: $BOOTNODES"

@@ -58,6 +58,15 @@ NUM_NODES=4
 BASE_P2P_PORT="${BASE_P2P_PORT:-30302}"
 BASE_RPC_PORT="${BASE_RPC_PORT:-8544}"
 BASE_WS_PORT="${BASE_WS_PORT:-8554}"
+# The bootnode's own port, kept SEPARATE from BASE_P2P_PORT (default 30301,
+# unchanged from before BASE_P2P_PORT existed) rather than derived from it --
+# join.sh hardcodes 30301 as ITS OWN assumed default when no --bootnodes/--ip
+# is given (see join.sh's DEFAULT_BOOTNODE_PORT), so silently tying this to
+# BASE_P2P_PORT would break that default-case assumption the moment someone
+# customizes BASE_P2P_PORT. Override independently to run two topologies on
+# one host without a bootnode-port collision, e.g.:
+#   BOOTNODE_PORT=31300 BASE_P2P_PORT=31302 BASE_RPC_PORT=9544 BASE_WS_PORT=9554 ./run.sh --mixed
+BOOTNODE_PORT="${BOOTNODE_PORT:-30301}"
 
 # Ensure platform-native binaries exist (builds from XDPoSChain if needed).
 ensure_bins
@@ -169,7 +178,7 @@ networkid="$CHAINID"
 # Local bootnode enode, built from bootnode.key + this machine's IP so every
 # node connects to a bootnode within the network.
 BOOTNODE_PUBKEY=$("$BOOTNODE_BIN" -nodekey ./bootnode.key -writeaddress)
-BOOTNODE_ENODE="enode://${BOOTNODE_PUBKEY}@${IP}:30301"
+BOOTNODE_ENODE="enode://${BOOTNODE_PUBKEY}@${IP}:${BOOTNODE_PORT}"
 echo "Local bootnode: $BOOTNODE_ENODE"
 
 # Pre-flight: every port this topology needs must be free BEFORE anything
@@ -198,7 +207,7 @@ ports_in_use() {
   return $busy
 }
 
-PORT_SPECS=("30301:bootnode")
+PORT_SPECS=("${BOOTNODE_PORT}:bootnode")
 for i in $(seq 1 $NUM_NODES); do
   PORT_SPECS+=("$((BASE_P2P_PORT + i)):node $i p2p" "$((BASE_RPC_PORT + i)):node $i rpc" "$((BASE_WS_PORT + i)):node $i ws")
 done
@@ -216,7 +225,7 @@ if ports_in_use "${PORT_SPECS[@]}"; then
 fi
 
 echo Starting the bootnode ...
-"$BOOTNODE_BIN" -nodekey ./bootnode.key -addr ${IP}:30301 &
+"$BOOTNODE_BIN" -nodekey ./bootnode.key -addr ${IP}:${BOOTNODE_PORT} &
 child_proc=$!
 
 echo Starting the nodes ...
