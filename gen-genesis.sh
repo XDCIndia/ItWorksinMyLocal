@@ -207,30 +207,59 @@ if [ -f "$NETWORK.json" ]; then
   # state at the very next block (verified: "invalid merkle root" on geth
   # the block after eip1559Block, live on a real deployment).
   #
-  # CORRECT fix: use the same giant sentinel XDC's own production configs use
-  # for "this fork never activates" (mainnet/apothem's own real configs pin
-  # unreached forks to 9,999,999,999, not 0 -- see XDCIndia/go-ethereum
-  # params/config.go) instead of 0. This is a no-op for erigon's default
-  # profile the same way 0 was (defaultForkBlock only touches nil fields), so
-  # its Istanbul-vs-Byzantium SLOAD-cost fix still applies -- but now geth and
-  # oldxdc genuinely agree to NEVER activate Constantinople/Istanbul/Berlin/
-  # London/EIP-1559/Cancun on this network, matching oldxdc's real, permanent
-  # Byzantium-only behavior instead of merely coinciding with erigon's default.
+  # CORRECT fix: pin these to XDC MAINNET's own real, documented fork blocks
+  # (XDCIndia/go-ethereum params/config.go:XDCMainnetChainConfig, chainId 50)
+  # rather than an arbitrary "big number" sentinel -- an earlier version of
+  # this fix used 9,999,999,999 (conflating it with a DIFFERENT XDC sentinel,
+  # TIPUpgradeReward/TipUpgradePenalty's "no-op fork" convention, which is not
+  # what mainnet uses for these specific fields). Using mainnet's real values
+  # is strictly better: traceable to a real, audited source instead of a
+  # magic number, and behaviorally identical for any realistic local-devnet
+  # test session (mainnet's own numbers are ~76M/~99M blocks out, decades
+  # away at a 2s period -- just as unreachable in practice as a bigger
+  # sentinel would be, but not arbitrary).
+  #
+  # This is still a no-op for erigon's default profile (defaultForkBlock only
+  # touches nil fields), so the Istanbul-vs-Byzantium SLOAD-cost fix holds --
+  # and geth/oldxdc now agree to activate these forks at the SAME blocks
+  # mainnet itself uses, rather than an invented value.
+  #
+  # KNOWN REMAINING GAP (out of scope for a genesis-only fix, flagging for the
+  # Geth Core Engineer): GP5-geth's IsIstanbul()/IsPetersburg() OR the
+  # genesis-configured block against a SEPARATE global constant,
+  # common.TIPXDCXCancellationFee, set per-chainId by CopyXDCConstants()
+  # (common/types.go). That switch only special-cases specific known chainIds
+  # (50 mainnet, 51 Apothem, 551/5151/5050/5551, 99999 = puppeth's own private-
+  # chain default) -- any OTHER chainId (every custom local network this repo
+  # generates, since gen-genesis.sh always passes an arbitrary --chainid)
+  # falls through to the package-level default, which is MAINNET's own value
+  # (38,383,838). That means Istanbul silently activates on GP5-geth at block
+  # 38.3M regardless of what istanbulBlock/petersburgBlock say here -- setting
+  # them to mainnet's 76,321,000 does NOT prevent this, since 38,383,838 (via
+  # the OR) is reached first. Unreachable for any normal test session (~2.4
+  # years continuous at period=2), but a real landmine for a long-running
+  # persistent devnet. No genesis field controls this; fixing it needs either
+  # a CopyXDCConstants() case for arbitrary chainIds, or adopting chainId
+  # 99999 (puppeth's own registered "private dev chain" case, which sets
+  # every TIP to 0/"active from genesis" instead) as this repo's convention.
   python3 -c "
 import json, sys
 path = sys.argv[1]
-NEVER = 9999999999  # XDC's own 'this fork never activates' sentinel (see mainnet/apothem configs)
+# XDC mainnet's own real fork schedule (XDCIndia/go-ethereum params/config.go
+# XDCMainnetChainConfig, chainId 50) -- traceable, audited values, not a magic
+# number. See this block's header comment for the separate TIPXDCXCancellationFee
+# gap this does NOT close.
 d = json.load(open(path))
 cfg = d['config']
-cfg.setdefault('constantinopleBlock', NEVER)
-cfg.setdefault('petersburgBlock', NEVER)
-cfg.setdefault('istanbulBlock', NEVER)
-cfg.setdefault('berlinBlock', NEVER)
-cfg.setdefault('londonBlock', NEVER)
-cfg.setdefault('eip1559Block', NEVER)
-cfg.setdefault('cancunBlock', NEVER)
+cfg.setdefault('constantinopleBlock', 76321000)
+cfg.setdefault('petersburgBlock', 76321000)
+cfg.setdefault('istanbulBlock', 76321000)
+cfg.setdefault('berlinBlock', 76321000)
+cfg.setdefault('londonBlock', 76321000)
+cfg.setdefault('eip1559Block', 98800200)
+cfg.setdefault('cancunBlock', 98802000)
 json.dump(d, open(path, 'w'))
-print('pinned explicit post-Byzantium fork schedule (constantinople/petersburg/istanbul/berlin/london/eip1559Block/cancunBlock all = %d, i.e. never) in %s' % (NEVER, path))
+print('pinned post-Byzantium fork schedule to XDC mainnet\'s own values (constantinople/petersburg/istanbul/berlin/london=76321000, eip1559Block=98800200, cancunBlock=98802000) in %s' % path)
 " "$OUT"
 
   if [ -n "$SKIP_V1_VALIDATION" ]; then
