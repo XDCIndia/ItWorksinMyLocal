@@ -202,6 +202,20 @@ if [ -f "$NETWORK.json" ]; then
   # is computed as v2block-gap (this genesis's own V2 switch minus its own gap)
   # rather than hardcoding erigon's 2250 default, so it stays correct even if
   # --v2block/--gap are customized away from their 2700/450 defaults.
+  #
+  # londonBlock MUST equal eip1559Block, not 0. They gate the same thing --
+  # whether the header carries baseFeePerGas -- but different clients read
+  # different keys: oldxdc/geth-xdc honour the XDC-specific eip1559Block,
+  # erigon and besu honour the standard londonBlock. With london=0 and
+  # eip1559Block=2250 the two disagree AT BLOCK 0: erigon synthesises the
+  # initial 1 Gwei baseFee into the genesis header, oldxdc/geth omit it, and
+  # that one extra RLP field gives erigon a different genesis hash
+  # (0x6c8d0128... vs 0x3857450e...). Every sealer then correctly refuses the
+  # handshake and erigon sits at head 0 logging '[p2p] No GoodPeers' forever --
+  # which presents as a networking fault, not a genesis one. Do NOT 'fix' this
+  # by dropping eip1559Block instead: geth-xdc computes
+  # isEIP2929 = c.IsEIP1559(num), falling back to IsLondon when Eip1559Block is
+  # nil, so removing it silently moves gas pricing too.
   python3 -c "
 import json, sys
 path, v2block, gap = sys.argv[1], int(sys.argv[2]), int(sys.argv[3])
@@ -211,11 +225,11 @@ cfg.setdefault('constantinopleBlock', 0)
 cfg.setdefault('petersburgBlock', 0)
 cfg.setdefault('istanbulBlock', 0)
 cfg.setdefault('berlinBlock', 0)
-cfg.setdefault('londonBlock', 0)
+cfg.setdefault('londonBlock', max(v2block - gap, 0))
 cfg.setdefault('eip1559Block', max(v2block - gap, 0))
 cfg.setdefault('cancunBlock', v2block + gap)
 json.dump(d, open(path, 'w'))
-print('pinned explicit post-Byzantium fork schedule (constantinople/petersburg/istanbul/berlin/london=0, eip1559Block=%d, cancunBlock=%d) in %s' % (cfg['eip1559Block'], cfg['cancunBlock'], path))
+print('pinned explicit post-Byzantium fork schedule (constantinople/petersburg/istanbul/berlin=0, london=eip1559Block=%d, cancunBlock=%d) in %s' % (cfg['eip1559Block'], cfg['cancunBlock'], path))
 " "$OUT" "$V2BLOCK" "$GAP"
 
   if [ -n "$SKIP_V1_VALIDATION" ]; then
