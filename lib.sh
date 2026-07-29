@@ -412,8 +412,8 @@ ensure_bins() {
   case "$CLIENT" in
     geth)   src="${BIN_SOURCE_geth:-$src}" ;;
     erigon) src="${BIN_SOURCE_erigon:-$src}" ;;
+    oldxdc) src="${BIN_SOURCE_oldxdc:-$src}" ;;
   esac
-  [ "$CLIENT" = oldxdc ] && src=build   # no prebuilt oldxdc/XDC binary exists (see binaries.json) -- always build
   [ "$REBUILD" = "1" ] && src=build
 
   if [ "$src" != build ]; then
