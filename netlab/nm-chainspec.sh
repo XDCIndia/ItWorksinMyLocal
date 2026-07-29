@@ -50,22 +50,38 @@
 #                                -> accounts["0x"+addr] (0x-prefixed; fields
 #                                   passed through verbatim)
 #
-# What this DOES NOT verify (documented, not masked -- see xdc-nethermind-
-# private#250): the generic Ethereum hardfork transition-block schedule in
-# `params` (Eip150Transition.. Eip1559Transition) is NOT read from the geth
-# genesis (which has no equivalent field-by-field schedule of its own -- the
-# geth-side format only has homesteadBlock/eip150Block/eip155Block/eip158Block/
-# byzantiumBlock, all pinned to 0). It is reverse-engineered from the ONE
-# working reference (xdc-devnet5151.json): early Homestead-family EIPs bundled
-# at fixed low blocks 2-4 (matching that file exactly), and the Berlin/London-
-# style bundle (eip2929/eip3529/eip3198/Eip1559) placed at this genesis's own
-# (switchBlock + gap) -- which is exactly what 5151's numbers work out to
-# (1800 + 450 = 2250). This is an inference from a single sample, not a
-# verified read of Nethermind.Xdc's spec-loading source (no source checkout
-# available on this host, only the compiled dist) -- if a converted chainspec
-# does not activate 1559/Berlin at the same relative point oldxdc/geth do,
-# that would show up as a hash/behavior divergence after the V2 switch and
-# needs a follow-up fix, not a silent trust.
+# What this DOES map for the post-Byzantium hardfork schedule (fixed
+# xdc-nethermind-private#254 -- see below): early Homestead-family EIPs are
+# still bundled at fixed low blocks 2-4 (matching the one hand-authored
+# reference, xdc-devnet5151.json, exactly -- genesis has no field-by-field
+# equivalent of its own for these). But the Berlin/London-style bundle
+# (eip2929/eip3529/eip3198/Eip1559) is now read DIRECTLY from the genesis's
+# own config.eip1559Block (falling back to switchBlock + gap only if that key
+# is absent, for old-style genesis files predating gen-genesis.sh pinning it) --
+# NOT reverse-engineered from switchBlock + gap unconditionally.
+#
+# Why the switch: `switch_block + gap` and the real eip1559Block are NOT the
+# same formula on every network. On net5151 (switchBlock=1800, gap=450) they
+# happen to coincide (1800+450=2250, its actual eip1559Block) -- that
+# coincidence is what got baked into the old formula. But gen-genesis.sh (this
+# repo's own generator for setup.sh networks) computes eip1559Block as
+# switchBlock - gap (the XDPoS gap-block formula, S - S%Epoch - Gap), and pins
+# it explicitly into config.eip1559Block/config.londonBlock since #129. On
+# chainId 20118 (switchBlock=2700, gap=450) that is 2250 -- but the old
+# `switch_block + gap` formula computed 3150 (= this genesis's cancunBlock,
+# switchBlock + gap, by coincidence of the same two inputs), 900 blocks late.
+# nethermind's ChainSpecBasedSpecProvider gates BerlinBlockNumber/
+# IsEip2929Enabled/IsEip1559Enabled generically off exactly these transition
+# values (Nethermind.Specs.ChainSpecStyle.ChainSpecLoader.cs:254-255,
+# ChainSpecBasedSpecProvider.cs:221-226) -- there is no XDC-specific override,
+# so a wrong transition value is a silent, deterministic gas-schedule
+# divergence, not a client bug. It surfaced as block 2251 (first block after
+# the real eip1559Block=2250) rejected with gasUsed off by exactly the
+# cold-access repricing delta (EIP-2929 not yet active in nethermind's
+# calculation, already active in the sealers'): expected 465654, got 450854,
+# diff -14800. Fixed by reading the genesis's own value instead of
+# re-deriving a formula that only worked by coincidence for one sample size
+# of one. See xdc-nethermind-private#254 for the full block-level evidence.
 #
 # KNOWN LIVE WALL (verified 2026-07, xdc-nethermind-private#250): a converted
 # chainspec loads cleanly (engine params + accounts parse, genesis-block
@@ -132,8 +148,12 @@ chain_id = cfg["chainId"]
 v2 = xdpos.get("v2", {})
 switch_block = v2.get("switchBlock", 0)
 gap = xdpos.get("gap", 450)
-post_v2 = switch_block + gap  # see the script header comment: reverse-engineered
-                              # from xdc-devnet5151.json's own 1800+450=2250
+# eip1559Block is the real fork-activation block every other client (oldxdc,
+# geth-xdc, erigon, xone, besu) actually reads. gen-genesis.sh pins it
+# explicitly (config.eip1559Block, == config.londonBlock -- see #129) as of
+# xdc-nethermind-private#254; only fall back to the old switch_block + gap
+# guess for a genesis that predates that pinning and has no such key at all.
+post_v2 = cfg.get("eip1559Block", switch_block + gap)
 
 def norm_addr(a):
     a = a.lower()
