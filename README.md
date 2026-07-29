@@ -11,6 +11,7 @@ build a genesis, run 4 mining nodes + a bootnode, and let other machines join.
 - [Requirements](#requirements)
 - [Choosing a client](#choosing-a-client)
 - [Quick start](#quick-start)
+  - [Run every client against it](#run-every-client-against-it)
 - [Everyday commands](#everyday-commands)
 - [Generating a genesis](#generating-a-genesis)
 - [Joining from another machine](#joining-from-another-machine)
@@ -23,11 +24,26 @@ build a genesis, run 4 mining nodes + a bootnode, and let other machines join.
 
 ## Requirements
 
-Works on **macOS** and **Linux / Ubuntu**. Node binaries are **built from source
-on first run** and cached under `bin/<client>/<os>-<arch>/` — the source repo
-depends on the selected [client](#choosing-a-client) and is cloned automatically
-if it isn't already beside this repo (default: the pre-fixed
-[`XDCIndia/OLDXDC`](https://github.com/XDCIndia/OLDXDC)).
+Works on **macOS** and **Linux / Ubuntu**. Node binaries are **downloaded
+prebuilt on first run** (verified by sha256 against `binaries.json`) and cached
+under `bin/<client>/<os>-<arch>/`. If no prebuilt exists for your platform,
+`oldxdc`/`geth`/`erigon` fall back to a source build automatically, cloning the
+source repo beside this one; `besu`/`nethermind`/`reth`/`xone` are download-only
+unless you point the scripts at your own binary. Force a build with
+`BIN_SOURCE=build` (or per client, `BIN_SOURCE_erigon=build`).
+
+**You also need the [GitHub CLI](https://cli.github.com/) (`gh`), authenticated.**
+Every client source repo in this org is private, and `oldxdc` — the *default*
+client — is published only as a private GitHub release asset, not on the
+xdc.network mirror. Its mirror fetch therefore 404s by design and the download
+falls back to `gh release download`, which needs your credentials:
+
+```bash
+gh auth status || gh auth login
+```
+
+Without that, `oldxdc` cannot be obtained and `./setup.sh --new` fails at the
+binary step. The other six clients come from the public mirror and do not need it.
 
 Install the build toolchain once:
 
@@ -123,7 +139,7 @@ toolchains) are download-only unless you point `join.sh` at your own binary via
 | `geth` | [`XDCIndia/go-ethereum`](https://github.com/XDCIndia/go-ethereum) (GP5) | download or build | **join/sync ✅ verified** (~400 blk/s); seal TODO; full-sync past the mid-history epoch switch needs the xdcSyncer fix |
 | `erigon` | [`XDCIndia/erigon-xdc`](https://github.com/XDCIndia/erigon-xdc) | download (`linux-amd64` only) or build | sync via built-in `--chain xdc\|xdc-apothem`; custom `--genesis` blocked ([#9](../../issues/9)) — fix proven in a lab (`PARITY OK 1..1054` incl. v1→v2 switch), not yet upstreamed |
 | `besu` | [`XDCIndia/besu-xdc`](https://github.com/XDCIndia/besu-xdc) | download or `BESU_BIN`/PATH | reads geth genesis natively; large prebuilt (**slow download**) and needs a modern JRE (11+) |
-| `nethermind` | [`XDCIndia/nethermind`](https://github.com/XDCIndia/nethermind) | download or `NETHERMIND_DIST`/PATH | **custom `NETHERMIND_DIST` required for 5151** — the prebuilt archive doesn't ship `chainspec/xdc-devnet5151.json` |
+| `nethermind` | `XDCIndia/xdc-nethermind-private` (private — no public repo) | download or `NETHERMIND_DIST`/PATH | **custom `NETHERMIND_DIST` required for 5151** — the prebuilt archive doesn't ship `chainspec/xdc-devnet5151.json` |
 | `reth` | [`XDCIndia/reth`](https://github.com/XDCIndia/reth) | download or `RETH_BIN`/PATH | reads geth genesis natively. Follows a private XDPoS net to tip with state-root parity **only from the build carrying the epoch-reward fix** — see the warning below |
 | `xone` | [`XDCIndia/xOneGo`](https://github.com/XDCIndia/xOneGo) | download (mirror, GitHub-release fallback) | Go XDPoS reference client. Follows a private net to tip, and seals in exact fair share when seated as a validator |
 
@@ -225,6 +241,51 @@ Review what you built (validators, roles, balances):
 ```bash
 ./network-info.sh
 ```
+
+### Run every client against it
+
+The network above is sealed by 4 `oldxdc` nodes. To attach the other clients as
+followers — **all seven in one command**:
+
+```bash
+./join.sh --client all
+```
+
+Or one at a time:
+
+```bash
+./join.sh --client geth          # oldxdc | geth | erigon | reth | besu | nethermind | xone
+```
+
+Each client gets its own datadir (`nodes/<client>-<nodetype>`) and port set, all
+dialing the same genesis and bootnodes. `Ctrl-C` stops them together. A client
+missing an extra input prints its own hint and is skipped while the rest keep
+syncing, so one broken client never blocks the run.
+
+Two things worth knowing before you interpret the output:
+
+- **`setup.sh --client` only takes `oldxdc|geth`** — it builds the sealer set.
+  `join.sh` is what accepts all seven, or `all`.
+- **`nethermind` currently cannot boot** as an XDPoS client: its fork-activation
+  table is keyed on a hardcoded list of chain IDs and defaults anything else to
+  "active at genesis", which wipes the BlockSigners contract while genesis is being
+  built and makes block 0 invalid. Tracked in the (private) nethermind fork as
+  #250. Expect **six** working clients, not seven, until that lands.
+
+Confirm a follower is actually keeping up — compare its height against a sealer
+rather than trusting its logs:
+
+```bash
+for p in 8545 <follower-rpc-port>; do
+  curl -s -X POST -H 'Content-Type: application/json' \
+    --data '{"jsonrpc":"2.0","method":"eth_blockNumber","params":[],"id":1}' \
+    http://localhost:$p
+done
+```
+
+> `reth` answers JSON-RPC in **snake_case** (`state_root`, not `stateRoot`) and may
+> return `number` as an integer. If you script a comparison, read both spellings —
+> a missing field must not be mistaken for agreement.
 
 ---
 
