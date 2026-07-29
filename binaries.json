@@ -43,6 +43,20 @@
         "linux-arm64": "b74452cc43587f4aca482166c4214c2b6f72c37e77dd4424b4eeabfc15d9b7b7"
       }
     },
+    "geth1175": {
+      "_comment": "geth 1.17.5-xdc.8, published as a SEPARATE artefact so the default `geth` entry (1.17.4-xdc.7) is untouched -- opt in with `--client geth1175`. linux-amd64 only: darwin/arm64 have not been built or validated for this version, and shipping unverified cross-compiles is how a stalling reth binary shipped for a week (see #119). Validated on netv12 (chainId 34093): 9-client x 6-height x 7-field parity as a follower incl. the legacy XDPoSChain v2.7.1 validators, then runtime-onboarded as a validator and gate-proven minting 238/2140 = 11.12% against an 11.11% ideal over 2.38 epochs with max_seal_gap=9 (never missed a turn), signers ecrecovered from the M1 seal and attributed by three independent validators with its own RPC excluded. See #124.",
+      "file": "geth1175-{os}-{arch}",
+      "archive": "none",
+      "produces": {
+        "geth": ""
+      },
+      "platforms": [
+        "linux-amd64"
+      ],
+      "sha256": {
+        "linux-amd64": "84ea1b653d91f42fcf1cfe787f4848dec15f3b63733120f89de27eddecc70bf1"
+      }
+    },
     "erigon": {
       "_comment": "linux-amd64 + darwin (universal) published. darwin-amd64/darwin-arm64 are the SAME lipo fat binary built 2026-07-24 from main (arm64 native + amd64 cross-compiled with CGO_ENABLED=1 CC/CXX=clang -arch x86_64, needed since erigon uses cgo for mdbx/blst/evmone) -- includes the node/cli p2p.allowed-ports flag-registration fix (PR XDCIndia/erigon-xdc#361, pending human merge). --chain xdc-net5151 genesis 0x96f121 verified on the arm64 slice + live-synced past block 20000. Other platforms fall back to a source build (lib.sh).",
       "file": "erigon-{os}-{arch}",

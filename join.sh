@@ -524,7 +524,7 @@ fi
 # A client whose extra inputs are missing (erigon needs --chain; nethermind needs
 # a dist) exits with its own hint and is skipped -- the rest keep syncing.
 if [ "$CLIENT" = all ]; then
-  ALL_CLIENTS="oldxdc geth erigon besu nethermind reth xone"
+  ALL_CLIENTS="oldxdc geth erigon besu nethermind reth xone geth1175"
   # Forward the shared, already-resolved network inputs to every child so they all
   # dial the SAME network (and a child doesn't re-run default resolution).
   shared=()
@@ -604,7 +604,8 @@ NODETYPE=sync
 # (85xx / 91xx / 99xx / 310xx), and the previous join defaults (83xx/85-86xx/
 # 30313+) -- so a `--client all` fan-out won't collide with those or a second run.
 case "$CLIENT" in
-  geth) O=100;; erigon) O=200;; besu) O=300;; nethermind) O=400;; reth) O=500;; xone) O=600;; *) O=0;;
+  geth) O=100;; erigon) O=200;; besu) O=300;; nethermind) O=400;; reth) O=500;; xone) O=600;;
+  geth1175) O=700;; *) O=0;;
 esac
 PORT="${PORT:-$((31413 + O))}"                  # p2p     31413..32013
 RPCPORT="${RPCPORT:-$((9645 + O))}"             # http    9645..10245
