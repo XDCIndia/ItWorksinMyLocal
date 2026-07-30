@@ -828,11 +828,17 @@ fi
 NAME=$(printf '%s' "$NAME" | tr -c 'A-Za-z0-9._-' '-')
 
 # Initialise the datadir against the genesis (first run only). oldxdc and the
-# GP5 geth fork both store chaindata under <datadir>/XDC and need an explicit
-# init. erigon (derives from --chain), besu/reth (write genesis on first launch),
-# and nethermind (loads its own chainspec) do their own thing, so skip init there.
+# GP5 geth fork (both `geth` and the opt-in `geth1175`) store chaindata under
+# <datadir>/XDC and need an explicit init -- their launch arm passes only
+# --networkid, and network id does NOT select a genesis. Omitting a geth-family
+# client here means it silently builds ETHEREUM MAINNET's genesis instead: it logs
+# "Chain ID: 1 (mainnet)", its block 0 hash differs from the sealers', and the
+# handshake can never complete, so it sits at 0 peers no matter what --bootnodes
+# says. That is exactly how geth1175 failed before it was added to this list.
+# erigon (derives from --chain), besu/reth (write genesis on first launch), and
+# nethermind (loads its own chainspec) do their own thing, so skip init there.
 case "$CLIENT" in
-  oldxdc|geth|"")
+  oldxdc|geth|geth1175|"")
     if [ ! -d "$DATADIR/XDC/chaindata" ]; then
       echo "Initialising $DATADIR from $GENESIS ..."
       "$XDC" --datadir "$DATADIR" init "$GENESIS" || exit 1
@@ -913,7 +919,7 @@ if [ "$CLIENT" = erigon ]; then
     --authrpc.port "$AUTHRPC_PORT" --torrent.port "$TORRENT_PORT" \
     --private.api.addr "$PRIVAPI" --mcp.port "$MCP_PORT" \
     $ETHSTATS_ARG &
-elif [ "$CLIENT" = geth ]; then
+elif [ "$CLIENT" = geth ] || [ "$CLIENT" = geth1175 ]; then
   # Modern geth: dot-notation flags, sync-only (it can't seal here). --maxpeers
   # keeps its long-standing default of 25 unless --maxpeers/env MAXPEERS overrides it.
   #
