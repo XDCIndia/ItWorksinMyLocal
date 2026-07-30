@@ -216,6 +216,44 @@ if [ -f "$NETWORK.json" ]; then
   # by dropping eip1559Block instead: geth-xdc computes
   # isEIP2929 = c.IsEIP1559(num), falling back to IsLondon when Eip1559Block is
   # nil, so removing it silently moves gas pricing too.
+  #
+  # TRIED AND REFUTED (ItWorksinMyLocal#128, wuhan/20118, 2026-07-30): the
+  # hypothesis that dropping londonBlock/eip1559Block/cancunBlock entirely
+  # (leaving them absent, "never activate") would unblock besu/reth without
+  # touching the other five clients. It does not hold up -- tested end to end
+  # against the live wuhan net and reverted:
+  #   - erigon regressed. erigon's applyDefaultXDPoSForkProfile (see above)
+  #     fills London=0 REGARDLESS of whether the genesis JSON has the field at
+  #     all, same as it does for Constantinople/Petersburg/Istanbul/Berlin --
+  #     the original comment already said so ("...Berlin/London all at block
+  #     0") but the fix that follows only accounted for it by PINNING london
+  #     explicitly, never by testing "absent". With it absent, erigon
+  #     synthesised baseFeePerGas into its OWN genesis block (oldxdc/geth do
+  #     not), producing a different genesis hash
+  #     (0x51b07907...f2b3f vs the sealers' 0xfe463361...5ba93) and permanent
+  #     '[p2p] No GoodPeers' -- i.e. exactly the failure mode the paragraph
+  #     above already documents for londonBlock=0/eip1559Block=2250, just
+  #     triggered by the opposite mistake (absent instead of mismatched).
+  #   - nethermind regressed too, for an unrelated reason: its genesis is not
+  #     read from this JSON directly but re-derived by netlab/nm-chainspec.sh
+  #     into its own chainspec format, and that derivation does not tolerate
+  #     london/eip1559/cancun being absent -- nethermind's genesis loader
+  #     crashed outright ("Error while generating genesis block",
+  #     InvalidStateRoot, expected 0x0c255643... calculated 0x56e81f17...).
+  #   - besu was NOT fixed. Its failure moved from block 2251 ("transaction
+  #     invalid gasPrice is less than the current BaseFee", i.e. the London/
+  #     EIP-1559 boundary) to block 16 ("World State Root does not match
+  #     expected value") -- a different, earlier, unrelated state-root bug
+  #     that the 2251 failure had simply been masking. Removing the fork
+  #     boundary did not fix besu; it just uncovered the next bug in line.
+  # Two of the five previously-working (guard) clients broke and neither of
+  # the two target clients was fixed, so this was reverted in full -- the
+  # schedule below is unchanged from the original #114 fix. Do not re-attempt
+  # "drop these fields" without first confirming erigon's default-fill
+  # includes londonBlock (it does) and that nethermind reads this file
+  # directly (it does not; it goes through nm-chainspec.sh). besu's and
+  # reth's remaining divergences need client-side fixes (besu#59, reth's
+  # evm.rs work), not a harness change.
   python3 -c "
 import json, sys
 path, v2block, gap = sys.argv[1], int(sys.argv[2]), int(sys.argv[3])
