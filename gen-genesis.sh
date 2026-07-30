@@ -254,21 +254,53 @@ if [ -f "$NETWORK.json" ]; then
   # directly (it does not; it goes through nm-chainspec.sh). besu's and
   # reth's remaining divergences need client-side fixes (besu#59, reth's
   # evm.rs work), not a harness change.
+  # londonBlock/eip1559Block/cancunBlock: pin to XDC MAINNET's OWN values
+  # (unreachable on a private net) rather than to v2block-gap / v2block+gap.
+  #
+  # Pinning them at a small, REACHABLE block (2250/3150 on the defaults) wedges
+  # geth-xdc and xone at the boundary: at eip1559Block, geth-xdc turns on the
+  # real 1559 fee market AND EIP-2929 cold-access pricing (it computes
+  # isEIP2929 = c.IsEIP1559(num)), while the legacy oldxdc sealers have no such
+  # execution path at all regardless of what genesis says. The two then disagree
+  # on gasUsed for the BlockSigners sign() tx in the first block past the
+  # boundary, so geth/xone reject the sealers' canonical chain with
+  # 'invalid merkle root' and sit there forever (measured on wuhan/20118: both
+  # frozen at exactly 2250 while every other client tracked the sealers past
+  # 2251). besu also failed at 2251 here, on the same boundary, as
+  # 'transaction invalid gasPrice is less than the current BaseFee' -- the
+  # sealers mine with --gasprice 1, which is below the baseFee once 1559 starts.
+  #
+  # These three must nonetheless stay PRESENT, not be deleted: erigon's
+  # applyDefaultXDPoSForkProfile fills any NIL/absent fork field with mainnet's
+  # order -- London at 0 -- so an ABSENT londonBlock makes erigon synthesise a
+  # baseFeePerGas into its own genesis header that oldxdc/geth omit, giving
+  # erigon a different genesis HASH and permanent '[p2p] No GoodPeers'. That was
+  # tried and refuted (see the block above, and #132). A large, non-nil value is
+  # what satisfies both constraints at once: non-nil so erigon's defaultForkBlock
+  # leaves it alone, unreachable so no client ever activates it mid-chain.
+  #
+  # Using mainnet's real numbers rather than an arbitrary sentinel keeps this a
+  # statement of the actual XDC fork schedule (and matches what XDC's own
+  # production configs pin), so a private net is simply a chain that never gets
+  # there -- exactly how oldxdc already behaves. Constantinople..Berlin stay at 0:
+  # they are pre-1559, carry no fee-market/2929 semantics, sit at block 0 so they
+  # can never create a mid-chain transition, and are required at 0 to keep
+  # erigon's Istanbul SLOAD pricing in agreement (see #114 above).
   python3 -c "
 import json, sys
-path, v2block, gap = sys.argv[1], int(sys.argv[2]), int(sys.argv[3])
+path = sys.argv[1]
 d = json.load(open(path))
 cfg = d['config']
 cfg.setdefault('constantinopleBlock', 0)
 cfg.setdefault('petersburgBlock', 0)
 cfg.setdefault('istanbulBlock', 0)
 cfg.setdefault('berlinBlock', 0)
-cfg.setdefault('londonBlock', max(v2block - gap, 0))
-cfg.setdefault('eip1559Block', max(v2block - gap, 0))
-cfg.setdefault('cancunBlock', v2block + gap)
+cfg.setdefault('londonBlock', 76321000)
+cfg.setdefault('eip1559Block', 98800200)
+cfg.setdefault('cancunBlock', 98802000)
 json.dump(d, open(path, 'w'))
-print('pinned explicit post-Byzantium fork schedule (constantinople/petersburg/istanbul/berlin=0, london=eip1559Block=%d, cancunBlock=%d) in %s' % (cfg['eip1559Block'], cfg['cancunBlock'], path))
-" "$OUT" "$V2BLOCK" "$GAP"
+print('pinned post-Byzantium fork schedule (constantinople/petersburg/istanbul/berlin=0; london=%d, eip1559Block=%d, cancunBlock=%d = XDC mainnet values, unreachable on a private net) in %s' % (cfg['londonBlock'], cfg['eip1559Block'], cfg['cancunBlock'], path))
+" "$OUT"
 
   if [ -n "$SKIP_V1_VALIDATION" ]; then
     python3 -c "
