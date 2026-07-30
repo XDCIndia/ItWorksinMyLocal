@@ -649,7 +649,37 @@ case "$CLIENT" in
     if [ ! -x "$CLIENT_BIN" ] && [ "${BIN_SOURCE_besu:-$BIN_SOURCE}" != build ]; then
       download_bins && CLIENT_BIN="$BIN_DIR/besu"
     fi
-    [ -x "$CLIENT_BIN" ] || { echo "besu binary not found. Build besu-xdc (XDCIndia/besu-xdc) and set BESU_BIN=/path/to/besu, put 'besu' on PATH, or let this script download it (unset BIN_SOURCE/BIN_SOURCE_besu if you set either to 'build')." >&2; exit 1; } ;;
+    [ -x "$CLIENT_BIN" ] || { echo "besu binary not found. Build besu-xdc (XDCIndia/besu-xdc) and set BESU_BIN=/path/to/besu, put 'besu' on PATH, or let this script download it (unset BIN_SOURCE/BIN_SOURCE_besu if you set either to 'build')." >&2; exit 1; }
+    # besu's launcher is a Gradle start script: it needs a JVM via JAVA_HOME or
+    # `java` on PATH, and exits with Gradle's own generic "JAVA_HOME is not set
+    # and no 'java' command could be found" if it has neither. The DOWNLOADED
+    # besu dist bundles a JRE, but a LOCAL build (gradle installDist/distTar --
+    # i.e. exactly what BESU_BIN normally points at, and the only way to run a
+    # besu carrying an unreleased fix) does NOT. On a host whose only JVM is the
+    # one inside a previously-downloaded besu dist, `BESU_BIN=... ./join.sh
+    # --client besu` therefore died before printing anything besu-specific,
+    # which reads as a broken local build rather than a missing-JVM wiring gap
+    # (ItWorksinMyLocal#133 -- this masked besu's real behaviour during #128/#132
+    # testing, because the silent fallback to the downloaded dist ran a DIFFERENT
+    # besu than the one intended).
+    #
+    # So: if no usable JVM is visible, borrow the JRE from a besu dist we already
+    # have on disk and export JAVA_HOME for the child. Only fills a gap -- an
+    # existing, working JAVA_HOME/`java` is always left alone.
+    if ! { [ -n "$JAVA_HOME" ] && [ -x "$JAVA_HOME/bin/java" ]; } && ! command -v java >/dev/null 2>&1; then
+      for _besu_jre in \
+        "$(dirname "$CLIENT_BIN")/../jre" \
+        "$BIN_DIR/.dist-besu/jre" \
+        "$(dirname "$0")/bin/besu/$PLATFORM/.dist-besu/jre"; do
+        if [ -x "$_besu_jre/bin/java" ]; then
+          JAVA_HOME=$(cd "$_besu_jre" && pwd); export JAVA_HOME
+          PATH="$JAVA_HOME/bin:$PATH"; export PATH
+          echo "  besu: no JVM on PATH/JAVA_HOME -- using bundled JRE $JAVA_HOME"
+          break
+        fi
+      done
+      command -v java >/dev/null 2>&1 || { echo "besu needs a JVM and none was found. Set JAVA_HOME=/path/to/jdk (or install java); a besu dist downloaded by this script bundles one at bin/besu/$PLATFORM/.dist-besu/jre." >&2; exit 1; }
+    fi ;;
   reth)
     CLIENT_BIN="${RETH_BIN:-$(command -v xdc-reth 2>/dev/null)}"
     if [ ! -x "$CLIENT_BIN" ] && [ "${BIN_SOURCE_reth:-$BIN_SOURCE}" != build ]; then
