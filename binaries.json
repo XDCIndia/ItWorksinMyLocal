@@ -1,7 +1,7 @@
 {
   "_comment": "Prebuilt-binary manifest for lib.sh:download_bins() / join.sh. baseUrl + file (with {os}/{arch} substituted) form the download URL; archive says how to unpack it; produces maps a logical binary name to its path *inside* the download (\"\" = the download IS the binary, \".\" = the whole extracted directory is the product, e.g. a dist dir). platforms uses {os}-{arch} keys (darwin|linux, amd64|arm64); \"*\" = platform-independent. sha256 keys mirror platforms (or \"*\"), fetched from the upstream <file>.sha256 siblings on xdc.network. Re-run the fetch and bump 'updated' if xdc.network publishes new binaries. A client entry may set its own \"baseUrl\" to override this global one (e.g. to pull an urgent fix from a GitHub release before it's mirrored to xdc.network) -- see lib.sh:_binjson_query.",
   "baseUrl": "https://xdc.network/snapshots/bin/",
-  "updated": "2026-07-29",
+  "updated": "2026-07-30",
   "clients": {
     "oldxdc": {
       "_comment": "XDPoSChain (XDCIndia/OLDXDC), the legacy sealer client run.sh/setup.sh use by default. Previously ALWAYS built from source (lib.sh hardcoded this regardless of BIN_SOURCE) since no prebuilt existed anywhere -- every `run.sh --chainid N` / `setup.sh --new` clone+built from scratch even for a plain resume, adding minutes before any node came up. Published this tarball (XDC + bootnode + puppeth, linux-amd64) from XDCIndia/OLDXDC's pinned commit 0648a96a22affcc0b4dd2201614a118b084fe7bf (the 'XDPoSChain codebase snapshot with puppeth wizard genesis fix' XDPOS_REPO already points at) so lib.sh:download_bins() has something to fetch. Now respects BIN_SOURCE/BIN_SOURCE_oldxdc like every other client: download by default, `--build` (run.sh/setup.sh) or BIN_SOURCE_oldxdc=build forces a from-source clone+build instead. darwin/other-arch prebuilts not published yet -- falls back to a source build there same as before.",
@@ -24,7 +24,7 @@
       }
     },
     "geth": {
-      "_comment": "darwin-amd64/darwin-arm64 are now the SAME universal (lipo fat) binary built 2026-07-24 from main (arm64 native + amd64 cross-compiled, no Intel Mac needed since geth is pure Go) -- identical sha256 both filenames, runs natively on either Mac architecture. Verified via `lipo -info` (both slices present) and a live devnet 5151 join on the arm64 slice.",
+      "_comment": "darwin-amd64/darwin-arm64 are the SAME universal (lipo fat) binary -- identical sha256 under both filenames, runs natively on either Mac architecture. Built 2026-07-30 from main at commit f39bb0769d0c142a1d50d34476055c4b9b1caaf3, self-reporting Version 1.17.5-xdc.8. Verified via `lipo -info` (x86_64 + arm64 slices both present) and by downloading the published file and running `geth version`. NOTE: geth here is NOT pure Go -- it pulls in cgo (secp256k1, usb), so the amd64 slice cannot be cross-compiled with GOARCH alone: its Makefile wraps `go run build/ci.go install`, which honours ci.go's own -arch flag and ignores GOARCH. Passing GOARCH=amd64 silently produced an arm64 slice and lipo then refused the pair. See publish-bins.sh build_pure_go_client.",
       "file": "geth-{os}-{arch}",
       "archive": "none",
       "produces": {
@@ -37,8 +37,8 @@
         "linux-arm64"
       ],
       "sha256": {
-        "darwin-amd64": "cdc74be3ebadfaad197c6445ab3aaf848d024f6aad09239583a9cfe8672a47be",
-        "darwin-arm64": "cdc74be3ebadfaad197c6445ab3aaf848d024f6aad09239583a9cfe8672a47be",
+        "darwin-amd64": "a68048665b8e4c42e019cfedc6c5a3e3e47e4991b8a3c4d87e675896ecb6ff4c",
+        "darwin-arm64": "a68048665b8e4c42e019cfedc6c5a3e3e47e4991b8a3c4d87e675896ecb6ff4c",
         "linux-amd64": "705406e8c5b7339b0f429d841a7ba6d5568f2956a5d46d12fa3fcd09798f8d31",
         "linux-arm64": "b74452cc43587f4aca482166c4214c2b6f72c37e77dd4424b4eeabfc15d9b7b7"
       }
