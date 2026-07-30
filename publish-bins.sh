@@ -147,13 +147,26 @@ BINARIES_JSON="$REPO_ROOT/binaries.json"
 # host toolchains are always preferred; see resolve/run_step()). Bump these
 # deliberately, as their own change, not as a drive-by in an unrelated diff.
 # ---------------------------------------------------------------------------
-IMG_GOLANG="golang:1.23-bookworm"                   # geth, xone, erigon (linux slices)
+# Must be >= the highest `go` directive across the Go clients, or the linux
+# slices cannot build at all. Pinned at 1.23 it could build NEITHER: geth's
+# go.mod requires 1.24.0 and erigon's 1.25.7, so `go build` would refuse with
+# a toolchain error. The bug was invisible because those slices only run when
+# Docker is available, and without it they are reported as SKIPPED ("no
+# matching host and no Docker available") rather than failing -- so a stale pin
+# looks exactly like a machine without Docker.
+#
+# The darwin slices were never affected: they build natively with the HOST
+# toolchain (go1.26.4 here), which is why geth/erigon darwin kept working.
+#
+# Minor line, not a patch pin, matching the previous style -- picks up 1.26.x
+# patches automatically. Bump when a client's go directive passes 1.26.
+IMG_GOLANG="golang:1.26-bookworm"                   # geth, xone, erigon (linux slices)
 IMG_RUST="rust:1.82-bookworm"                       # reth (linux slices)
 IMG_TEMURIN21="eclipse-temurin:21-jdk"              # besu (build + bundled JRE source)
 IMG_DOTNET_SDK="mcr.microsoft.com/dotnet/sdk:8.0"   # nethermind
 
 ALL_CLIENTS="geth xone erigon reth besu nethermind"
-DEFAULT_CLIENTS="geth,xone,erigon,reth,besu,nethermind"
+DEFAULT_CLIENTS="geth,erigon,reth,besu,nethermind"   # xone excluded -- see validate_clients_arg
 
 # ---------------------------------------------------------------------------
 # Config (env vars). Mirrors the repo's network.env pattern: a gitignored
@@ -365,6 +378,9 @@ validate_clients_arg() {
   local requested c
   requested="${CLIENTS_ARG:-$DEFAULT_CLIENTS}"
   for c in $(echo "$requested" | tr ',' ' '); do
+    if [ "$c" = xone ]; then
+      hard_abort "--clients xone: xone must NOT be source-built here. binaries.json documents that a plain \`go build -tags goethkzg ./cmd/xone-native\` at the pinned commit builds fine but computes a DIFFERENT genesis hash than geth/oldxdc/erigon/besu/reth -- so the correct artifact is the exact release bytes, not a build recipe. It ships as a pinned GitHub release asset (clients.xone.ghRelease, tag v-xdc-xone-mint-20260725) fetched by lib.sh:download_bins via \`gh release download\` because xOneGo is a PRIVATE repo. Building and publishing one here would serve a binary known to diverge on genesis hash. To refresh xone, cut a new xOneGo release and update clients.xone.ghRelease + sha256 in binaries.json."
+    fi
     if [ "$c" = oldxdc ]; then
       hard_abort "--clients oldxdc: oldxdc has no prebuilt binary and is always source-built by consumers (lib.sh forces BIN_SOURCE=build for it, since ensure_bins() has no manifest entry to download for oldxdc) -- it is intentionally excluded from publish-bins.sh."
     fi
@@ -884,8 +900,13 @@ build_linux_slice() {
 # Per-client build functions
 # ---------------------------------------------------------------------------
 
-# geth / xone: both pure-Go, `make <target>` -> build/bin/<target>. Only the
-# make target and allowed linux slugs differ (xone has no linux-arm64).
+# geth: `make <target>` -> build/bin/<target>.
+#
+# This used to read "geth / xone: both pure-Go, `make <target>`". That was wrong
+# on both counts for xone: XDCIndia/xOneGo has NO Makefile at all (the target is
+# pkg/cmd/xone-native, and the `xone` binary is only a launcher), so it failed
+# with "make: *** No rule to make target `xone'". More importantly it must not be
+# built here at all -- see the xone abort in validate_clients_arg.
 build_pure_go_client() {
   local client="$1" make_target="$2" requested="$3" repo srcdir log commit want_darwin=0 s
   repo="$(client_repo "$client")"; srcdir="$SRC_ROOT/$client"; log="$LOG_DIR/${client}.log"; : > "$log"
@@ -934,7 +955,12 @@ build_pure_go_client() {
   done
 }
 build_geth() { build_pure_go_client geth geth "$1"; }
-build_xone() { build_pure_go_client xone xone "$1"; }
+# Unreachable: validate_clients_arg aborts on --clients xone. Kept as a loud
+# failure rather than deleted, so if a future edit re-adds xone to a client
+# list it stops here instead of silently building a divergent binary.
+build_xone() {
+  hard_abort "build_xone: xone is distributed as a pinned release asset, not built from source (see validate_clients_arg for why a source build produces a divergent genesis hash)."
+}
 
 # erigon: Go + cgo. Darwin universal needs Apple clang's -arch cross flag
 # (macOS-only); linux slices can't cross from macOS at all (cgo) so they
