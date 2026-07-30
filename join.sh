@@ -892,8 +892,21 @@ if [ "$CLIENT" = erigon ]; then
   # $PORT instead (comma-separated per erigon's own --p2p.allowed-ports syntax);
   # 5 ports comfortably covers its eth-protocol version count (seen up to 4).
   ALLOWED_PORTS="$PORT,$((PORT+1)),$((PORT+2)),$((PORT+3)),$((PORT+4))"
+  # ...but only if this erigon still HAS that flag. It is gone in erigon 3.5.2
+  # ("flag provided but not defined: -p2p.allowed-ports", which kills the node
+  # at startup), so probe instead of assuming. Without the flag erigon picks its
+  # own ports upward from --port, one per --p2p.protocol version (default
+  # 69,70,71), so callers must leave a gap after $PORT either way -- run.sh
+  # --all strides its followers by 10 for exactly this reason.
+  AP_ARG=""
+  if "$XDC" --help 2>&1 | grep -q 'p2p\.allowed-ports'; then
+    AP_ARG="--p2p.allowed-ports $ALLOWED_PORTS"
+  else
+    echo "  erigon: no --p2p.allowed-ports in this build; it will choose ports upward from $PORT"
+  fi
+  # shellcheck disable=SC2086  # $AP_ARG is an intentionally-splitting flag pair
   "$XDC" --datadir "$DATADIR" --chain "$ERC" --discv4 \
-    --port "$PORT" --p2p.allowed-ports "$ALLOWED_PORTS" --nat "extip:${IP}" $BN_ARG $SP_ARG $MP_ARG $GL_ARG \
+    --port "$PORT" $AP_ARG --nat "extip:${IP}" $BN_ARG $SP_ARG $MP_ARG $GL_ARG \
     --http --http.addr 0.0.0.0 --http.port "$RPCPORT" --http.vhosts "*" \
     --http.corsdomain "*" --http.api eth,net,web3,erigon,debug,txpool \
     --ws --ws.port "$WSPORT" \
