@@ -828,11 +828,17 @@ fi
 NAME=$(printf '%s' "$NAME" | tr -c 'A-Za-z0-9._-' '-')
 
 # Initialise the datadir against the genesis (first run only). oldxdc and the
-# GP5 geth fork both store chaindata under <datadir>/XDC and need an explicit
-# init. erigon (derives from --chain), besu/reth (write genesis on first launch),
-# and nethermind (loads its own chainspec) do their own thing, so skip init there.
+# GP5 geth fork (both `geth` and the opt-in `geth1175`) store chaindata under
+# <datadir>/XDC and need an explicit init -- their launch arm passes only
+# --networkid, and network id does NOT select a genesis. Omitting a geth-family
+# client here means it silently builds ETHEREUM MAINNET's genesis instead: it logs
+# "Chain ID: 1 (mainnet)", its block 0 hash differs from the sealers', and the
+# handshake can never complete, so it sits at 0 peers no matter what --bootnodes
+# says. That is exactly how geth1175 failed before it was added to this list.
+# erigon (derives from --chain), besu/reth (write genesis on first launch), and
+# nethermind (loads its own chainspec) do their own thing, so skip init there.
 case "$CLIENT" in
-  oldxdc|geth|"")
+  oldxdc|geth|geth1175|"")
     if [ ! -d "$DATADIR/XDC/chaindata" ]; then
       echo "Initialising $DATADIR from $GENESIS ..."
       "$XDC" --datadir "$DATADIR" init "$GENESIS" || exit 1
