@@ -285,40 +285,36 @@ if [ -f "$NETWORK.json" ]; then
   # there -- exactly how oldxdc already behaves.
   #
   # Which of Constantinople..Berlin belong at 0 is not a matter of taste -- it is
-  # fixed by what the legacy oldxdc SEALERS actually execute, since they produce
-  # the chain every other client must reproduce. Measured on wuhan/20118, on the
-  # blocks carrying the 4 BlockSigners sign() txs:
+  # fixed by what the legacy oldxdc SEALERS execute, since they produce the chain
+  # every other client must reproduce. Measured on wuhan/20118, on the blocks
+  # carrying the 4 BlockSigners sign() txs:
   #
   #   sealers (authoritative)            gasUsed = 354632
   #   nethermind, Byzantium-only         computed  340232   (14400 low)
-  #   reth, with EIP-2929 active         computed  347928   ( 6704 low)
+  #   reth                               computed  347928   ( 6704 low)
   #
   # 14400 = 24 x 600, and 600 is exactly Istanbul's SLOAD repricing (200 -> 800)
   # over the 24 SLOADs those four txs perform. So the sealers run Byzantium PLUS
-  # Istanbul's gas schedule and NOT Berlin/EIP-2929 -- if they had 2929's
-  # cold-2100/warm-100 access lists they would land near reth's 347928, and if
-  # they lacked Istanbul they would land on nethermind's 340232. They are neither.
+  # Istanbul's gas schedule, and istanbulBlock therefore MUST stay 0. Moving it out
+  # of reach was tried and reverted: nethermind then drops to Byzantium SLOAD
+  # pricing, computes 340232, rejects block 16 outright with HeaderGasUsedMismatch,
+  # deletes it and stops dead. So "put everything past Byzantium out of reach" is
+  # NOT the right shape here, even though netv12/34093 appears to get away with
+  # declaring nothing -- there the equivalent values come from each client's own
+  # runtime resolution rather than being absent in effect.
   #
-  # Hence: Constantinople/Petersburg/Istanbul at 0 (active from genesis, matching
-  # the sealers' schedule), and Berlin OUT OF REACH along with London/1559/Cancun.
-  # Both halves are load-bearing and pull in opposite directions -- this was found
-  # by breaking each one:
-  #   * berlinBlock=0 (the old value) activates EIP-2929 in reth while the sealers
-  #     have no 2929 path, so reth recomputed every signer block 6704 gas low and
-  #     re-diverged every ~60 blocks (blocks 16, 91, 151, 211, 271...). It
-  #     re-downloaded and still reached tip, so this hid as flapping rather than a
-  #     hard stop.
-  #   * moving istanbulBlock out of reach as well (tried, reverted) drops
-  #     nethermind to Byzantium SLOAD pricing: it computed 340232, rejected block
-  #     16 outright with HeaderGasUsedMismatch, deleted it, and stopped dead. That
-  #     is strictly worse than reth's flapping, so "everything past Byzantium is
-  #     unreachable" is NOT the right shape here even though netv12/34093 appears
-  #     to get away with declaring nothing -- there the same values are supplied
-  #     by each client's own runtime resolution rather than being absent in effect.
-  #
-  # The #114 concern (erigon's default profile silently activating Istanbul costs)
-  # stays fixed either way: every field is explicitly present, so erigon's
-  # defaultForkBlock -- which only fills nil fields -- never substitutes its own.
+  # berlinBlock stays 0 as well. reth's 6704 shortfall looks like EIP-2929
+  # (cold 2100 / warm 100 instead of a flat Istanbul 800), which suggests moving
+  # berlinBlock would fix it -- it does not. Tested directly: with
+  # berlinBlock=76321000 reth still produced the identical 347928/354632 mismatch
+  # (at blocks 121/181 instead of 16/91/151/211/271), so reth is not reading this
+  # field for its EVM spec at all -- consistent with its hardcoded SpecId in
+  # evm_env_for_payload(). reth re-downloads and recovers each time, so it still
+  # tracks the sealers to tip, but it re-diverges every ~60 blocks. That is a
+  # reth-side bug (reth-xdc evm.rs), not something this schedule can fix, and the
+  # same 347928/354632 signature appears on runs predating any change here.
+  # berlinBlock=0 is therefore kept as the smaller diff, and because #114 needs it
+  # explicit anyway (see above).
   python3 -c "
 import json, sys
 path = sys.argv[1]
@@ -327,12 +323,12 @@ cfg = d['config']
 cfg.setdefault('constantinopleBlock', 0)
 cfg.setdefault('petersburgBlock', 0)
 cfg.setdefault('istanbulBlock', 0)
-cfg.setdefault('berlinBlock', 76321000)
+cfg.setdefault('berlinBlock', 0)
 cfg.setdefault('londonBlock', 76321000)
 cfg.setdefault('eip1559Block', 98800200)
 cfg.setdefault('cancunBlock', 98802000)
 json.dump(d, open(path, 'w'))
-print('pinned post-Byzantium fork schedule (constantinople/petersburg/istanbul=0 = the sealers own schedule; berlin=%d, london=%d, eip1559Block=%d, cancunBlock=%d = XDC mainnet values, unreachable on a private net) in %s' % (cfg['berlinBlock'], cfg['londonBlock'], cfg['eip1559Block'], cfg['cancunBlock'], path))
+print('pinned post-Byzantium fork schedule (constantinople/petersburg/istanbul/berlin=0; london=%d, eip1559Block=%d, cancunBlock=%d = XDC mainnet values, unreachable on a private net) in %s' % (cfg['londonBlock'], cfg['eip1559Block'], cfg['cancunBlock'], path))
 " "$OUT"
 
   if [ -n "$SKIP_V1_VALIDATION" ]; then
