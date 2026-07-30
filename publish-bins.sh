@@ -674,11 +674,25 @@ docker_available() {
 
 DOCKER_CIDS=()
 docker_run_build() {
+  # `bash -c`, NOT `bash -lc`. A LOGIN shell re-runs /etc/profile, which resets
+  # PATH and drops the toolchain directory these images set via ENV -- so `go`
+  # and `cargo` simply are not found. Verified directly:
+  #
+  #   docker run golang:1.26-bookworm bash -lc 'go version'  -> (nothing)
+  #   docker run golang:1.26-bookworm bash  -c 'go version'  -> go1.26.5
+  #   docker run rust:1.82-bookworm   bash -lc 'cargo --version' -> (nothing)
+  #   docker run rust:1.82-bookworm   bash  -c 'cargo --version' -> cargo 1.82.0
+  #
+  # This broke EVERY Docker build path -- all linux slices for geth, xone,
+  # erigon and reth -- and presented as "make: go: No such file or directory",
+  # which reads like a broken image rather than a shell-invocation bug. It was
+  # invisible for as long as Docker was unavailable, because the slices were
+  # then reported as SKIPPED before ever reaching this call.
   local image="$1" platform="$2" srcdir="$3" cmd="$4" log="$5" cname rc=0
   cname="publish-bins-$$-$RANDOM"
   DOCKER_CIDS+=("$cname")
   docker run --rm --name "$cname" --platform "$platform" \
-    -v "$srcdir:/work" -w /work "$image" bash -lc "$cmd" >>"$log" 2>&1 || rc=$?
+    -v "$srcdir:/work" -w /work "$image" bash -c "$cmd" >>"$log" 2>&1 || rc=$?
   local j
   for (( j = 0; j < ${#DOCKER_CIDS[@]}; j++ )); do
     [ "${DOCKER_CIDS[$j]}" = "$cname" ] && DOCKER_CIDS[j]=""
