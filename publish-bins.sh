@@ -438,9 +438,31 @@ HAD_FAILURE=0
 HAD_SKIP=0
 HAD_WARNING=0
 
+# _slug_in <slug> <space-separated list>: word-exact membership test. Used by
+# plan_items to keep the darwin pair together; a plain case-glob on the raw
+# string would match darwin-amd64 inside darwin-amd64-something.
+_slug_in() {
+  case " $2 " in *" $1 "*) return 0 ;; esac
+  return 1
+}
+
 add_item() {
   ITEM_CLIENT+=("$1"); ITEM_SLUG+=("$2")
   ITEM_STATUS+=("PLANNED"); ITEM_SHA+=(""); ITEM_COMMIT+=(""); ITEM_WHERE+=(""); ITEM_REASON+=("")
+  # Do NOT stamp PLANNED over a row that already reached a terminal state. The
+  # plan phase runs on EVERY invocation, including --publish-only, so an
+  # unconditional upsert here overwrote the BUILT row that --publish-only then
+  # read back two phases later -- it destroyed exactly the state it exists to
+  # resume from, and failed with "not previously built (ledger status:
+  # 'PLANNED')" while a perfectly good artifact sat in stage/. That made the
+  # documented build-on-one-host / publish-from-another workflow impossible.
+  #
+  # cached_ok() reads the same rows to skip rebuilds for an unchanged commit, so
+  # preserving them fixes that too. --force-rebuild still wins: it ignores the
+  # cache in cached_ok() rather than needing the row erased here.
+  case "$(state_field "$1" "$2" 3)" in
+    BUILT|PUBLISHED|VERIFIED) return 0 ;;
+  esac
   state_upsert "$1" "$2" PLANNED "" "" "" ""
 }
 
@@ -528,6 +550,28 @@ plan_items() {
       want="$(echo "$PLATFORMS_ARG" | tr ',' ' ')"
     else
       want="$allowed"
+    fi
+    # The two darwin slugs are ONE artifact: build_darwin_universal lipo's a
+    # single fat binary and stages it under both filenames with an identical
+    # sha256 (the "Mac-universal rule"), and it marks BOTH slugs BUILT even when
+    # only one was asked for. The publish phase, however, walks the PLAN -- so
+    # `--platforms darwin-arm64` used to upload one filename and leave the other
+    # on whatever build it had before. Not a cosmetic gap: it puts two different
+    # binaries behind names that must be byte-identical, and binaries.json then
+    # advertises two different sha256 for them. Observed live on 2026-07-30 --
+    # geth-darwin-arm64 went to 1.17.5-xdc.8 while geth-darwin-amd64 stayed on
+    # the 6-day-old 1.17.4-xdc.7.
+    #
+    # Expanded here, at plan time, so every later phase (build, checksum,
+    # publish, manifest, summary) covers the pair without special-casing.
+    if _slug_in darwin-amd64 "$allowed" && _slug_in darwin-arm64 "$allowed"; then
+      if _slug_in darwin-amd64 "$want" && ! _slug_in darwin-arm64 "$want"; then
+        want="$want darwin-arm64"
+        echo "NOTE: $c darwin is one universal binary -- adding darwin-arm64 so both filenames stay identical."
+      elif _slug_in darwin-arm64 "$want" && ! _slug_in darwin-amd64 "$want"; then
+        want="$want darwin-amd64"
+        echo "NOTE: $c darwin is one universal binary -- adding darwin-amd64 so both filenames stay identical."
+      fi
     fi
     for s in $want; do
       case " $allowed " in
