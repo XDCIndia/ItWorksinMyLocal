@@ -913,7 +913,7 @@ if [ "$CLIENT" = erigon ]; then
     --authrpc.port "$AUTHRPC_PORT" --torrent.port "$TORRENT_PORT" \
     --private.api.addr "$PRIVAPI" --mcp.port "$MCP_PORT" \
     $ETHSTATS_ARG &
-elif [ "$CLIENT" = geth ]; then
+elif [ "$CLIENT" = geth ] || [ "$CLIENT" = geth1175 ]; then
   # Modern geth: dot-notation flags, sync-only (it can't seal here). --maxpeers
   # keeps its long-standing default of 25 unless --maxpeers/env MAXPEERS overrides it.
   #

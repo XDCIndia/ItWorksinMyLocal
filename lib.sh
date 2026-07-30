@@ -37,6 +37,19 @@ case "$CLIENT" in
     CLIENT_TARGETS="geth"
     NODE_NAME_BIN="geth"
     ;;
+  geth1175)
+    # geth 1.17.5-xdc.8, opt-in alongside the default `geth` (1.17.4-xdc.7) so
+    # existing users are not silently upgraded. Same repo and make target -- it is
+    # geth, just a newer tag -- but a separate binaries.json key (`geth1175`) and its
+    # own BIN_DIR, so the two coexist. See binaries.json's geth1175 entry for the
+    # validation behind it (9-client parity, then gate-proven minting at 11.12%
+    # against an 11.11% ideal on netv12).
+    CLIENT=geth1175
+    XDPOS_REPO="${XDPOS_REPO:-https://github.com/XDCIndia/go-ethereum}"
+    XDPOS_DIR="${XDPOS_DIR:-$_LIB_DIR/../go-ethereum}"
+    CLIENT_TARGETS="geth"
+    NODE_NAME_BIN="geth"
+    ;;
   erigon)
     CLIENT=erigon
     XDPOS_REPO="${XDPOS_REPO:-https://github.com/XDCIndia/erigon-xdc}"
@@ -87,7 +100,7 @@ case "$CLIENT" in
     NODE_NAME_BIN=""
     ;;
   *)
-    echo "unknown CLIENT '$CLIENT' (use: oldxdc | geth | erigon | besu | nethermind | reth | xone | all)" >&2; exit 1;;
+    echo "unknown CLIENT '$CLIENT' (use: oldxdc | geth | geth1175 | erigon | besu | nethermind | reth | xone | all)" >&2; exit 1;;
 esac
 
 # Binaries live under a per-client, per-platform dir so the clients coexist.
@@ -411,6 +424,7 @@ ensure_bins() {
   local src="$BIN_SOURCE"
   case "$CLIENT" in
     geth)   src="${BIN_SOURCE_geth:-$src}" ;;
+    geth1175) src="${BIN_SOURCE_geth1175:-$src}" ;;
     erigon) src="${BIN_SOURCE_erigon:-$src}" ;;
     oldxdc) src="${BIN_SOURCE_oldxdc:-$src}" ;;
   esac
@@ -556,6 +570,7 @@ client_exe_names() {
   case "$1" in
     oldxdc|xdc|XDC) echo "XDC" ;;
     geth)           echo "geth" ;;
+    geth1175)       echo "geth" ;;
     erigon)         echo "erigon" ;;
     besu)           echo "besu java" ;;
     nethermind)     echo "nethermind dotnet" ;;
