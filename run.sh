@@ -444,7 +444,12 @@ if [ "$MIXED" = 1 ]; then
   # its own offset, well clear of the BASE+1..BASE+5 range used above.
   AUTHRPC_PORT5=$((BASE_RPC_PORT + 55))
   NODE5_IDENTITY="${HOST}-ModernGeth-05"
-  ETHSTATS5="itlocal-modern-geth-${HOST}-05:${STATS_SECRET}@stats.xdcindia.com:443"
+  # Node 5 is launched directly here rather than through join.sh, so it has to
+  # compose the canonical identity itself. Resolve geth's own version/commit in a
+  # subshell so CLIENT=geth does not clobber the oldxdc-scoped vars this script
+  # relies on. nodetype is "sync": node 5 follows, it never seals.
+  NODE5_VC=$( (CLIENT=geth; client_version_commit "$MODERN_GETH_BIN") )
+  ETHSTATS5="$(node_name "$(machine_name)" geth "${NODE5_VC%% *}" "${NODE5_VC##* }" sync "$IP"):${STATS_SECRET}@stats.xdcindia.com:443"
   "$MODERN_GETH_BIN" --datadir ./nodes/5 --networkid "${networkid}" --syncmode full \
     --bootnodes "$BOOTNODE_ENODE" --port "$P2P_PORT5" --nat "extip:${IP}" \
     --http --http.addr 0.0.0.0 --http.port "$RPC_PORT5" --http.vhosts "*" --http.corsdomain "*" \
@@ -511,12 +516,19 @@ if [ "$ALL" = 1 ]; then
     WS=$((BASE_WS_PORT + idx));   AUTH=$((BASE_RPC_PORT + 50 + idx))
     DD="./nodes/${idx}-${c}"
     echo "Starting node $idx ($c, sync-only follower) rpc=$RPC ..."
+    # Deliberately NO --name below. join.sh composes the canonical identity
+    # itself (machine-client-version-commit-nodetype-ip) and takes the machine
+    # component from the exported MACHINE, so the operator's --name -- or the
+    # hostname fallback -- reaches every follower unchanged. Passing a composed
+    # name here would land in the MACHINE slot and duplicate the client token:
+    # "itlocal-xone-<host>-06-xone-vxdc-xone-mint-...". The node index is not
+    # needed for uniqueness here -- exactly one follower runs per client, so the
+    # client token already disambiguates them.
     bash ./join.sh --client "$c" --genesis ./genesis/genesis.json \
       --chainid "$CHAINID" --bootnodes "$BOOTNODE_ENODE" --ip "$IP" \
       --datadir "$DD" --port "$P2P" --rpcport "$RPC" --wsport "$WS" \
       --authrpc-port "$AUTH" --gas-limit 420000000 \
       ${STATIC_PEERS:+--staticpeers "$STATIC_PEERS"} \
-      --name "itlocal-${c}-${HOST}-$(printf '%02d' "$idx")" \
       > "${DD}.log" 2>&1 &
     child_proc="$child_proc $!"
     idx=$((idx + 1))
