@@ -142,29 +142,54 @@ fi
 _client_binary() {   # -> prints the path it will look for
   case "$1" in
     geth)       echo "${MODERN_GETH_BIN:-$_LIB_DIR/bin/geth/$PLATFORM/geth}" ;;
+    # geth1175 is a SEPARATE client token with its own bin/ tree, but its
+    # executable is still named "geth" (see lib.sh client_exe_names). Without this
+    # arm it fell to the *) empty case and could never be selected by --all --
+    # the same "client token missing from one of several parallel lists" shape as
+    # the three defects that made geth1175 unlaunchable in #143.
+    geth1175)   echo "$_LIB_DIR/bin/geth1175/$PLATFORM/geth" ;;
     xone)       echo "$_LIB_DIR/bin/xone/$PLATFORM/xone" ;;
     erigon)     echo "$_LIB_DIR/bin/erigon/$PLATFORM/erigon" ;;
     besu)       echo "${BESU_BIN:-$_LIB_DIR/bin/besu/$PLATFORM/besu}" ;;
     reth)       echo "${RETH_BIN:-$_LIB_DIR/bin/reth/$PLATFORM/xdc-reth}" ;;
-    nethermind) echo "${NETHERMIND_DIST:-$_LIB_DIR/bin/nethermind/$PLATFORM}/nethermind" ;;
+    # The nethermind tarball unpacks its runtime into a .dist-nethermind/
+    # subdirectory, so the binary is one level DEEPER than the other clients'.
+    # Checking only $PLATFORM/nethermind reported "binary not found" and silently
+    # dropped nethermind from --all on a host that had it installed correctly.
+    # Honour NETHERMIND_DIST first (join.sh's override), then the real layout,
+    # then the flat path in case a dist is ever unpacked without the subdir.
+    nethermind)
+      if [ -n "$NETHERMIND_DIST" ]; then echo "$NETHERMIND_DIST/nethermind"
+      elif [ -x "$_LIB_DIR/bin/nethermind/$PLATFORM/.dist-nethermind/nethermind" ]; then
+        echo "$_LIB_DIR/bin/nethermind/$PLATFORM/.dist-nethermind/nethermind"
+      else echo "$_LIB_DIR/bin/nethermind/$PLATFORM/nethermind"; fi ;;
     *)          echo "" ;;
   esac
 }
 
-# besu is a Java app with no bundled JRE in this dist: without a JVM it prints
-# "Unable to determine Java version" and exits, so having the launcher script is
-# not enough to call it runnable.
+# besu is a Java app, so having the launcher script is not enough to call it
+# runnable -- but testing for a SYSTEM java is the wrong test. The besu tarball we
+# publish is self-contained and ships its own JRE, so besu runs fine on a host
+# with no JDK at all; gating on `java -version` skipped it on every such host
+# (i.e. most fresh boxes) while its own launcher worked perfectly. macOS makes the
+# inverse mistake possible too: it ships a /usr/bin/java SHIM that exists and
+# satisfies `command -v` but then exits 1 with "Unable to locate a Java Runtime".
+# Both cases are settled by asking BESU ITSELF, which resolves its bundled JRE
+# exactly as it will at launch. Wrapped in a timeout so a wedged JVM can't stall
+# startup (absent on stock macOS, hence the fallback).
 _client_runnable() {
   case "$1" in
-    # macOS ships a /usr/bin/java SHIM that exists, satisfies `command -v`, and
-    # then exits 1 with "Unable to locate a Java Runtime". So run it.
-    besu) java -version >/dev/null 2>&1 || "${JAVA_HOME:-/nonexistent}/bin/java" -version >/dev/null 2>&1 ;;
+    besu)
+      _bb="$(_client_binary besu)"
+      [ -n "$_bb" ] && [ -x "$_bb" ] || return 1
+      if command -v timeout >/dev/null 2>&1; then timeout 30 "$_bb" --version >/dev/null 2>&1
+      else "$_bb" --version >/dev/null 2>&1; fi ;;
     *) : ;;
   esac
 }
 _client_unrunnable_reason() {
   case "$1" in
-    besu) echo "no Java runtime (install a JDK or set JAVA_HOME)" ;;
+    besu) echo "besu --version failed (its bundled JRE is broken, or set BESU_BIN)" ;;
     *) echo "binary not found" ;;
   esac
 }
