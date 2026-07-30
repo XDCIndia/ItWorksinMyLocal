@@ -41,7 +41,14 @@ ALL="${ALL:-0}"
 #     and behaves identically with --no-downloader. Devnet 5151, which erigon
 #     does join, is long past its own v2 switch. Worth retrying with
 #     `gen-genesis.sh --v2block 0`.
-ALL_CLIENTS="${ALL_CLIENTS:-geth xone besu reth}"
+#
+#   reth: starts, binds its p2p port, and then stays at connected_peers=0 /
+#     latest_block=0 while the sealers climb past 100. It drives itself off
+#     the Engine API ("Forkchoice updated" in its log), i.e. it expects a
+#     separate consensus layer to feed it heads -- there is none on an XDPoS
+#     net, and it never joins the XDPoS gossip. Not a peer-discovery problem:
+#     it receives the same bootnode the working geth follower does.
+ALL_CLIENTS="${ALL_CLIENTS:-geth xone besu}"
 CHAINID="${CHAINID:-20118}"
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -54,8 +61,8 @@ while [ $# -gt 0 ]; do
       echo "  --mixed       also start node 5: modern geth, sync-only, from genesis"
       echo "                (same as MIXED=1 ./run.sh)"
       echo "  --all         also start ONE sync-only follower per modern client"
-      echo "                (default: $ALL_CLIENTS; env: ALL_CLIENTS -- erigon and"
-      echo "                nethermind are opt-in, see the comments in this file)"
+      echo "                (default: $ALL_CLIENTS; env: ALL_CLIENTS -- erigon, reth"
+      echo "                and nethermind are opt-in; see the comments in this file)"
       echo "                Clients whose binary is absent are skipped with a"
       echo "                reason rather than taking the network down."
       echo "  --chainid N   chain id (default: 20118; env: CHAINID)"
