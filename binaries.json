@@ -124,7 +124,7 @@
       "sha256": {
         "darwin-amd64": "bd5e95912d4b01d3952047949f440a49ce56c584e7d0a632f2ca8fbdbb1a1459",
         "darwin-arm64": "99573a88c4fc6dbaf33bfc3f37b0082fe39810209644f1ec8c30418b1925dc94",
-        "linux-amd64": "876335b90bd390bf7a50c5c098fab42da7dee8ca91a577539fbd7fef63d8103a"
+        "linux-amd64": "050679e0e70078f0bcb96513eb460fb64e2df609ef1b7a686c49891c70f6e736"
       }
     },
     "xone": {
