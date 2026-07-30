@@ -115,12 +115,18 @@
 #      the likely real fix, but that's a manifest-shape change and is left
 #      for a human to decide, not silently done here.
 #
-#   3. nethermind's canonical source repo is ambiguous: lib.sh (and this
-#      script's client_repo()) default to the public XDCIndia/nethermind,
-#      but binaries.json's own nethermind._comment says the actual build
-#      source was XDCIndia/xdc-nethermind-private. Use --ref nethermind=REF
-#      to at least pin a specific commit/branch of whichever repo is
-#      checked out; fix client_repo() once the canonical repo is confirmed.
+#   3. RESOLVED 2026-07-30: nethermind's canonical source repo is
+#      XDCIndia/xdc-nethermind-private, and client_repo() now points there.
+#      The public XDCIndia/nethermind this used to default to DOES NOT EXIST
+#      (404 against the org), so nethermind could never be built by this
+#      script at all -- which is exactly why its published artifact sat seven
+#      days behind xdc-nethermind-private#253. binaries.json's own
+#      nethermind._comment was right. Resolving this also turned up the same
+#      class of breakage for two more clients: reth pointed at the
+#      non-existent XDCIndia/reth-xdc (real: XDCIndia/reth), and besu pointed
+#      at XDCIndia/besu-xdc, a fork last pushed 2026-03-24 that does not
+#      contain the shipped build's commit 9d64f86 (real: XDCIndia/besu).
+#      See the comment above client_repo() for the evidence per client.
 # ---------------------------------------------------------------------------
 
 # shellcheck disable=SC2029  # file-wide: every `$(shq VALUE)` used to build an
@@ -201,18 +207,34 @@ platform_slug() {
 # Client facts (hard-coded; these are NOT read from binaries.json -- this
 # script decides what to build, binaries.json only records the result).
 # ---------------------------------------------------------------------------
+# Verified 2026-07-30 by resolving every URL below against the XDCIndia org:
+# three of the six pointed at repositories that do not exist (or, for besu, a
+# stale fork), so `publish-bins.sh` could not fetch a source for reth, besu or
+# nethermind AT ALL -- which is why their published artifacts had drifted days
+# to months behind their merged fixes while geth/xone/erigon stayed current.
+#
+#   reth        reth-xdc  -> reth                       (reth-xdc: 404; reth has crates/xdc)
+#   besu        besu-xdc  -> besu                       (besu-xdc last pushed 2026-03-24 and
+#                                                        does NOT contain the shipped build's
+#                                                        commit 9d64f86; XDCIndia/besu does)
+#   nethermind  nethermind -> xdc-nethermind-private    (nethermind: 404; the private repo is
+#                                                        what the shipped dist's stack traces
+#                                                        already name, and carries merged #253)
+#
+# Symptom this fixes, concretely: the published nethermind-linux-amd64.tar.gz
+# (sha256 876335b9..., matching binaries.json) was built 2026-07-22, seven days
+# before xdc-nethermind-private#253 landed, so it still activates TIPSigning at
+# block 0, deletes the BlockSigners contract 0x89 during genesis construction and
+# cannot start on any custom chainId. There was no way to rebuild it through this
+# script, because the repo it tried to clone is not there.
 client_repo() {
   case "$1" in
     geth)  echo 'https://github.com/XDCIndia/go-ethereum' ;;
     xone)  echo 'https://github.com/XDCIndia/xOneGo' ;;
     erigon) echo 'https://github.com/XDCIndia/erigon-xdc' ;;
-    reth)  echo 'https://github.com/XDCIndia/reth-xdc' ;;
-    besu)  echo 'https://github.com/XDCIndia/besu-xdc' ;;
-    # See header OPEN QUESTIONS #3: lib.sh's public default, not the private
-    # repo binaries.json's _comment references. Override the checked-out ref
-    # (not the repo) with --ref nethermind=REF; edit this line once the
-    # canonical repo is confirmed.
-    nethermind) echo 'https://github.com/XDCIndia/nethermind' ;;
+    reth)  echo 'https://github.com/XDCIndia/reth' ;;
+    besu)  echo 'https://github.com/XDCIndia/besu' ;;
+    nethermind) echo 'https://github.com/XDCIndia/xdc-nethermind-private' ;;
     *) echo "" ;;
   esac
 }
