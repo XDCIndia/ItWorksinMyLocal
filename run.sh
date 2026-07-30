@@ -55,6 +55,9 @@ while [ $# -gt 0 ]; do
     --mixed) MIXED=1; shift;;
     --all) ALL=1; shift;;
     --chainid) CHAINID=$2; shift 2;;
+    # Machine component of every node identity (see node_name() in lib.sh).
+    # Exported so it reaches the join.sh children --all launches, too.
+    --name) export MACHINE=$2; shift 2;;
     --build) BIN_SOURCE_oldxdc=build; shift;;
     -h|--help)
       echo "usage: ./run.sh [--mixed | --all] [--chainid N] [--build]"
@@ -139,29 +142,54 @@ fi
 _client_binary() {   # -> prints the path it will look for
   case "$1" in
     geth)       echo "${MODERN_GETH_BIN:-$_LIB_DIR/bin/geth/$PLATFORM/geth}" ;;
+    # geth1175 is a SEPARATE client token with its own bin/ tree, but its
+    # executable is still named "geth" (see lib.sh client_exe_names). Without this
+    # arm it fell to the *) empty case and could never be selected by --all --
+    # the same "client token missing from one of several parallel lists" shape as
+    # the three defects that made geth1175 unlaunchable in #143.
+    geth1175)   echo "$_LIB_DIR/bin/geth1175/$PLATFORM/geth" ;;
     xone)       echo "$_LIB_DIR/bin/xone/$PLATFORM/xone" ;;
     erigon)     echo "$_LIB_DIR/bin/erigon/$PLATFORM/erigon" ;;
     besu)       echo "${BESU_BIN:-$_LIB_DIR/bin/besu/$PLATFORM/besu}" ;;
     reth)       echo "${RETH_BIN:-$_LIB_DIR/bin/reth/$PLATFORM/xdc-reth}" ;;
-    nethermind) echo "${NETHERMIND_DIST:-$_LIB_DIR/bin/nethermind/$PLATFORM}/nethermind" ;;
+    # The nethermind tarball unpacks its runtime into a .dist-nethermind/
+    # subdirectory, so the binary is one level DEEPER than the other clients'.
+    # Checking only $PLATFORM/nethermind reported "binary not found" and silently
+    # dropped nethermind from --all on a host that had it installed correctly.
+    # Honour NETHERMIND_DIST first (join.sh's override), then the real layout,
+    # then the flat path in case a dist is ever unpacked without the subdir.
+    nethermind)
+      if [ -n "$NETHERMIND_DIST" ]; then echo "$NETHERMIND_DIST/nethermind"
+      elif [ -x "$_LIB_DIR/bin/nethermind/$PLATFORM/.dist-nethermind/nethermind" ]; then
+        echo "$_LIB_DIR/bin/nethermind/$PLATFORM/.dist-nethermind/nethermind"
+      else echo "$_LIB_DIR/bin/nethermind/$PLATFORM/nethermind"; fi ;;
     *)          echo "" ;;
   esac
 }
 
-# besu is a Java app with no bundled JRE in this dist: without a JVM it prints
-# "Unable to determine Java version" and exits, so having the launcher script is
-# not enough to call it runnable.
+# besu is a Java app, so having the launcher script is not enough to call it
+# runnable -- but testing for a SYSTEM java is the wrong test. The besu tarball we
+# publish is self-contained and ships its own JRE, so besu runs fine on a host
+# with no JDK at all; gating on `java -version` skipped it on every such host
+# (i.e. most fresh boxes) while its own launcher worked perfectly. macOS makes the
+# inverse mistake possible too: it ships a /usr/bin/java SHIM that exists and
+# satisfies `command -v` but then exits 1 with "Unable to locate a Java Runtime".
+# Both cases are settled by asking BESU ITSELF, which resolves its bundled JRE
+# exactly as it will at launch. Wrapped in a timeout so a wedged JVM can't stall
+# startup (absent on stock macOS, hence the fallback).
 _client_runnable() {
   case "$1" in
-    # macOS ships a /usr/bin/java SHIM that exists, satisfies `command -v`, and
-    # then exits 1 with "Unable to locate a Java Runtime". So run it.
-    besu) java -version >/dev/null 2>&1 || "${JAVA_HOME:-/nonexistent}/bin/java" -version >/dev/null 2>&1 ;;
+    besu)
+      _bb="$(_client_binary besu)"
+      [ -n "$_bb" ] && [ -x "$_bb" ] || return 1
+      if command -v timeout >/dev/null 2>&1; then timeout 30 "$_bb" --version >/dev/null 2>&1
+      else "$_bb" --version >/dev/null 2>&1; fi ;;
     *) : ;;
   esac
 }
 _client_unrunnable_reason() {
   case "$1" in
-    besu) echo "no Java runtime (install a JDK or set JAVA_HOME)" ;;
+    besu) echo "besu --version failed (its bundled JRE is broken, or set BESU_BIN)" ;;
     *) echo "binary not found" ;;
   esac
 }
@@ -306,6 +334,12 @@ VERBOSITY=3
 GASPRICE="1"
 STATS_SECRET="xdc_openscan_stats_2026"
 VERSION=$("$XDC" version 2>/dev/null | awk '/^Version:/{print $2}')
+# Short git commit of the sealer binary, for the node name. `version` prints the
+# full 40-char hash on its own line ("Git Commit: af7de721...") -- take 8, which
+# is what every other client reports and enough to identify a build. Empty when
+# the binary was built without git metadata; node_name() renders that as
+# "nocommit" rather than silently dropping the field.
+COMMIT=$("$XDC" version 2>/dev/null | awk '/^Git Commit:/{print substr($3,1,8); exit}')
 # The node binaries' --networkid is dynamic: setup.sh or the operator can pass CHAINID in the
 # environment or --chainid on the command line. All nodes (legacy + modern)
 # must share the same value or peering will fail.
@@ -404,7 +438,12 @@ for i in $(seq 1 $NUM_NODES); do
   P2P_PORT=$((BASE_P2P_PORT + i))   # node1 -> BASE+1 ... node4 -> BASE+4 (default 30303..30306)
   WS_PORT=$((BASE_WS_PORT + i))     # default 8555..8558
   RPC_PORT=$((BASE_RPC_PORT + i))   # default 8545..8548
-  NODE_NAME="${Bin_NAME}-v${VERSION}-${HOST}-MasterNode-${n}"
+  # Canonical shared identity (lib.sh node_name): machine-client-version-commit-
+  # nodetype-ip. The node INDEX rides in the nodetype ("seal01") because every
+  # sealer in this topology runs on the SAME box: machine, version, commit and ip
+  # are identical across nodes 1..N, so without the index all of them would claim
+  # one ethstats name -- and colliding identities make healthy nodes look stuck.
+  NODE_NAME=$(node_name "$(machine_name)" "$CLIENT" "$VERSION" "$COMMIT" "seal${n}" "$IP")
   NODE_IDENTITY="${HOST}-MasterNode-${n}"
   ETHSTATS="${NODE_NAME}:${STATS_SECRET}@stats.xdcindia.com:443"
   "$XDC" --bootnodes "$BOOTNODE_ENODE" --syncmode "full" --datadir ./nodes/$i \
@@ -430,7 +469,12 @@ if [ "$MIXED" = 1 ]; then
   # its own offset, well clear of the BASE+1..BASE+5 range used above.
   AUTHRPC_PORT5=$((BASE_RPC_PORT + 55))
   NODE5_IDENTITY="${HOST}-ModernGeth-05"
-  ETHSTATS5="itlocal-modern-geth-${HOST}-05:${STATS_SECRET}@stats.xdcindia.com:443"
+  # Node 5 is launched directly here rather than through join.sh, so it has to
+  # compose the canonical identity itself. Resolve geth's own version/commit in a
+  # subshell so CLIENT=geth does not clobber the oldxdc-scoped vars this script
+  # relies on. nodetype is "sync": node 5 follows, it never seals.
+  NODE5_VC=$( (CLIENT=geth; client_version_commit "$MODERN_GETH_BIN") )
+  ETHSTATS5="$(node_name "$(machine_name)" geth "${NODE5_VC%% *}" "${NODE5_VC##* }" sync "$IP"):${STATS_SECRET}@stats.xdcindia.com:443"
   "$MODERN_GETH_BIN" --datadir ./nodes/5 --networkid "${networkid}" --syncmode full \
     --bootnodes "$BOOTNODE_ENODE" --port "$P2P_PORT5" --nat "extip:${IP}" \
     --http --http.addr 0.0.0.0 --http.port "$RPC_PORT5" --http.vhosts "*" --http.corsdomain "*" \
@@ -497,12 +541,19 @@ if [ "$ALL" = 1 ]; then
     WS=$((BASE_WS_PORT + idx));   AUTH=$((BASE_RPC_PORT + 50 + idx))
     DD="./nodes/${idx}-${c}"
     echo "Starting node $idx ($c, sync-only follower) rpc=$RPC ..."
+    # Deliberately NO --name below. join.sh composes the canonical identity
+    # itself (machine-client-version-commit-nodetype-ip) and takes the machine
+    # component from the exported MACHINE, so the operator's --name -- or the
+    # hostname fallback -- reaches every follower unchanged. Passing a composed
+    # name here would land in the MACHINE slot and duplicate the client token:
+    # "itlocal-xone-<host>-06-xone-vxdc-xone-mint-...". The node index is not
+    # needed for uniqueness here -- exactly one follower runs per client, so the
+    # client token already disambiguates them.
     bash ./join.sh --client "$c" --genesis ./genesis/genesis.json \
       --chainid "$CHAINID" --bootnodes "$BOOTNODE_ENODE" --ip "$IP" \
       --datadir "$DD" --port "$P2P" --rpcport "$RPC" --wsport "$WS" \
       --authrpc-port "$AUTH" --gas-limit 420000000 \
       ${STATIC_PEERS:+--staticpeers "$STATIC_PEERS"} \
-      --name "itlocal-${c}-${HOST}-$(printf '%02d' "$idx")" \
       > "${DD}.log" 2>&1 &
     child_proc="$child_proc $!"
     idx=$((idx + 1))

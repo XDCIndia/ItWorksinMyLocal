@@ -144,6 +144,128 @@ platform_slug() {
   echo "${os}-${arch}"
 }
 
+# --- node naming -------------------------------------------------------------
+# ONE canonical node identity, shared by run.sh (legacy sealers), join.sh
+# (followers/joiners) and setup.sh, so a name means the same thing everywhere.
+# Shape -- fixed order, every part always present:
+#
+#   <machine>-<client>-v<version>-<commit>-<nodetype>-<ip>
+#
+# Each part answers a question you actually ask when a dashboard row misbehaves:
+# WHICH box (machine), WHICH implementation (client), WHICH build
+# (version + commit), what the node is FOR (nodetype: seal|sync), and WHERE to
+# reach it (ip). The commit is the part that earns its keep: two nodes on the
+# same released version -- one carrying a merged consensus fix, one predating it
+# -- print an identical version string and are indistinguishable on the
+# dashboard. That exact ambiguity has repeatedly cost us hours (a nethermind
+# artifact 7 days stale still reported the same version as the fixed build).
+#
+# These live in lib.sh rather than in each script because the naming code used to
+# be duplicated three times and drifted; a client added to one list and missed in
+# another is this repo's most recurring bug shape.
+
+# The machine component: explicit MACHINE (set from --name) wins, else this
+# host's short hostname, else the literal "node" so the name is never malformed.
+machine_name() {
+  local m="${MACHINE:-}"
+  [ -z "$m" ] && m=$(hostname -s 2>/dev/null || hostname 2>/dev/null || echo node)
+  echo "${m:-node}"
+}
+
+# Sanitise ONE name component. ethstats packs the name into a
+# "name:secret@host:port" URL, so ':' '@' '/' would break that parsing -- and
+# some clients' --version output legitimately contains '/' (besu prints the one
+# token "besu/v<ver>/<os>/<jvm>"). Collapse anything outside [A-Za-z0-9._-] to
+# '-', then squeeze runs and trim, so a missing part can never leave "--".
+name_part() {
+  printf '%s' "$1" | tr -c 'A-Za-z0-9._-' '-' | sed -E 's/-+/-/g; s/^-+//; s/-+$//'
+}
+
+# Compose the full name. Args: machine client version commit nodetype ip.
+# Any empty part falls back to a visible placeholder rather than collapsing the
+# shape -- a name with "nocommit" in it tells you the build lacked git info,
+# whereas a silently shortened name just looks like a different scheme.
+node_name() {
+  local m c v k t i
+  m=$(name_part "${1:-$(machine_name)}")
+  c=$(name_part "${2:-unknown}")
+  v=$(name_part "${3:-0}")
+  k=$(name_part "${4:-nocommit}")
+  t=$(name_part "${5:-sync}")
+  # IP dots -> dashes so the address reads as one token in the name (dots are
+  # legal here, but mixing them with the version's dots makes the name hard to
+  # split by eye on a dashboard row).
+  i=$(name_part "$(printf '%s' "${6:-0.0.0.0}" | tr '.' '-')")
+  echo "${m}-${c}-v${v}-${k}-${t}-${i}"
+}
+
+# `timeout` is GNU coreutils and is absent on stock macOS, which this harness
+# also targets (see platform_slug). Wrap version queries so a wedged binary can
+# never hang a launch, WITHOUT making the query fail outright where timeout does
+# not exist -- a failed query would silently degrade every node name to
+# "v0-nocommit", which looks like a naming bug rather than a missing tool.
+_vquery() {
+  if command -v timeout >/dev/null 2>&1; then timeout 20 "$@"; else "$@"; fi
+}
+
+# Resolve this client's build identity. Echoes "<version> <commit>"; commit is
+# the literal "nocommit" when the build carries no git metadata -- a real state
+# for shipped artifacts (geth1175 and besu both lack it today), not an error.
+#
+# Every client formats its version differently and TWO are booby-trapped:
+# xone's `version` SUBCOMMAND boots a full node (unknown subcommand -> node
+# start) and hangs, and nethermind's bare `version` starts loading plugins
+# before failing argument parsing. Both MUST use --version. oldxdc and the geth
+# family are the only ones whose `version` subcommand is safe, and it is also
+# their cleanest source: it prints "Git Commit:" on a line of its own.
+client_version_commit() {
+  local bin="${1:-$CLIENT_BIN}" out ver="" commit="" tok
+  case "$CLIENT" in
+    oldxdc|geth|geth1175)
+      out=$(_vquery "$bin" version 2>/dev/null)
+      ver=$(printf '%s\n' "$out" | awk '/^Version:/{print $2; exit}')
+      commit=$(printf '%s\n' "$out" | awk '/^Git Commit:/{print substr($3,1,8); exit}')
+      ;;
+    reth)
+      out=$(_vquery "$bin" --version 2>/dev/null)
+      ver=$(printf '%s\n' "$out" | awk '/^Reth Version:/{print $NF; exit}')
+      commit=$(printf '%s\n' "$out" | awk '/^Commit SHA:/{print substr($NF,1,8); exit}')
+      ;;
+    nethermind)
+      out=$(_vquery "$bin" --version 2>/dev/null)
+      # Version line carries the commit twice over: as a "+<hash>" build-metadata
+      # suffix here, and in full on its own Commit: line. Strip the suffix so the
+      # version part stays a version.
+      ver=$(printf '%s\n' "$out" | awk '/^Version:/{print $2; exit}' | sed -E 's/\+[0-9a-f]+$//')
+      commit=$(printf '%s\n' "$out" | awk '/^Commit:/{print substr($2,1,8); exit}')
+      ;;
+    xone)
+      # "xone v<ver> (commit <hash>)" -- the commit is PARENTHESISED, not glued as
+      # a suffix, so it needs its own rule. Do NOT chain greps to pull it out:
+      # `grep -oE '[0-9a-f]+'` also matches the 'c' in the literal word "commit"
+      # (a valid 1-char hex run) and returns that instead of the hash.
+      out=$(_vquery "$bin" --version 2>/dev/null | head -1)
+      ver=$(printf '%s\n' "$out" | awk '{print $2}' | sed 's/^v//')
+      commit=$(printf '%s\n' "$out" | sed -nE 's/.*\(commit ([0-9a-f]{7,}).*/\1/p' | cut -c1-8)
+      ;;
+    *)
+      # erigon ("erigon version 3.5.2" or "... 3.5.2-<commit>") and besu (ONE
+      # slash-delimited token "besu/v<ver>/<os>/<jvm>", no spaces, so $NF would
+      # grab the lot). Isolate the version token per client, then ONE shared rule
+      # splits a glued "-<commit>" suffix off it. Builds made without git info
+      # print the bare version and fall through to nocommit -- as does besu,
+      # whose "xxxxxxxx" is a literal placeholder and correctly fails the hex test.
+      case "$CLIENT" in
+        besu) tok=$(_vquery "$bin" --version 2>/dev/null | head -1 | sed -E 's#^besu/v?([^/]+).*#\1#') ;;
+        *)    tok=$(_vquery "$bin" --version 2>/dev/null | head -1 | awk '{print $NF}') ;;
+      esac
+      commit=$(printf '%s' "$tok" | grep -oE '[0-9a-f]{7,8}$')
+      ver=$(printf '%s' "$tok" | sed -E 's/-[0-9a-f]{7,8}$//')
+      ;;
+  esac
+  echo "${ver:-0} ${commit:-nocommit}"
+}
+
 # Apply the puppeth genesis-storage fix to the XDPoSChain source (idempotent).
 # Upstream's cmd/puppeth/wizard_genesis.go re-RLP-decodes each storage word,
 # truncating masternode addresses in the 0x88 validator contract and stalling

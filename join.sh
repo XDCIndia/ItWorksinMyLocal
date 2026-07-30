@@ -61,9 +61,14 @@
 #                        (--networkid is accepted as a deprecated alias)
 #   --datadir DIR        where to store this peer's data (default
 #                        nodes/<client>-<nodetype>, e.g. nodes/geth-sync)
-#   --name NAME          node identity shown to peers/ethstats (default
-#                        <client>-v<ver>-<host>-<nodetype>; <host> comes from
-#                        MACHINE in network.env/env, else the hostname)
+#   --name NAME          machine/deployment label -- the FIRST part of this
+#                        node's identity, not the whole name. The full identity
+#                        is always
+#                          <machine>-<client>-v<version>-<commit>-<nodetype>-<ip>
+#                        so client, build and location are never lost. Omit it
+#                        and <machine> falls back to MACHINE from
+#                        network.env/env, else this host's short hostname.
+#                        Sealers additionally get their coinbase appended.
 #   --port N             p2p port (per-client default: oldxdc 31413 / geth 31513
 #                        / erigon 31613 / … / xone 32013 -- 100 apart, clear of
 #                        run.sh and validator ports, no cross-client clash)
@@ -574,9 +579,11 @@ if [ "$CLIENT" = all ]; then
     # erigon on the wrong chain while every other client joins the intended one.
     # Harmless for the other clients (they ignore --chain).
     [ "$c" = erigon ] && [ -z "$CHAIN" ] && [ ! -f "$GENESIS" ] && args+=(--chain "${ERIGON_CHAIN:-xdc-net5151}")
-    # Distinct ethstats/identity name per client when the user forced one (the
-    # per-client default name already embeds the client, so only needed here).
-    [ -n "$NAME" ] && args+=(--name "${NAME}-${c}")
+    # Pass the operator's label through UNCHANGED. It is only the machine
+    # component now, and each child appends its own client, version, commit,
+    # nodetype and ip -- so appending "-$c" here would duplicate the client token
+    # in every name (mylab-geth-geth-v1.17...).
+    [ -n "$NAME" ] && args+=(--name "$NAME")
     echo "=== [all] launching $c  (datadir $dd) ==="
     bash "$SELF" "${args[@]}" &
     all_pids+=($!)
@@ -788,44 +795,29 @@ if [ "$CLIENT" = erigon ] && [ -z "$STATICPEERS" ] && [ -n "$BOOTNODES" ] && [ -
 fi
 
 IP=$(detect_ip)
-# Dynamic machine name (robust across OSes; fallback if hostname is unset).
-HOST=$(hostname -s 2>/dev/null || hostname 2>/dev/null || echo node)
-HOST=${HOST:-node}
-# Machine label for the node name's <host> token. Prefer an explicit env value
-# (MACHINE in network.env or the environment) over the auto-detected hostname, so
-# operators can give each host a stable, dashboard-friendly name (e.g.
-# MACHINE=frankfurt-1 -> geth-v1.2-frankfurt-1-sync). Falls back to the hostname.
-HOST=${MACHINE:-$HOST}
-# Default identity/ethstats name: a UNIFORM <client>-v<ver>-<host>-<nodetype>
-# across every client (canonical CLIENT token, real node role), so the dashboard
-# reads consistently and each name lines up with its nodes/<client>-<nodetype>
-# datadir. Only the version LOOKUP differs per client (each --version formats
-# differently); the name shape is identical.
-if [ -z "$NAME" ]; then
-  case "$CLIENT" in
-    erigon)     VER=$("$XDC" --version 2>/dev/null | head -1 | awk '{print $NF}') ;;
-    # besu prints ONE slash-delimited token "besu/v<ver>/<os>/<jvm>" (no spaces),
-    # so awk '$NF' would grab the whole string; extract just the <ver> segment.
-    besu)       VER=$("$CLIENT_BIN" --version 2>/dev/null | head -1 | sed -E 's#^besu/v?([^/]+).*#\1#') ;;
-    reth)       VER=$("$CLIENT_BIN" --version 2>/dev/null | head -1 | awk '{print $NF}') ;;
-    nethermind) VER=$("$CLIENT_BIN" --version 2>/dev/null | grep -oiE '[0-9]+\.[0-9]+[^ ]*' | head -1) ;;
-    # xone MUST use --version: its `version` SUBCOMMAND launches a full node
-    # (unknown-subcommand -> node boot), which would hang here. "xone v1.0.0 (…)".
-    xone)       VER=$("$XDC" --version 2>/dev/null | awk '{print $2}' | sed 's/^v//') ;;
-    *)          VER=$("$XDC" version 2>/dev/null | awk '/^Version:/{print $2; exit}') ;;
-  esac
-  NAME="${CLIENT}-v${VER:-0}-${HOST}-${NODETYPE}"
-  # Append the node's IP, then its coinbase if this node mines (--mine). Keeps the
-  # <client>-name-type base and extends it, so each node is identifiable on the
-  # dashboard by where it runs and (for sealers) which address it mints to. IP
-  # dots -> dashes to stay one clean token; coinbase shortened to 0x+8 hex.
-  NAME="${NAME}-${IP//./-}"
-  [ -n "$MINEADDR" ] && NAME="${NAME}-${MINEADDR:0:10}"
-fi
-# ethstats/identity names must not contain URL-breaking characters -- some client
-# --version strings (notably besu's "besu/vX/os/jvm") contain '/', which breaks the
-# ethstats "name:secret@host" URL parsing -- so normalise to [A-Za-z0-9._-].
-NAME=$(printf '%s' "$NAME" | tr -c 'A-Za-z0-9._-' '-')
+# --name gives the MACHINE component of the identity (it is a label for "which
+# deployment/box is this", not the whole name). Feed it to MACHINE so both
+# sources land in one place; machine_name() then falls back to this host's short
+# hostname when neither was given. HOST stays defined because --identity and the
+# datadir echo below still reference it.
+[ -n "$NAME" ] && MACHINE="$NAME"
+HOST=$(machine_name)
+# Node identity: ONE canonical shape for every client and every launch path,
+# composed by node_name() in lib.sh --
+#
+#   <machine>-<client>-v<version>-<commit>-<nodetype>-<ip>
+#
+# --name now supplies only the FIRST component instead of replacing the whole
+# name. It used to override everything, so an operator who labelled a deployment
+# ("--name xdclabs-wuhan") lost the client, version, commit and IP from the
+# dashboard -- precisely the fields you need when one node out of eight
+# misbehaves and you have to tell a stale build from a current one.
+_vc=$(client_version_commit "${CLIENT_BIN:-$XDC}")
+VER=${_vc%% *}; COMMIT=${_vc##* }
+NAME=$(node_name "$HOST" "$CLIENT" "$VER" "$COMMIT" "$NODETYPE" "$IP")
+# A mining node also carries its coinbase (0x + 8 hex) so a dashboard row maps to
+# the address it mints to. Sealers only -- it is noise on a follower.
+[ -n "$MINEADDR" ] && NAME="${NAME}-$(name_part "${MINEADDR:0:10}")"
 
 # Initialise the datadir against the genesis (first run only). oldxdc and the
 # GP5 geth fork (both `geth` and the opt-in `geth1175`) store chaindata under
