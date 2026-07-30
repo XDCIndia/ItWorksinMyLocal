@@ -170,6 +170,167 @@ LOG="$(mktemp "${TMPDIR:-/tmp}/gen-genesis.XXXXXX")" || { echo "gen-genesis.sh: 
 if [ -f "$NETWORK.json" ]; then
   mkdir -p "$(dirname "$OUT")"
   cp "$NETWORK.json" "$OUT"
+
+  # Pin the post-Byzantium EVM fork schedule EXPLICITLY (always, not just for
+  # --new networks) instead of leaving constantinopleBlock/petersburgBlock/
+  # istanbulBlock/berlinBlock/londonBlock/eip1559Block/cancunBlock absent.
+  #
+  # Root cause (ItWorksinMyLocal#114 follow-up): puppeth's wizard only prompts
+  # for homestead/eip150/eip155/eip158/byzantium, leaving every later fork
+  # field nil/absent in the JSON it writes. geth/oldxdc treat "absent" as
+  # "this fork never activates" (standard go-ethereum semantics) -- so on an
+  # unmodified genesis this network is frozen at Byzantium forever on those
+  # clients. erigon-xdc does NOT share that semantics for XDPoS chains: any
+  # genesis loaded via SpecFromGenesisFile (i.e. not one of its own hardcoded,
+  # registered chainspecs) gets a code-side default profile
+  # (execution/chain/spec/config.go:applyDefaultXDPoSForkProfile) that fills
+  # every nil fork field with mainnet's own upgrade order -- Constantinople/
+  # Petersburg/Istanbul/Berlin/London all at block 0, matching XDC mainnet's
+  # historical schedule -- REGARDLESS of what this genesis's JSON says. Since
+  # Istanbul raised SLOAD from 200 to 800 gas, this alone was enough to
+  # disagree on gasUsed for the very first BlockSigner-contract-write
+  # transaction and hard-fork erigon (and besu, same client-side "assume
+  # mainnet's own progression" behavior) off this network at whatever block
+  # first exercises SLOAD/SSTORE -- diverging even though the genesis HASH
+  # itself already matched (chain-config fields are never part of the header,
+  # so this was invisible to the genesis-hash gate).
+  #
+  # Fix: stop relying on ANY client's implicit fallback -- explicitly pin the
+  # exact schedule erigon's default profile already assumes, so it becomes a
+  # no-op there (defaultForkBlock only touches nil fields) while geth/oldxdc
+  # now activate the SAME forks at the SAME blocks instead of never. eip1559Block
+  # is computed as v2block-gap (this genesis's own V2 switch minus its own gap)
+  # rather than hardcoding erigon's 2250 default, so it stays correct even if
+  # --v2block/--gap are customized away from their 2700/450 defaults.
+  #
+  # londonBlock MUST equal eip1559Block, not 0. They gate the same thing --
+  # whether the header carries baseFeePerGas -- but different clients read
+  # different keys: oldxdc/geth-xdc honour the XDC-specific eip1559Block,
+  # erigon and besu honour the standard londonBlock. With london=0 and
+  # eip1559Block=2250 the two disagree AT BLOCK 0: erigon synthesises the
+  # initial 1 Gwei baseFee into the genesis header, oldxdc/geth omit it, and
+  # that one extra RLP field gives erigon a different genesis hash
+  # (0x6c8d0128... vs 0x3857450e...). Every sealer then correctly refuses the
+  # handshake and erigon sits at head 0 logging '[p2p] No GoodPeers' forever --
+  # which presents as a networking fault, not a genesis one. Do NOT 'fix' this
+  # by dropping eip1559Block instead: geth-xdc computes
+  # isEIP2929 = c.IsEIP1559(num), falling back to IsLondon when Eip1559Block is
+  # nil, so removing it silently moves gas pricing too.
+  #
+  # TRIED AND REFUTED (ItWorksinMyLocal#128, wuhan/20118, 2026-07-30): the
+  # hypothesis that dropping londonBlock/eip1559Block/cancunBlock entirely
+  # (leaving them absent, "never activate") would unblock besu/reth without
+  # touching the other five clients. It does not hold up -- tested end to end
+  # against the live wuhan net and reverted:
+  #   - erigon regressed. erigon's applyDefaultXDPoSForkProfile (see above)
+  #     fills London=0 REGARDLESS of whether the genesis JSON has the field at
+  #     all, same as it does for Constantinople/Petersburg/Istanbul/Berlin --
+  #     the original comment already said so ("...Berlin/London all at block
+  #     0") but the fix that follows only accounted for it by PINNING london
+  #     explicitly, never by testing "absent". With it absent, erigon
+  #     synthesised baseFeePerGas into its OWN genesis block (oldxdc/geth do
+  #     not), producing a different genesis hash
+  #     (0x51b07907...f2b3f vs the sealers' 0xfe463361...5ba93) and permanent
+  #     '[p2p] No GoodPeers' -- i.e. exactly the failure mode the paragraph
+  #     above already documents for londonBlock=0/eip1559Block=2250, just
+  #     triggered by the opposite mistake (absent instead of mismatched).
+  #   - nethermind regressed too, for an unrelated reason: its genesis is not
+  #     read from this JSON directly but re-derived by netlab/nm-chainspec.sh
+  #     into its own chainspec format, and that derivation does not tolerate
+  #     london/eip1559/cancun being absent -- nethermind's genesis loader
+  #     crashed outright ("Error while generating genesis block",
+  #     InvalidStateRoot, expected 0x0c255643... calculated 0x56e81f17...).
+  #   - besu was NOT fixed. Its failure moved from block 2251 ("transaction
+  #     invalid gasPrice is less than the current BaseFee", i.e. the London/
+  #     EIP-1559 boundary) to block 16 ("World State Root does not match
+  #     expected value") -- a different, earlier, unrelated state-root bug
+  #     that the 2251 failure had simply been masking. Removing the fork
+  #     boundary did not fix besu; it just uncovered the next bug in line.
+  # Two of the five previously-working (guard) clients broke and neither of
+  # the two target clients was fixed, so this was reverted in full -- the
+  # schedule below is unchanged from the original #114 fix. Do not re-attempt
+  # "drop these fields" without first confirming erigon's default-fill
+  # includes londonBlock (it does) and that nethermind reads this file
+  # directly (it does not; it goes through nm-chainspec.sh). besu's and
+  # reth's remaining divergences need client-side fixes (besu#59, reth's
+  # evm.rs work), not a harness change.
+  # londonBlock/eip1559Block/cancunBlock: pin to XDC MAINNET's OWN values
+  # (unreachable on a private net) rather than to v2block-gap / v2block+gap.
+  #
+  # Pinning them at a small, REACHABLE block (2250/3150 on the defaults) wedges
+  # geth-xdc and xone at the boundary: at eip1559Block, geth-xdc turns on the
+  # real 1559 fee market AND EIP-2929 cold-access pricing (it computes
+  # isEIP2929 = c.IsEIP1559(num)), while the legacy oldxdc sealers have no such
+  # execution path at all regardless of what genesis says. The two then disagree
+  # on gasUsed for the BlockSigners sign() tx in the first block past the
+  # boundary, so geth/xone reject the sealers' canonical chain with
+  # 'invalid merkle root' and sit there forever (measured on wuhan/20118: both
+  # frozen at exactly 2250 while every other client tracked the sealers past
+  # 2251). besu also failed at 2251 here, on the same boundary, as
+  # 'transaction invalid gasPrice is less than the current BaseFee' -- the
+  # sealers mine with --gasprice 1, which is below the baseFee once 1559 starts.
+  #
+  # These three must nonetheless stay PRESENT, not be deleted: erigon's
+  # applyDefaultXDPoSForkProfile fills any NIL/absent fork field with mainnet's
+  # order -- London at 0 -- so an ABSENT londonBlock makes erigon synthesise a
+  # baseFeePerGas into its own genesis header that oldxdc/geth omit, giving
+  # erigon a different genesis HASH and permanent '[p2p] No GoodPeers'. That was
+  # tried and refuted (see the block above, and #132). A large, non-nil value is
+  # what satisfies both constraints at once: non-nil so erigon's defaultForkBlock
+  # leaves it alone, unreachable so no client ever activates it mid-chain.
+  #
+  # Using mainnet's real numbers rather than an arbitrary sentinel keeps this a
+  # statement of the actual XDC fork schedule (and matches what XDC's own
+  # production configs pin), so a private net is simply a chain that never gets
+  # there -- exactly how oldxdc already behaves.
+  #
+  # Which of Constantinople..Berlin belong at 0 is not a matter of taste -- it is
+  # fixed by what the legacy oldxdc SEALERS execute, since they produce the chain
+  # every other client must reproduce. Measured on wuhan/20118, on the blocks
+  # carrying the 4 BlockSigners sign() txs:
+  #
+  #   sealers (authoritative)            gasUsed = 354632
+  #   nethermind, Byzantium-only         computed  340232   (14400 low)
+  #   reth                               computed  347928   ( 6704 low)
+  #
+  # 14400 = 24 x 600, and 600 is exactly Istanbul's SLOAD repricing (200 -> 800)
+  # over the 24 SLOADs those four txs perform. So the sealers run Byzantium PLUS
+  # Istanbul's gas schedule, and istanbulBlock therefore MUST stay 0. Moving it out
+  # of reach was tried and reverted: nethermind then drops to Byzantium SLOAD
+  # pricing, computes 340232, rejects block 16 outright with HeaderGasUsedMismatch,
+  # deletes it and stops dead. So "put everything past Byzantium out of reach" is
+  # NOT the right shape here, even though netv12/34093 appears to get away with
+  # declaring nothing -- there the equivalent values come from each client's own
+  # runtime resolution rather than being absent in effect.
+  #
+  # berlinBlock stays 0 as well. reth's 6704 shortfall looks like EIP-2929
+  # (cold 2100 / warm 100 instead of a flat Istanbul 800), which suggests moving
+  # berlinBlock would fix it -- it does not. Tested directly: with
+  # berlinBlock=76321000 reth still produced the identical 347928/354632 mismatch
+  # (at blocks 121/181 instead of 16/91/151/211/271), so reth is not reading this
+  # field for its EVM spec at all -- consistent with its hardcoded SpecId in
+  # evm_env_for_payload(). reth re-downloads and recovers each time, so it still
+  # tracks the sealers to tip, but it re-diverges every ~60 blocks. That is a
+  # reth-side bug (reth-xdc evm.rs), not something this schedule can fix, and the
+  # same 347928/354632 signature appears on runs predating any change here.
+  # berlinBlock=0 is therefore kept as the smaller diff, and because #114 needs it
+  # explicit anyway (see above).
+  python3 -c "
+import json, sys
+path = sys.argv[1]
+d = json.load(open(path))
+cfg = d['config']
+cfg.setdefault('constantinopleBlock', 0)
+cfg.setdefault('petersburgBlock', 0)
+cfg.setdefault('istanbulBlock', 0)
+cfg.setdefault('berlinBlock', 0)
+cfg.setdefault('londonBlock', 76321000)
+cfg.setdefault('eip1559Block', 98800200)
+cfg.setdefault('cancunBlock', 98802000)
+json.dump(d, open(path, 'w'))
+print('pinned post-Byzantium fork schedule (constantinople/petersburg/istanbul/berlin=0; london=%d, eip1559Block=%d, cancunBlock=%d = XDC mainnet values, unreachable on a private net) in %s' % (cfg['londonBlock'], cfg['eip1559Block'], cfg['cancunBlock'], path))
+" "$OUT"
+
   if [ -n "$SKIP_V1_VALIDATION" ]; then
     python3 -c "
 import json, sys

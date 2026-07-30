@@ -1,10 +1,30 @@
 {
-  "_comment": "Prebuilt-binary manifest for lib.sh:download_bins() / join.sh. baseUrl + file (with {os}/{arch} substituted) form the download URL; archive says how to unpack it; produces maps a logical binary name to its path *inside* the download (\"\" = the download IS the binary, \".\" = the whole extracted directory is the product, e.g. a dist dir). platforms uses {os}-{arch} keys (darwin|linux, amd64|arm64); \"*\" = platform-independent. sha256 keys mirror platforms (or \"*\"), fetched from the upstream <file>.sha256 siblings on xdc.network. Re-run the fetch and bump 'updated' if xdc.network publishes new binaries.",
+  "_comment": "Prebuilt-binary manifest for lib.sh:download_bins() / join.sh. baseUrl + file (with {os}/{arch} substituted) form the download URL; archive says how to unpack it; produces maps a logical binary name to its path *inside* the download (\"\" = the download IS the binary, \".\" = the whole extracted directory is the product, e.g. a dist dir). platforms uses {os}-{arch} keys (darwin|linux, amd64|arm64); \"*\" = platform-independent. sha256 keys mirror platforms (or \"*\"), fetched from the upstream <file>.sha256 siblings on xdc.network. Re-run the fetch and bump 'updated' if xdc.network publishes new binaries. A client entry may set its own \"baseUrl\" to override this global one (e.g. to pull an urgent fix from a GitHub release before it's mirrored to xdc.network) -- see lib.sh:_binjson_query.",
   "baseUrl": "https://xdc.network/snapshots/bin/",
-  "updated": "2026-07-28",
+  "updated": "2026-07-30",
   "clients": {
+    "oldxdc": {
+      "_comment": "XDPoSChain (XDCIndia/OLDXDC), the legacy sealer client run.sh/setup.sh use by default. Previously ALWAYS built from source (lib.sh hardcoded this regardless of BIN_SOURCE) since no prebuilt existed anywhere -- every `run.sh --chainid N` / `setup.sh --new` clone+built from scratch even for a plain resume, adding minutes before any node came up. Published this tarball (XDC + bootnode + puppeth, linux-amd64) from XDCIndia/OLDXDC's pinned commit 0648a96a22affcc0b4dd2201614a118b084fe7bf (the 'XDPoSChain codebase snapshot with puppeth wizard genesis fix' XDPOS_REPO already points at) so lib.sh:download_bins() has something to fetch. Now respects BIN_SOURCE/BIN_SOURCE_oldxdc like every other client: download by default, `--build` (run.sh/setup.sh) or BIN_SOURCE_oldxdc=build forces a from-source clone+build instead. darwin/other-arch prebuilts not published yet -- falls back to a source build there same as before.",
+      "ghRelease": {
+        "repo": "XDCIndia/OLDXDC",
+        "tag": "v2.7.1-stable-linux-amd64"
+      },
+      "file": "oldxdc-{os}-{arch}.tar.gz",
+      "archive": "tar.gz",
+      "produces": {
+        "XDC": "XDC",
+        "bootnode": "bootnode",
+        "puppeth": "puppeth"
+      },
+      "platforms": [
+        "linux-amd64"
+      ],
+      "sha256": {
+        "linux-amd64": "e18dac588ce0c5ef4235f9f0aecf7a5030bac628352a487502d5c4a298e2ccca"
+      }
+    },
     "geth": {
-      "_comment": "darwin-amd64/darwin-arm64 are now the SAME universal (lipo fat) binary built 2026-07-24 from main (arm64 native + amd64 cross-compiled, no Intel Mac needed since geth is pure Go) -- identical sha256 both filenames, runs natively on either Mac architecture. Verified via `lipo -info` (both slices present) and a live devnet 5151 join on the arm64 slice.",
+      "_comment": "darwin-amd64/darwin-arm64 are the SAME universal (lipo fat) binary -- identical sha256 under both filenames, runs natively on either Mac architecture. Built 2026-07-30 from main at commit f39bb0769d0c142a1d50d34476055c4b9b1caaf3, self-reporting Version 1.17.5-xdc.8. Verified via `lipo -info` (x86_64 + arm64 slices both present) and by downloading the published file and running `geth version`. NOTE: geth here is NOT pure Go -- it pulls in cgo (secp256k1, usb), so the amd64 slice cannot be cross-compiled with GOARCH alone: its Makefile wraps `go run build/ci.go install`, which honours ci.go's own -arch flag and ignores GOARCH. Passing GOARCH=amd64 silently produced an arm64 slice and lipo then refused the pair. See publish-bins.sh build_pure_go_client.",
       "file": "geth-{os}-{arch}",
       "archive": "none",
       "produces": {
@@ -17,10 +37,24 @@
         "linux-arm64"
       ],
       "sha256": {
-        "darwin-amd64": "cdc74be3ebadfaad197c6445ab3aaf848d024f6aad09239583a9cfe8672a47be",
-        "darwin-arm64": "cdc74be3ebadfaad197c6445ab3aaf848d024f6aad09239583a9cfe8672a47be",
+        "darwin-amd64": "a68048665b8e4c42e019cfedc6c5a3e3e47e4991b8a3c4d87e675896ecb6ff4c",
+        "darwin-arm64": "a68048665b8e4c42e019cfedc6c5a3e3e47e4991b8a3c4d87e675896ecb6ff4c",
         "linux-amd64": "705406e8c5b7339b0f429d841a7ba6d5568f2956a5d46d12fa3fcd09798f8d31",
         "linux-arm64": "b74452cc43587f4aca482166c4214c2b6f72c37e77dd4424b4eeabfc15d9b7b7"
+      }
+    },
+    "geth1175": {
+      "_comment": "geth 1.17.5-xdc.8, published as a SEPARATE artefact so the default `geth` entry (1.17.4-xdc.7) is untouched -- opt in with `--client geth1175`. linux-amd64 only: darwin/arm64 have not been built or validated for this version, and shipping unverified cross-compiles is how a stalling reth binary shipped for a week (see #119). Validated on netv12 (chainId 34093): 9-client x 6-height x 7-field parity as a follower incl. the legacy XDPoSChain v2.7.1 validators, then runtime-onboarded as a validator and gate-proven minting 238/2140 = 11.12% against an 11.11% ideal over 2.38 epochs with max_seal_gap=9 (never missed a turn), signers ecrecovered from the M1 seal and attributed by three independent validators with its own RPC excluded. See #124.",
+      "file": "geth1175-{os}-{arch}",
+      "archive": "none",
+      "produces": {
+        "geth": ""
+      },
+      "platforms": [
+        "linux-amd64"
+      ],
+      "sha256": {
+        "linux-amd64": "84ea1b653d91f42fcf1cfe787f4848dec15f3b63733120f89de27eddecc70bf1"
       }
     },
     "erigon": {
@@ -36,7 +70,7 @@
         "darwin-arm64"
       ],
       "sha256": {
-        "linux-amd64": "1d0bfd166f2f573599e80fe23de79727fb32b0f5dd927c41ace061a6ea51fa0f",
+        "linux-amd64": "bb35065175e0755eb98c671bb3d72ddfd79920352e04c69cde4fd36ce6c6c4db",
         "darwin-amd64": "61b79adcf2fe4545e958c2868613c28e16bdb35b30201d3d9e45275cff60d070",
         "darwin-arm64": "61b79adcf2fe4545e958c2868613c28e16bdb35b30201d3d9e45275cff60d070"
       }
@@ -57,7 +91,7 @@
       "sha256": {
         "darwin-amd64": "f36af0771e58fbef834dd8863c35356c60724c3ad58a43f6a2f0bf5a14d80c98",
         "darwin-arm64": "f36af0771e58fbef834dd8863c35356c60724c3ad58a43f6a2f0bf5a14d80c98",
-        "linux-amd64": "e05bc7ec0f1ce10b69c7e49b0149f90d3c46d361acb846de73ae648a36b45fa3",
+        "linux-amd64": "6c1ae9b2dd877823d12ea9656096322a3f26cbcf520b54494b60ff21146b6675",
         "linux-arm64": "425dc422c7f1eecfbd655fdecff8827f208adee73b8060ffdde9507513497630"
       }
     },
@@ -94,21 +128,21 @@
       }
     },
     "xone": {
-      "_comment": "xone-native (XDCIndia/xOneGo), the go-ethereum-derived XDPoS reference client (built from pkg/cmd/xone-native; the `xone` binary is only a launcher). linux-amd64 + darwin (universal) published. darwin-amd64/darwin-arm64 are the SAME lipo fat binary built 2026-07-24 from origin/master (pure Go, cross-compiles cleanly). Other platforms fall back to a source build (lib.sh). NOTE: use `xone --version` (not the `version` subcommand, which boots a node). [2026-07-24: refreshed v1.0.0->v1.1.0 (b117fbd7) which clears the net5151 epoch-1 (#899) wedge; v1.0.0 stalled there.]",
+      "_comment": "xone-native (XDCIndia/xOneGo), the go-ethereum-derived XDPoS reference client (built from pkg/cmd/xone-native; the `xone` binary is only a launcher). NOTE: use `xone --version` (not the `version` subcommand, which boots a node). [ItWorksinMyLocal#114: v1.1.0 (b117fbd7) computes a DIFFERENT genesis hash than geth/oldxdc/erigon/besu/reth for the same genesis.json -- confirmed empirically byte-for-byte identical extraData/stateRoot/timestamp/etc, only the final header hash diverges, so this is a client-side hashing difference, not a genesis-format one. Fixed by the 'v-xdc-xone-mint-20260725' release (commit 695d3d0a, PR XDCIndia/xOneGo#690, built on top of the v1.2.0 tag) -- verified live-computing the SAME genesis hash as geth/oldxdc/erigon/besu/reth for two independent local setup.sh genesis files, and this is the exact build chain 34093's live xone follower/validators run. IMPORTANT: a plain `go build -tags goethkzg ./cmd/xone-native` at this exact commit does NOT reproduce this -- it builds successfully but computes yet a THIRD, different genesis hash, so the fix is pinned to these exact release bytes (sha256 below), not 'build commit 695d3d0a' as a recipe. xOneGo is a PRIVATE repo, so this asset is fetched via `gh release download` (see ghRelease below + lib.sh:download_bins), not a plain curl URL -- requires a `gh` CLI authenticated against XDCIndia's org. darwin-amd64/darwin-arm64 are NOT yet republished from this fix (still the old v1.1.0 universal binary as of 2026-07-24) -- dropped from platforms below rather than silently serving a binary known to diverge on genesis hash; follow up to publish this same release asset to xdc.network (the normal distribution path every other client here uses) and restore darwin once a universal build exists, so contributors without gh/private-repo access can still fetch it.]",
+      "ghRelease": {
+        "repo": "XDCIndia/xOneGo",
+        "tag": "v-xdc-xone-mint-20260725"
+      },
       "file": "xone-{os}-{arch}",
       "archive": "none",
       "produces": {
         "xone": ""
       },
       "platforms": [
-        "linux-amd64",
-        "darwin-amd64",
-        "darwin-arm64"
+        "linux-amd64"
       ],
       "sha256": {
-        "linux-amd64": "b117fbd7add4c847c9b444d797940aa607befb13d747c8f87d67b9de4425e048",
-        "darwin-amd64": "776f6a3932d8f965fe07abb6e1b046b2078faffc8bc35d21062ff5a46abf24c5",
-        "darwin-arm64": "776f6a3932d8f965fe07abb6e1b046b2078faffc8bc35d21062ff5a46abf24c5"
+        "linux-amd64": "124cf26e770b8ec120c570b4c156e68fcbe7f42b461c3e2028244ae20f21cc04"
       }
     }
   }

@@ -196,14 +196,28 @@ os_, arch = slug.split("-", 1)
 file = (c.get("file") or "").replace("{os}", os_).replace("{arch}", arch)
 archive = c.get("archive", "none")
 sha = (c.get("sha256") or {}).get(slug) or (c.get("sha256") or {}).get("*") or ""
-base = (m.get("baseUrl") or "").rstrip("/")
+# Per-client baseUrl override: almost every client is mirrored under the
+# single global xdc.network baseUrl; a client entry may set its own "baseUrl"
+# to pull from a different (public) mirror instead. Absent that, fall back to
+# the global one.
+base = (c.get("baseUrl") or m.get("baseUrl") or "").rstrip("/")
+# ghRelease (ItWorksinMyLocal#114): an urgent fix can land as a release asset
+# on a client's own (often PRIVATE) GitHub repo before it's mirrored to
+# xdc.network -- e.g. xone's genesis-hash-parity build. {"repo":"owner/name",
+# "tag":"vX"} tells download_bins() to fetch $file via `gh release download`
+# (which carries the caller's own gh auth, unlike a plain curl URL) when the
+# ordinary curl fetch fails. Both may be present; curl (against the possibly-
+# stale xdc.network mirror) is always tried first, gh is the fallback.
+gh = c.get("ghRelease") or {}
 
 def q(s):
     return "'" + str(s).replace("'", "'\\''") + "'"
 
 print("_BJ_OK=1")
-print("_BJ_URL=" + q(base + "/" + file))
+print("_BJ_URL=" + q(base + "/" + file if base else ""))
 print("_BJ_FILE=" + q(file))
+print("_BJ_GH_REPO=" + q(gh.get("repo", "")))
+print("_BJ_GH_TAG=" + q(gh.get("tag", "")))
 print("_BJ_ARCHIVE=" + q(archive))
 print("_BJ_SHA256=" + q(sha))
 for k, v in (c.get("produces") or {}).items():
@@ -234,7 +248,7 @@ download_bins() {
   command -v curl >/dev/null 2>&1 || { echo "curl is required to download prebuilt binaries" >&2; return 1; }
 
   local slug; slug=$(platform_slug)
-  local _BJ_OK="" _BJ_URL="" _BJ_FILE="" _BJ_ARCHIVE="" _BJ_SHA256=""
+  local _BJ_OK="" _BJ_URL="" _BJ_FILE="" _BJ_ARCHIVE="" _BJ_SHA256="" _BJ_GH_REPO="" _BJ_GH_TAG=""
   local _BJ_PRODUCE_NAMES=() _BJ_PRODUCE_PATHS=()
   _bj_produce() { _BJ_PRODUCE_NAMES+=("$1"); _BJ_PRODUCE_PATHS+=("$2"); }
   eval "$(_binjson_query "$CLIENT" "$slug")"
@@ -254,23 +268,57 @@ download_bins() {
   if [ "$REBUILD" != "1" ] && [ -f "$dl" ] && [ "$(sha256_file "$dl" 2>/dev/null)" = "$_BJ_SHA256" ]; then
     echo "$CLIENT: cached download for $slug already verified ($_BJ_FILE)"
   else
-    echo "Downloading $CLIENT for $slug: $_BJ_URL"
     rm -f "$dl"
+    local verified=""
     # --retry rides out transient failures; --speed-time/-limit aborts a truly
     # stalled connection (no bytes for 60s) instead of hanging forever; -C -
     # resumes a partial temp from a prior interrupted attempt.
-    if ! curl -fsSL --retry 3 --retry-delay 2 --connect-timeout 20 \
+    #
+    # "verified" only becomes true once a fetched file's sha256 actually
+    # matches -- a curl fetch can succeed (HTTP-wise) against a mirror that's
+    # simply serving a STALE build (e.g. xdc.network hasn't caught up with an
+    # urgent fix yet), which must NOT short-circuit the gh-release fallback
+    # below (ItWorksinMyLocal#114 caught this: an earlier version of this
+    # function treated "curl exited 0" as success and never tried gh at all).
+    if [ -n "$_BJ_URL" ]; then
+      echo "Downloading $CLIENT for $slug: $_BJ_URL"
+      if curl -fsSL --retry 3 --retry-delay 2 --connect-timeout 20 \
               --speed-time 60 --speed-limit 1024 -C - -o "$dl" "$_BJ_URL"; then
-      echo "download failed: $_BJ_URL" >&2
+        if [ "$(sha256_file "$dl" 2>/dev/null)" = "$_BJ_SHA256" ]; then
+          verified=1
+        else
+          echo "  sha256 mismatch from $_BJ_URL (mirror may be stale)" >&2
+          rm -f "$dl"
+        fi
+      fi
+    fi
+    # gh-release fallback (ItWorksinMyLocal#114): a client entry's "ghRelease"
+    # names an asset on that client's own (possibly PRIVATE) GitHub repo --
+    # curl against a plain URL 404s on a private repo even with a bearer
+    # token (GitHub serves release assets via a signed redirect that needs
+    # the gh CLI's own handling), so this shells out to `gh release download`
+    # instead, which carries the caller's own `gh auth` session. Only
+    # attempted if curl above didn't already produce a verified file, and
+    # only if `gh` is on PATH -- silently unavailable (not a hard error) for
+    # anyone without gh or without access to that private repo, since the
+    # normal xdc.network mirror is still the primary, documented path.
+    if [ -z "$verified" ] && [ -n "$_BJ_GH_REPO" ] && [ -n "$_BJ_GH_TAG" ] && command -v gh >/dev/null 2>&1; then
+      echo "$CLIENT: no verified curl fetch; trying gh release download $_BJ_GH_TAG -R $_BJ_GH_REPO -p $_BJ_FILE" >&2
+      rm -f "$dl"
+      if gh release download "$_BJ_GH_TAG" -R "$_BJ_GH_REPO" -p "$_BJ_FILE" -O "$dl" --clobber 2>&1 \
+         && [ "$(sha256_file "$dl" 2>/dev/null)" = "$_BJ_SHA256" ]; then
+        verified=1
+      else
+        echo "  gh release download did not produce a file matching the recorded sha256" >&2
+        rm -f "$dl"
+      fi
+    fi
+    if [ -z "$verified" ]; then
+      echo "download failed: no source produced a $_BJ_FILE matching the recorded sha256 for $CLIENT/$slug (tried${_BJ_URL:+ curl $_BJ_URL}${_BJ_GH_REPO:+, gh release $_BJ_GH_REPO@$_BJ_GH_TAG})" >&2
       rm -f "$dl"
       return 1
     fi
-    local got; got=$(sha256_file "$dl") || { rm -f "$dl"; return 1; }
-    if [ "$got" != "$_BJ_SHA256" ]; then
-      echo "sha256 MISMATCH for $_BJ_FILE: expected $_BJ_SHA256, got $got -- deleting" >&2
-      rm -f "$dl"
-      return 1
-    fi
+    local got; got=$(sha256_file "$dl")
     echo "  sha256 OK ($got)"
   fi
 
@@ -364,8 +412,8 @@ ensure_bins() {
   case "$CLIENT" in
     geth)   src="${BIN_SOURCE_geth:-$src}" ;;
     erigon) src="${BIN_SOURCE_erigon:-$src}" ;;
+    oldxdc) src="${BIN_SOURCE_oldxdc:-$src}" ;;
   esac
-  [ "$CLIENT" = oldxdc ] && src=build   # no prebuilt oldxdc/XDC binary exists (see binaries.json) -- always build
   [ "$REBUILD" = "1" ] && src=build
 
   if [ "$src" != build ]; then

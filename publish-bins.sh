@@ -115,12 +115,18 @@
 #      the likely real fix, but that's a manifest-shape change and is left
 #      for a human to decide, not silently done here.
 #
-#   3. nethermind's canonical source repo is ambiguous: lib.sh (and this
-#      script's client_repo()) default to the public XDCIndia/nethermind,
-#      but binaries.json's own nethermind._comment says the actual build
-#      source was XDCIndia/xdc-nethermind-private. Use --ref nethermind=REF
-#      to at least pin a specific commit/branch of whichever repo is
-#      checked out; fix client_repo() once the canonical repo is confirmed.
+#   3. RESOLVED 2026-07-30: nethermind's canonical source repo is
+#      XDCIndia/xdc-nethermind-private, and client_repo() now points there.
+#      The public XDCIndia/nethermind this used to default to DOES NOT EXIST
+#      (404 against the org), so nethermind could never be built by this
+#      script at all -- which is exactly why its published artifact sat seven
+#      days behind xdc-nethermind-private#253. binaries.json's own
+#      nethermind._comment was right. Resolving this also turned up the same
+#      class of breakage for two more clients: reth pointed at the
+#      non-existent XDCIndia/reth-xdc (real: XDCIndia/reth), and besu pointed
+#      at XDCIndia/besu-xdc, a fork last pushed 2026-03-24 that does not
+#      contain the shipped build's commit 9d64f86 (real: XDCIndia/besu).
+#      See the comment above client_repo() for the evidence per client.
 # ---------------------------------------------------------------------------
 
 # shellcheck disable=SC2029  # file-wide: every `$(shq VALUE)` used to build an
@@ -201,18 +207,34 @@ platform_slug() {
 # Client facts (hard-coded; these are NOT read from binaries.json -- this
 # script decides what to build, binaries.json only records the result).
 # ---------------------------------------------------------------------------
+# Verified 2026-07-30 by resolving every URL below against the XDCIndia org:
+# three of the six pointed at repositories that do not exist (or, for besu, a
+# stale fork), so `publish-bins.sh` could not fetch a source for reth, besu or
+# nethermind AT ALL -- which is why their published artifacts had drifted days
+# to months behind their merged fixes while geth/xone/erigon stayed current.
+#
+#   reth        reth-xdc  -> reth                       (reth-xdc: 404; reth has crates/xdc)
+#   besu        besu-xdc  -> besu                       (besu-xdc last pushed 2026-03-24 and
+#                                                        does NOT contain the shipped build's
+#                                                        commit 9d64f86; XDCIndia/besu does)
+#   nethermind  nethermind -> xdc-nethermind-private    (nethermind: 404; the private repo is
+#                                                        what the shipped dist's stack traces
+#                                                        already name, and carries merged #253)
+#
+# Symptom this fixes, concretely: the published nethermind-linux-amd64.tar.gz
+# (sha256 876335b9..., matching binaries.json) was built 2026-07-22, seven days
+# before xdc-nethermind-private#253 landed, so it still activates TIPSigning at
+# block 0, deletes the BlockSigners contract 0x89 during genesis construction and
+# cannot start on any custom chainId. There was no way to rebuild it through this
+# script, because the repo it tried to clone is not there.
 client_repo() {
   case "$1" in
     geth)  echo 'https://github.com/XDCIndia/go-ethereum' ;;
     xone)  echo 'https://github.com/XDCIndia/xOneGo' ;;
     erigon) echo 'https://github.com/XDCIndia/erigon-xdc' ;;
-    reth)  echo 'https://github.com/XDCIndia/reth-xdc' ;;
-    besu)  echo 'https://github.com/XDCIndia/besu-xdc' ;;
-    # See header OPEN QUESTIONS #3: lib.sh's public default, not the private
-    # repo binaries.json's _comment references. Override the checked-out ref
-    # (not the repo) with --ref nethermind=REF; edit this line once the
-    # canonical repo is confirmed.
-    nethermind) echo 'https://github.com/XDCIndia/nethermind' ;;
+    reth)  echo 'https://github.com/XDCIndia/reth' ;;
+    besu)  echo 'https://github.com/XDCIndia/besu' ;;
+    nethermind) echo 'https://github.com/XDCIndia/xdc-nethermind-private' ;;
     *) echo "" ;;
   esac
 }
@@ -416,9 +438,31 @@ HAD_FAILURE=0
 HAD_SKIP=0
 HAD_WARNING=0
 
+# _slug_in <slug> <space-separated list>: word-exact membership test. Used by
+# plan_items to keep the darwin pair together; a plain case-glob on the raw
+# string would match darwin-amd64 inside darwin-amd64-something.
+_slug_in() {
+  case " $2 " in *" $1 "*) return 0 ;; esac
+  return 1
+}
+
 add_item() {
   ITEM_CLIENT+=("$1"); ITEM_SLUG+=("$2")
   ITEM_STATUS+=("PLANNED"); ITEM_SHA+=(""); ITEM_COMMIT+=(""); ITEM_WHERE+=(""); ITEM_REASON+=("")
+  # Do NOT stamp PLANNED over a row that already reached a terminal state. The
+  # plan phase runs on EVERY invocation, including --publish-only, so an
+  # unconditional upsert here overwrote the BUILT row that --publish-only then
+  # read back two phases later -- it destroyed exactly the state it exists to
+  # resume from, and failed with "not previously built (ledger status:
+  # 'PLANNED')" while a perfectly good artifact sat in stage/. That made the
+  # documented build-on-one-host / publish-from-another workflow impossible.
+  #
+  # cached_ok() reads the same rows to skip rebuilds for an unchanged commit, so
+  # preserving them fixes that too. --force-rebuild still wins: it ignores the
+  # cache in cached_ok() rather than needing the row erased here.
+  case "$(state_field "$1" "$2" 3)" in
+    BUILT|PUBLISHED|VERIFIED) return 0 ;;
+  esac
   state_upsert "$1" "$2" PLANNED "" "" "" ""
 }
 
@@ -506,6 +550,28 @@ plan_items() {
       want="$(echo "$PLATFORMS_ARG" | tr ',' ' ')"
     else
       want="$allowed"
+    fi
+    # The two darwin slugs are ONE artifact: build_darwin_universal lipo's a
+    # single fat binary and stages it under both filenames with an identical
+    # sha256 (the "Mac-universal rule"), and it marks BOTH slugs BUILT even when
+    # only one was asked for. The publish phase, however, walks the PLAN -- so
+    # `--platforms darwin-arm64` used to upload one filename and leave the other
+    # on whatever build it had before. Not a cosmetic gap: it puts two different
+    # binaries behind names that must be byte-identical, and binaries.json then
+    # advertises two different sha256 for them. Observed live on 2026-07-30 --
+    # geth-darwin-arm64 went to 1.17.5-xdc.8 while geth-darwin-amd64 stayed on
+    # the 6-day-old 1.17.4-xdc.7.
+    #
+    # Expanded here, at plan time, so every later phase (build, checksum,
+    # publish, manifest, summary) covers the pair without special-casing.
+    if _slug_in darwin-amd64 "$allowed" && _slug_in darwin-arm64 "$allowed"; then
+      if _slug_in darwin-amd64 "$want" && ! _slug_in darwin-arm64 "$want"; then
+        want="$want darwin-arm64"
+        echo "NOTE: $c darwin is one universal binary -- adding darwin-arm64 so both filenames stay identical."
+      elif _slug_in darwin-arm64 "$want" && ! _slug_in darwin-amd64 "$want"; then
+        want="$want darwin-amd64"
+        echo "NOTE: $c darwin is one universal binary -- adding darwin-amd64 so both filenames stay identical."
+      fi
     fi
     for s in $want; do
       case " $allowed " in
@@ -639,13 +705,26 @@ clone_or_update_src() {
     return 0
   fi
   if [ -d "$srcdir/.git" ]; then
-    echo "[$client] updating existing checkout at $srcdir" >>"$log"
+    # Report the commit BEFORE and AFTER, on stdout not just the log. "would
+    # clone/update" told you nothing about whether the tip actually moved, so a
+    # checkout left behind by an earlier run looked identical to a fresh pull.
+    # Observed for real: this tree sat at adf46fc while origin/HEAD had already
+    # moved to f39bb07.
+    local _before _after
+    _before="$(git -C "$srcdir" rev-parse --short=12 HEAD 2>/dev/null || echo unknown)"
+    echo "[$client] updating existing checkout at $srcdir (at $_before)" | tee -a "$log" || true
     # `if cmd; then return 0; fi; return 1` (rather than `cmd; return $?`) is
     # required for this to be `set -e`-safe independent of how the caller
     # invokes us: a failing standalone command outside an if/&&/|| context
     # would otherwise abort the whole script right here instead of letting
     # this one client's build be marked FAILED and the run continue.
     if ( cd "$srcdir" && git fetch --depth 1 origin "${ref:-HEAD}" && git reset --hard FETCH_HEAD ) >>"$log" 2>&1; then
+      _after="$(git -C "$srcdir" rev-parse --short=12 HEAD 2>/dev/null || echo unknown)"
+      if [ "$_before" = "$_after" ]; then
+        echo "[$client] already at latest ${ref:-default branch}: $_after" | tee -a "$log" || true
+      else
+        echo "[$client] pulled ${ref:-default branch}: $_before -> $_after" | tee -a "$log" || true
+      fi
       return 0
     fi
     return 1
@@ -705,6 +784,14 @@ build_darwin_universal() {
   local slice_amd64="$STAGE_DIR/.${client}-darwin-amd64.slice"
   rm -f "$slice_arm64" "$slice_amd64"
 
+  # Delete the expected output before each build. `git reset --hard` does not
+  # remove untracked build products, so build/bin/<target> survives a pull to a
+  # new commit. If a build then no-ops or exits 0 without rewriting it, the copy
+  # below would stage a binary from the PREVIOUS commit while client_commit
+  # reports the new HEAD -- a published artifact whose recorded provenance is
+  # simply wrong, and nothing downstream could detect it. Removing it first
+  # turns that silent mismatch into an honest FAILED (the cp cannot find it).
+  rm -f "$srcdir/$arm64_outbin_relpath" "$srcdir/$amd64_outbin_relpath"
   ( cd "$srcdir" && eval "$arm64_cmd" ) >>"$log" 2>&1 || ok=0
   if [ "$ok" = 1 ]; then cp "$srcdir/$arm64_outbin_relpath" "$slice_arm64" 2>>"$log" || ok=0; fi
   if [ "$ok" = 1 ]; then ( cd "$srcdir" && eval "$amd64_cmd" ) >>"$log" 2>&1 || ok=0; fi
@@ -772,6 +859,9 @@ build_linux_slice() {
     return 0
   fi
   local cmd="GOOS=linux GOARCH=$arch $extra_env make $make_target" rc=0
+  # Same reason as build_darwin_universal: drop any output left by an earlier
+  # commit's build so a no-op build cannot stage it under this commit's name.
+  rm -f "$srcdir/build/bin/$make_target"
   run_step "$client" "$slug" "$srcdir" "$cmd" "$IMG_GOLANG" "$log" || rc=$?
   if [ "$rc" = 0 ]; then
     # Guarded explicitly (not bare cp/chmod): this function is called as a

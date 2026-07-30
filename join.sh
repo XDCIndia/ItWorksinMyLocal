@@ -209,6 +209,13 @@ GAS_LIMIT="${GAS_LIMIT:-}"
 ETHSTATS="xdc_openscan_stats_2026@stats.xdcindia.com:443"
 # nethermind's chainspec name (NETHERMIND_DIST/chainspec/$NM_CONFIG.json via
 # --config); env-overridable, defaults to devnet 5151. --nm-config wins over both.
+# NM_CONFIG_EXPLICIT tracks whether NM_CONFIG was actually chosen (env or
+# --nm-config) vs left at this default -- see the auto-convert block below
+# (ItWorksinMyLocal#114 / xdc-nethermind-private#250): only auto-convert a
+# genesis->chainspec when the caller did NOT ask for a specific chainspec by
+# name, so an explicit --nm-config always wins untouched.
+NM_CONFIG_EXPLICIT=""
+[ -n "${NM_CONFIG:-}" ] && NM_CONFIG_EXPLICIT=1
 NM_CONFIG="${NM_CONFIG:-xdc-devnet5151}"
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -216,7 +223,7 @@ while [ $# -gt 0 ]; do
     --syncmode)    SYNCMODE=$2; shift 2;;
     --genesis)     GENESIS=$2; shift 2;;
     --chain)       CHAIN=$2; shift 2;;
-    --nm-config)   NM_CONFIG=$2; shift 2;;
+    --nm-config)   NM_CONFIG=$2; NM_CONFIG_EXPLICIT=1; shift 2;;
     --bootnodes)   BOOTNODES=$2; shift 2;;
     --ip)          HOST_IP=$2; shift 2;;
     --host)        HOST_IP=$2; shift 2;;
@@ -293,12 +300,14 @@ case "${NETWORK:-}" in
     # `--client nethermind --network mainnet` abort ("missing chainspec/xdc-mainnet.json")
     # and crash-loop. Map to the actual bundled name.
     NM_CONFIG="${NM_CONFIG/xdc-devnet5151/xdc}"
+    NM_CONFIG_EXPLICIT=1   # a curated bundled chainspec, never auto-convert over it
     PUB_BOOTNODES_FILE="bootnodes/mainnet.list"
     GAS_LIMIT_DEFAULT=420000000 ;;
   testnet|apothem)
     [ -z "$GENESIS" ]   && GENESIS="genesis/genesis-testnet.json"
     [ -z "$NETWORKID" ] && NETWORKID=51
     NM_CONFIG="${NM_CONFIG/xdc-devnet5151/xdc-testnet}"
+    NM_CONFIG_EXPLICIT=1   # a curated bundled chainspec, never auto-convert over it
     PUB_BOOTNODES_FILE="bootnodes/testnet.list"
     GAS_LIMIT_DEFAULT=420000000 ;;
   ""|devnet5151|5151|devnet|5050|net5050|5152|net5152)
@@ -431,13 +440,35 @@ fi
 # BOOTNODES (kept alongside the discovery bootnode) gives every client an
 # immediate, real, block-serving peer to dial instead of waiting on (or never
 # completing) Kademlia propagation through the bootnode alone.
+#
+# An EXPLICIT --bootnodes that points at THIS machine (127.0.0.1/localhost or
+# our own detected IP) is just as much a local join as a key-derived one, but
+# previously only the key-derived path set LOCAL_BOOTNODE=1 -- so
+# `join.sh --bootnodes <local-enode>` skipped this harvest entirely and left
+# modern clients pinned to the PUBLIC peers.list (wrong chain) -> 0 peers on
+# the local network. Promote such a bootnode to a local join so the harvest
+# runs for it too.
+if [ "$LOCAL_BOOTNODE" != 1 ] && [ -n "$BOOTNODES" ]; then
+  _myip=$(detect_ip 2>/dev/null)
+  case ",$BOOTNODES," in
+    *@127.0.0.1:*|*@localhost:*) LOCAL_BOOTNODE=1 ;;
+    *) [ -n "$_myip" ] && case "$BOOTNODES" in *"@${_myip}:"*) LOCAL_BOOTNODE=1 ;; esac ;;
+  esac
+fi
 if [ "$LOCAL_BOOTNODE" = 1 ] && [ "$STATICPEERS_EXPLICIT" != 1 ]; then
   _local_nid="$NETWORKID"
   if [ -z "$_local_nid" ] && [ -n "$GENESIS" ] && [ -f "$GENESIS" ]; then
     _local_nid=$(python3 -c "import json,sys;print(json.load(open('$GENESIS'))['config']['chainId'])" 2>/dev/null)
   fi
   _local_peers=""
-  for _lp in 8545 8546 8547 8548; do
+  # Probe the local sealers' JSON-RPC. run.sh/setup.sh honor BASE_RPC_PORT
+  # (default 8545) and assign nodes BASE_RPC_PORT, +1, +2, +3 -- so hardcoding
+  # 8545-8548 missed the sealers whenever the network was launched on a custom
+  # BASE_RPC_PORT (e.g. when 8545 was already taken), leaving _local_peers empty
+  # and modern clients unable to find a real peer. Derive the scan from the same
+  # env instead.
+  _brp="${BASE_RPC_PORT:-8545}"
+  for _lp in "$_brp" $((_brp + 1)) $((_brp + 2)) $((_brp + 3)); do
     _lenode=$(curl -s -m3 "http://127.0.0.1:${_lp}" -X POST -H 'Content-Type: application/json' \
       --data '{"jsonrpc":"2.0","method":"admin_nodeInfo","params":[],"id":1}' 2>/dev/null \
       | python3 -c "
@@ -447,16 +478,25 @@ try:
 except Exception:
     pass" 2>/dev/null)
     [ -n "$_lenode" ] || continue
-    # Normalise the host to $bhost (this machine's IP / --ip, resolved above)
-    # and strip any ?discport=... query, so it's a clean, dialable
-    # enode://<id>@<ip>:<tcpport> regardless of what the sealer self-reports.
-    _lenode=$(printf '%s' "$_lenode" | python3 -c "
-import sys
+    # Strip any ?discport=... query and normalise the host so it's a clean,
+    # dialable enode://<id>@<ip>:<tcpport>. Prefer $bhost (the --ip / resolved
+    # bootnode host) but fall back to the sealer's OWN self-reported host when
+    # that is already a real address -- $bhost is only set inside the
+    # bootnode-key-derivation block, so an explicit local --bootnodes join
+    # leaves it empty, which previously produced malformed `...@:<port>` enodes
+    # that geth rejects as a "bad bootstrap node". Only override a placeholder
+    # host ([::], 0.0.0.0, 127.0.0.1, localhost, empty).
+    _lenode=$(printf '%s' "$_lenode" | BHOST="$bhost" python3 -c "
+import sys, os
 e = sys.stdin.read().strip().split('?', 1)[0]
 try:
     head, hostport = e.split('@', 1)
-    _, port = hostport.split(':', 1)
-    print('%s@%s:%s' % (head, '$bhost', port))
+    host, port = hostport.rsplit(':', 1)
+    bhost = os.environ.get('BHOST', '').strip()
+    placeholder = host.strip('[]') in ('', '::', '0.0.0.0', '127.0.0.1', 'localhost')
+    if placeholder and bhost:
+        host = bhost
+    print('%s@%s:%s' % (head, host, port))
 except Exception:
     print(e)
 ")
@@ -484,7 +524,7 @@ fi
 # A client whose extra inputs are missing (erigon needs --chain; nethermind needs
 # a dist) exits with its own hint and is skipped -- the rest keep syncing.
 if [ "$CLIENT" = all ]; then
-  ALL_CLIENTS="oldxdc geth erigon besu nethermind reth xone"
+  ALL_CLIENTS="oldxdc geth erigon besu nethermind reth xone geth1175"
   # Forward the shared, already-resolved network inputs to every child so they all
   # dial the SAME network (and a child doesn't re-run default resolution).
   shared=()
@@ -564,7 +604,8 @@ NODETYPE=sync
 # (85xx / 91xx / 99xx / 310xx), and the previous join defaults (83xx/85-86xx/
 # 30313+) -- so a `--client all` fan-out won't collide with those or a second run.
 case "$CLIENT" in
-  geth) O=100;; erigon) O=200;; besu) O=300;; nethermind) O=400;; reth) O=500;; xone) O=600;; *) O=0;;
+  geth) O=100;; erigon) O=200;; besu) O=300;; nethermind) O=400;; reth) O=500;; xone) O=600;;
+  geth1175) O=700;; *) O=0;;
 esac
 PORT="${PORT:-$((31413 + O))}"                  # p2p     31413..32013
 RPCPORT="${RPCPORT:-$((9645 + O))}"             # http    9645..10245
@@ -608,7 +649,37 @@ case "$CLIENT" in
     if [ ! -x "$CLIENT_BIN" ] && [ "${BIN_SOURCE_besu:-$BIN_SOURCE}" != build ]; then
       download_bins && CLIENT_BIN="$BIN_DIR/besu"
     fi
-    [ -x "$CLIENT_BIN" ] || { echo "besu binary not found. Build besu-xdc (XDCIndia/besu-xdc) and set BESU_BIN=/path/to/besu, put 'besu' on PATH, or let this script download it (unset BIN_SOURCE/BIN_SOURCE_besu if you set either to 'build')." >&2; exit 1; } ;;
+    [ -x "$CLIENT_BIN" ] || { echo "besu binary not found. Build besu-xdc (XDCIndia/besu-xdc) and set BESU_BIN=/path/to/besu, put 'besu' on PATH, or let this script download it (unset BIN_SOURCE/BIN_SOURCE_besu if you set either to 'build')." >&2; exit 1; }
+    # besu's launcher is a Gradle start script: it needs a JVM via JAVA_HOME or
+    # `java` on PATH, and exits with Gradle's own generic "JAVA_HOME is not set
+    # and no 'java' command could be found" if it has neither. The DOWNLOADED
+    # besu dist bundles a JRE, but a LOCAL build (gradle installDist/distTar --
+    # i.e. exactly what BESU_BIN normally points at, and the only way to run a
+    # besu carrying an unreleased fix) does NOT. On a host whose only JVM is the
+    # one inside a previously-downloaded besu dist, `BESU_BIN=... ./join.sh
+    # --client besu` therefore died before printing anything besu-specific,
+    # which reads as a broken local build rather than a missing-JVM wiring gap
+    # (ItWorksinMyLocal#133 -- this masked besu's real behaviour during #128/#132
+    # testing, because the silent fallback to the downloaded dist ran a DIFFERENT
+    # besu than the one intended).
+    #
+    # So: if no usable JVM is visible, borrow the JRE from a besu dist we already
+    # have on disk and export JAVA_HOME for the child. Only fills a gap -- an
+    # existing, working JAVA_HOME/`java` is always left alone.
+    if ! { [ -n "$JAVA_HOME" ] && [ -x "$JAVA_HOME/bin/java" ]; } && ! command -v java >/dev/null 2>&1; then
+      for _besu_jre in \
+        "$(dirname "$CLIENT_BIN")/../jre" \
+        "$BIN_DIR/.dist-besu/jre" \
+        "$(dirname "$0")/bin/besu/$PLATFORM/.dist-besu/jre"; do
+        if [ -x "$_besu_jre/bin/java" ]; then
+          JAVA_HOME=$(cd "$_besu_jre" && pwd); export JAVA_HOME
+          PATH="$JAVA_HOME/bin:$PATH"; export PATH
+          echo "  besu: no JVM on PATH/JAVA_HOME -- using bundled JRE $JAVA_HOME"
+          break
+        fi
+      done
+      command -v java >/dev/null 2>&1 || { echo "besu needs a JVM and none was found. Set JAVA_HOME=/path/to/jdk (or install java); a besu dist downloaded by this script bundles one at bin/besu/$PLATFORM/.dist-besu/jre." >&2; exit 1; }
+    fi ;;
   reth)
     CLIENT_BIN="${RETH_BIN:-$(command -v xdc-reth 2>/dev/null)}"
     if [ ! -x "$CLIENT_BIN" ] && [ "${BIN_SOURCE_reth:-$BIN_SOURCE}" != build ]; then
@@ -626,12 +697,52 @@ case "$CLIENT" in
       fi
     fi
     [ -x "$CLIENT_BIN" ] || { echo "nethermind not found. Build the xdc nethermind dist (XDCIndia/nethermind) and set NETHERMIND_DIST=/path/to/dist (containing ./nethermind and chainspec/$NM_CONFIG.json), put it on PATH, or let this script download it (unset BIN_SOURCE/BIN_SOURCE_nethermind if you set either to 'build')." >&2; exit 1; }
+    # ItWorksinMyLocal#114 / xdc-nethermind-private#250: nethermind ships only a
+    # handful of hand-authored chainspecs (5151/mainnet/testnet) and has no
+    # --genesis path of its own. When the caller didn't ask for a specific
+    # --nm-config/NM_CONFIG (NM_CONFIG_EXPLICIT unset), a geth-format --genesis
+    # WAS given, and that genesis's chainId does NOT match the chainspec
+    # NM_CONFIG currently resolves to (whether that chainspec is missing
+    # entirely, or just targets a different chain), auto-convert the genesis
+    # via netlab/nm-chainspec.sh into a fresh chainspec+config keyed off its
+    # own chainId ("xdc-custom-<chainId>") so nethermind can at least ATTEMPT
+    # to join a private/per-run network setup.sh generated. KNOWN LIMITATION
+    # (see nm-chainspec.sh's own header, xdc-nethermind-private#250): the
+    # converted chainspec loads and a genesis block validation actually runs,
+    # but nethermind's genesis-block loader deletes the 0x89 BlockSigners
+    # contract ("TIPSigning fork") unconditionally at block 0 for any
+    # non-hardcoded chainId, producing a genesis state-root/hash mismatch
+    # against every other client -- a client-side gap, not fixable from this
+    # script; still tracked as an open blocker, not silently papered over.
+    if [ -z "$NM_CONFIG_EXPLICIT" ] && [ -f "$GENESIS" ]; then
+      AUTO_NM_CHAINID=$(python3 -c "import json,sys
+try:
+    print(json.load(open(sys.argv[1]))['config']['chainId'])
+except Exception:
+    pass" "$GENESIS" 2>/dev/null)
+      CURRENT_NM_CHAINID=$(python3 -c "import json,sys
+try:
+    print(json.load(open(sys.argv[1]))['params']['chainId'])
+except Exception:
+    pass" "$NETHERMIND_DIST/chainspec/$NM_CONFIG.json" 2>/dev/null)
+      if [ -n "$AUTO_NM_CHAINID" ] && [ "$AUTO_NM_CHAINID" != "$CURRENT_NM_CHAINID" ]; then
+        AUTO_NM_CONFIG="xdc-custom-${AUTO_NM_CHAINID}"
+        echo "nethermind: no explicit --nm-config, and the resolved chainspec '$NM_CONFIG' (chainId ${CURRENT_NM_CHAINID:-<missing>}) doesn't match --genesis's chainId $AUTO_NM_CHAINID -- auto-converting $GENESIS into $NETHERMIND_DIST/chainspec/$AUTO_NM_CONFIG.json via netlab/nm-chainspec.sh" >&2
+        if "$(dirname "$0")/netlab/nm-chainspec.sh" --genesis "$GENESIS" --name "$AUTO_NM_CONFIG" --dist "$NETHERMIND_DIST"; then
+          NM_CONFIG="$AUTO_NM_CONFIG"
+        else
+          echo "nethermind: genesis->chainspec auto-conversion failed; falling back to the original chainspec-missing error below" >&2
+        fi
+      fi
+    fi
     if [ ! -f "$NETHERMIND_DIST/chainspec/$NM_CONFIG.json" ]; then
       echo "nethermind dist '$NETHERMIND_DIST' is missing chainspec/$NM_CONFIG.json." >&2
       echo "nethermind loads its own Parity-style chainspec matching the target chainId" >&2
       echo "-- it does NOT read the geth-format --genesis -- so joining a custom network" >&2
       echo "needs either a NETHERMIND_DIST that ships a chainspec for it, or --nm-config" >&2
-      echo "(env NM_CONFIG) set to a name that's already present. Chainspecs present in" >&2
+      echo "(env NM_CONFIG) set to a name that's already present, or a --genesis file this" >&2
+      echo "script can auto-convert via netlab/nm-chainspec.sh (see above for why that" >&2
+      echo "didn't happen/succeed here). Chainspecs present in" >&2
       echo "'$NETHERMIND_DIST/chainspec/':" >&2
       { ls "$NETHERMIND_DIST/chainspec/" 2>/dev/null || echo "  (directory not found)"; } >&2
       exit 1
