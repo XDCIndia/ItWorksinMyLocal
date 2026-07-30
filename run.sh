@@ -55,6 +55,9 @@ while [ $# -gt 0 ]; do
     --mixed) MIXED=1; shift;;
     --all) ALL=1; shift;;
     --chainid) CHAINID=$2; shift 2;;
+    # Machine component of every node identity (see node_name() in lib.sh).
+    # Exported so it reaches the join.sh children --all launches, too.
+    --name) export MACHINE=$2; shift 2;;
     --build) BIN_SOURCE_oldxdc=build; shift;;
     -h|--help)
       echo "usage: ./run.sh [--mixed | --all] [--chainid N] [--build]"
@@ -306,6 +309,12 @@ VERBOSITY=3
 GASPRICE="1"
 STATS_SECRET="xdc_openscan_stats_2026"
 VERSION=$("$XDC" version 2>/dev/null | awk '/^Version:/{print $2}')
+# Short git commit of the sealer binary, for the node name. `version` prints the
+# full 40-char hash on its own line ("Git Commit: af7de721...") -- take 8, which
+# is what every other client reports and enough to identify a build. Empty when
+# the binary was built without git metadata; node_name() renders that as
+# "nocommit" rather than silently dropping the field.
+COMMIT=$("$XDC" version 2>/dev/null | awk '/^Git Commit:/{print substr($3,1,8); exit}')
 # The node binaries' --networkid is dynamic: setup.sh or the operator can pass CHAINID in the
 # environment or --chainid on the command line. All nodes (legacy + modern)
 # must share the same value or peering will fail.
@@ -404,7 +413,12 @@ for i in $(seq 1 $NUM_NODES); do
   P2P_PORT=$((BASE_P2P_PORT + i))   # node1 -> BASE+1 ... node4 -> BASE+4 (default 30303..30306)
   WS_PORT=$((BASE_WS_PORT + i))     # default 8555..8558
   RPC_PORT=$((BASE_RPC_PORT + i))   # default 8545..8548
-  NODE_NAME="${Bin_NAME}-v${VERSION}-${HOST}-MasterNode-${n}"
+  # Canonical shared identity (lib.sh node_name): machine-client-version-commit-
+  # nodetype-ip. The node INDEX rides in the nodetype ("seal01") because every
+  # sealer in this topology runs on the SAME box: machine, version, commit and ip
+  # are identical across nodes 1..N, so without the index all of them would claim
+  # one ethstats name -- and colliding identities make healthy nodes look stuck.
+  NODE_NAME=$(node_name "$(machine_name)" "$CLIENT" "$VERSION" "$COMMIT" "seal${n}" "$IP")
   NODE_IDENTITY="${HOST}-MasterNode-${n}"
   ETHSTATS="${NODE_NAME}:${STATS_SECRET}@stats.xdcindia.com:443"
   "$XDC" --bootnodes "$BOOTNODE_ENODE" --syncmode "full" --datadir ./nodes/$i \

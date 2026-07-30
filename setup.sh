@@ -10,6 +10,12 @@
 #   ./setup.sh --chainid 12345  # use a custom chain/network id
 #   ./setup.sh --new --all      # 4 legacy sealers + one follower per modern client
 #   ./setup.sh --client geth      # build-only: the modern go-ethereum client
+#   ./setup.sh --new --all --name mylab
+#                                 # label every node on this box "mylab"; omit
+#                                 # --name and the host's hostname is used. The
+#                                 # label is only the FIRST part of each node's
+#                                 # name -- client, version, commit, node type
+#                                 # and IP are appended per node automatically.
 #   ./setup.sh --build            # clone XDPoSChain/go-ethereum and build from
 #                                  # source instead of downloading prebuilt
 #                                  # binaries (same as BIN_SOURCE=build). The
@@ -37,9 +43,16 @@ while [ $# -gt 0 ]; do
     --client) export CLIENT=$2; CLIENT_EXPLICIT=1; shift 2;;
     --all) ALL=1; shift;;
     --chainid) CHAINID=$2; shift 2;;
+    # --name is the MACHINE component of every node identity this run creates
+    # (see node_name() in lib.sh). Exported, not passed positionally, because it
+    # has to survive setup.sh -> run.sh -> join.sh without each layer having to
+    # re-plumb a flag. Omitting it is fully supported: machine_name() falls back
+    # to this host's short hostname, so names are always qualified by WHERE they
+    # run even when the operator says nothing.
+    --name) export MACHINE=$2; shift 2;;
     --build) export BIN_SOURCE=build; shift;;
     -h|--help) sed -n '2,16p' "$0" | sed 's/^# \{0,1\}//'; exit 0;;
-    *) echo "usage: ./setup.sh [--new [N]] [--all] [--chainid N] [--client oldxdc|geth] [--build]" >&2; exit 1;;
+    *) echo "usage: ./setup.sh [--new [N]] [--all] [--chainid N] [--client oldxdc|geth] [--name NAME] [--build]" >&2; exit 1;;
   esac
 done
 
