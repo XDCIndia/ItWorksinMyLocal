@@ -639,13 +639,26 @@ clone_or_update_src() {
     return 0
   fi
   if [ -d "$srcdir/.git" ]; then
-    echo "[$client] updating existing checkout at $srcdir" >>"$log"
+    # Report the commit BEFORE and AFTER, on stdout not just the log. "would
+    # clone/update" told you nothing about whether the tip actually moved, so a
+    # checkout left behind by an earlier run looked identical to a fresh pull.
+    # Observed for real: this tree sat at adf46fc while origin/HEAD had already
+    # moved to f39bb07.
+    local _before _after
+    _before="$(git -C "$srcdir" rev-parse --short=12 HEAD 2>/dev/null || echo unknown)"
+    echo "[$client] updating existing checkout at $srcdir (at $_before)" | tee -a "$log" || true
     # `if cmd; then return 0; fi; return 1` (rather than `cmd; return $?`) is
     # required for this to be `set -e`-safe independent of how the caller
     # invokes us: a failing standalone command outside an if/&&/|| context
     # would otherwise abort the whole script right here instead of letting
     # this one client's build be marked FAILED and the run continue.
     if ( cd "$srcdir" && git fetch --depth 1 origin "${ref:-HEAD}" && git reset --hard FETCH_HEAD ) >>"$log" 2>&1; then
+      _after="$(git -C "$srcdir" rev-parse --short=12 HEAD 2>/dev/null || echo unknown)"
+      if [ "$_before" = "$_after" ]; then
+        echo "[$client] already at latest ${ref:-default branch}: $_after" | tee -a "$log" || true
+      else
+        echo "[$client] pulled ${ref:-default branch}: $_before -> $_after" | tee -a "$log" || true
+      fi
       return 0
     fi
     return 1
@@ -705,6 +718,14 @@ build_darwin_universal() {
   local slice_amd64="$STAGE_DIR/.${client}-darwin-amd64.slice"
   rm -f "$slice_arm64" "$slice_amd64"
 
+  # Delete the expected output before each build. `git reset --hard` does not
+  # remove untracked build products, so build/bin/<target> survives a pull to a
+  # new commit. If a build then no-ops or exits 0 without rewriting it, the copy
+  # below would stage a binary from the PREVIOUS commit while client_commit
+  # reports the new HEAD -- a published artifact whose recorded provenance is
+  # simply wrong, and nothing downstream could detect it. Removing it first
+  # turns that silent mismatch into an honest FAILED (the cp cannot find it).
+  rm -f "$srcdir/$arm64_outbin_relpath" "$srcdir/$amd64_outbin_relpath"
   ( cd "$srcdir" && eval "$arm64_cmd" ) >>"$log" 2>&1 || ok=0
   if [ "$ok" = 1 ]; then cp "$srcdir/$arm64_outbin_relpath" "$slice_arm64" 2>>"$log" || ok=0; fi
   if [ "$ok" = 1 ]; then ( cd "$srcdir" && eval "$amd64_cmd" ) >>"$log" 2>&1 || ok=0; fi
@@ -772,6 +793,9 @@ build_linux_slice() {
     return 0
   fi
   local cmd="GOOS=linux GOARCH=$arch $extra_env make $make_target" rc=0
+  # Same reason as build_darwin_universal: drop any output left by an earlier
+  # commit's build so a no-op build cannot stage it under this commit's name.
+  rm -f "$srcdir/build/bin/$make_target"
   run_step "$client" "$slug" "$srcdir" "$cmd" "$IMG_GOLANG" "$log" || rc=$?
   if [ "$rc" = 0 ]; then
     # Guarded explicitly (not bare cp/chmod): this function is called as a
