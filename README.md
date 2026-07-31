@@ -36,6 +36,17 @@ unless you point the scripts at your own binary. Force a build with
 default — download anonymously from the public mirror and are verified by sha256.
 On a fresh Ubuntu box you need only `git`, `curl`, `python3` and `tar`.
 
+**Two host prerequisites, if you want every client to come up.** Both fail
+quietly rather than loudly, so they are worth checking before you debug anything
+else:
+
+| need | why | what you see without it |
+|---|---|---|
+| **~12 GB free disk** | nethermind's HealthChecks plugin enforces a free-space floor | nethermind initialises, prints its banner, then shuts down *gracefully with no error line*. The reason is one line earlier: `Not enough free disk space in '/' to safely run a node - please provide at least 11.51 GB`. Budget more than the floor: the clients themselves need ~2.5 GB of binaries plus chain data |
+| **Java 21+ on `PATH`** (or `JAVA_HOME`) | besu's archive bundles a **linux/amd64** JRE, unusable on macOS; the launcher falls back to host Java | `besu -> besu --version failed (its bundled JRE is broken, or set BESU_BIN)` and besu is skipped. With a JDK 21 present it joins normally |
+
+Everything else downloads and runs with no further setup.
+
 The [GitHub CLI](https://cli.github.com/) (`gh`) is required **only** if you force
 a source build (`BIN_SOURCE=build`), because the client *source* repos are
 private. The normal download path never touches it.
@@ -150,8 +161,8 @@ Notes: `oldxdc` (XDC + bootnode + puppeth) is served from the xdc.network mirror
 like every other client, so it needs no credentials. It keeps a `gh release`
 fallback for the case where the mirror is behind, and still builds from source
 with `BIN_SOURCE=build` (which does need `gh`, since the source repo is private).
-`erigon` is published for `linux-amd64` only, so on macOS/arm it auto-falls back
-to a source build. `besu`/`reth`/`nethermind` are download-only here (the scripts
+`erigon` is published for `linux-amd64` and darwin (universal), so it downloads on
+macOS too. `besu`/`reth`/`nethermind` are download-only here (the scripts
 don't build them) — an explicit `BESU_BIN` / `RETH_BIN` / `NETHERMIND_DIST` (or a
 binary on `PATH`) still takes priority over the download. The nethermind prebuilt
 does not yet ship the `xdc-devnet5151` chainspec, so joining devnet 5151 with
@@ -190,7 +201,7 @@ toolchains) are download-only unless you point `join.sh` at your own binary via
 | `oldxdc` (default) | [`XDCIndia/OLDXDC`](https://github.com/XDCIndia/OLDXDC) (XDPoSChain) | download (GitHub release) or build | local run + genesis + seal ✅; **5151 join: 0 peers observed — under investigation ([#13](../../issues/13))** |
 | `geth` | [`XDCIndia/go-ethereum`](https://github.com/XDCIndia/go-ethereum) (GP5) | download or build | **join/sync ✅ verified** (~400 blk/s); seal TODO; full-sync past the mid-history epoch switch needs the xdcSyncer fix |
 | `erigon` | [`XDCIndia/erigon-xdc`](https://github.com/XDCIndia/erigon-xdc) | download (`linux-amd64` only) or build | sync via built-in `--chain xdc\|xdc-apothem`; custom `--genesis` blocked ([#9](../../issues/9)) — fix proven in a lab (`PARITY OK 1..1054` incl. v1→v2 switch), not yet upstreamed |
-| `besu` | [`XDCIndia/besu-xdc`](https://github.com/XDCIndia/besu-xdc) | download or `BESU_BIN`/PATH | reads geth genesis natively; large prebuilt (**slow download**) and needs a modern JRE (11+) |
+| `besu` | [`XDCIndia/besu-xdc`](https://github.com/XDCIndia/besu-xdc) | download or `BESU_BIN`/PATH | reads geth genesis natively; large prebuilt (**slow download**) and needs host **Java 21+** (the bundled JRE is linux/amd64) |
 | `nethermind` | `XDCIndia/xdc-nethermind-private` (private — no public repo) | download or `NETHERMIND_DIST`/PATH | **custom `NETHERMIND_DIST` required for 5151** — the prebuilt archive doesn't ship `chainspec/xdc-devnet5151.json` |
 | `reth` | [`XDCIndia/reth`](https://github.com/XDCIndia/reth) | download or `RETH_BIN`/PATH | reads geth genesis natively. Follows a private XDPoS net to tip with state-root parity **only from the build carrying the epoch-reward fix** — see the warning below |
 | `xone` | [`XDCIndia/xOneGo`](https://github.com/XDCIndia/xOneGo) | download (mirror, GitHub-release fallback) | Go XDPoS reference client. Follows a private net to tip, and seals in exact fair share when seated as a validator |
@@ -239,15 +250,19 @@ local net was also tested (macOS/arm64):
 
 | Client | Local sync | Notes |
 |--------|:---:|-------|
-| `oldxdc` | ✅ | it *is* the local net (4 sealers) |
+| `oldxdc` | ✅ | it *is* the local net (4 sealers); downloads a darwin tarball, no source build |
 | `geth` | ✅ | full block-for-block parity incl. the v1→v2 switch |
-| `erigon` | ✅ | full parity incl. the switch — needs the genesis-file fix ([#9](../../issues/9), proven in the lab, not yet upstreamed) |
-| `reth` | ❌ | doesn't recognize custom chainIds as XDC → falls back to ETH bootnodes ([#12](../../issues/12)) — fails locally *and* on 5151, same cause |
-| `nethermind` | ❌ | needs a chainspec matching the target chainId; the launcher check was also hardcoded to 5151 ([#15](../../issues/15)) |
-| `besu` | ⛔ | not runnable on this host (Java 8; besu needs 17/21+) — a host limitation, not a client/network issue |
+| `geth4` | ✅ | the 1.17.4 pin — **linux-amd64 only**, so it is skipped on darwin |
+| `erigon` | ✅ | full parity incl. the switch |
+| `reth` | ✅ | since the EIP-1559-from-genesis fix (XDCIndia/reth#278) |
+| `nethermind` | ✅ | chainspec is auto-converted from `--genesis` for any chainId. **Needs the free-disk floor below** — under it, it initialises, prints its banner and shuts down *cleanly with no error* |
+| `besu` | ✅ | **needs host Java 21+**; the archive's bundled JRE is linux/amd64 and is moved aside on other platforms |
+| `xone` | ✅ | since the genesis-config detection fix (XDCIndia/xOneGo#715) |
 
-So on a stock macOS/arm64 host, **oldxdc, geth, and erigon sync a local network**;
-`reth`/`nethermind` need the fixes above, and `besu` needs a modern JRE.
+So on a stock macOS/arm64 host **all seven client types sync a local network** —
+measured on a clean clone: 4 oldxdc sealers plus geth, erigon, reth, nethermind,
+besu and xone all at the same height, with no source build. `geth4` is the only
+entry skipped, for want of a darwin artifact.
 
 ```bash
 ./setup.sh --new                 # default oldxdc — runs the 4-node network
@@ -329,11 +344,10 @@ Two things worth knowing before you interpret the output:
 
 - **`setup.sh --client` only takes `oldxdc|geth`** — it builds the sealer set.
   `join.sh` is what accepts all seven, or `all`.
-- **`nethermind` currently cannot boot** as an XDPoS client: its fork-activation
-  table is keyed on a hardcoded list of chain IDs and defaults anything else to
-  "active at genesis", which wipes the BlockSigners contract while genesis is being
-  built and makes block 0 invalid. Tracked in the (private) nethermind fork as
-  #250. Expect **six** working clients, not seven, until that lands.
+- **All seven clients sync a local net on macOS/arm64**, given the two host
+  prerequisites in [Requirements](#requirements) (free disk and Java 21). Anything
+  whose binary is missing or unrunnable is skipped **with a reason** rather than
+  taking the topology down, so read the `Skipped:` block if you see fewer.
 
 Confirm a follower is actually keeping up — compare its height against a sealer
 rather than trusting its logs:
