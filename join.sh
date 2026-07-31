@@ -31,8 +31,11 @@
 #   --bootnodes LIST     full enode URL(s) to dial, if you have them
 #                        (overrides --ip; default: derived from ./bootnode.key)
 #   --host IP[:PORT]     alias of --ip
-#   --client C           node client: oldxdc (default) | geth | erigon | besu |
-#                        nethermind | reth | xone | all. xone is the go-ethereum-
+#   --client C           node client: oldxdc (default) | geth | geth4 | erigon |
+#                        besu | nethermind | reth | xone | all. geth4 is the
+#                        1.17.4 pin (linux-amd64 only, so it is skipped on
+#                        darwin); it was accepted here long before this line
+#                        listed it. xone is the go-ethereum-
 #                        derived XDPoS reference client (XDCIndia/xOneGo). "all"
 #                        boots every client at once, each in its own datadir
 #                        (nodes/<client>-<type>) with a distinct 100-wide port

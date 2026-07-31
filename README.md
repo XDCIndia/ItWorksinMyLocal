@@ -9,6 +9,7 @@ build a genesis, run 4 mining nodes + a bootnode, and let other machines join.
 
 ## Contents
 - [Requirements](#requirements)
+- [Two ways in: start a network, or join one](#two-ways-in-start-a-network-or-join-one)
 - [Choosing a client](#choosing-a-client)
 - [Quick start](#quick-start)
   - [Run every client against it](#run-every-client-against-it)
@@ -170,6 +171,63 @@ nethermind still needs a custom `NETHERMIND_DIST` (join.sh says so if missing).
 
 ---
 
+## Two ways in: start a network, or join one
+
+Everything in this repo is one of these two. Pick the row you want and run the
+command; both work from a clean clone with no extra setup beyond
+[Requirements](#requirements).
+
+### A. Start your own network
+
+```bash
+./setup.sh --new --all
+```
+
+Generates 4 fresh validator keys into `.env`, derives a matching genesis, wipes
+old node data, and launches 4 `oldxdc` sealers **plus one follower per modern
+client**. Leave it running; `Ctrl-C` stops everything.
+
+```bash
+./setup.sh --new                          # sealers only (no modern followers)
+./setup.sh --new --all --chainid 747      # pick the chain id
+./setup.sh --new --all --network HM       # name the chain (shown by network-info.sh)
+./setup.sh                                # reuse the keys already in .env
+```
+
+On bring-up it prints the dashboard link for the network you just started:
+
+```
+Skynet stats: https://skynet.xdcindia.com/stats?net=<chainId>
+```
+
+### B. Join a network that already exists
+
+`join.sh` attaches a **sync-only** node. Three cases:
+
+```bash
+# 1. a public XDC network — genesis and bootnodes are vendored, nothing else needed
+./join.sh --network mainnet   --client geth      # chainId 50
+./join.sh --network testnet   --client geth      # apothem, chainId 51
+./join.sh --network devnet5151 --client geth     # the default if --network is omitted
+
+# 2. a local net running on THIS machine (started by setup.sh/run.sh above)
+./join.sh --client reth --genesis ./genesis/genesis.json --chainid <id> --ip 127.0.0.1
+
+# 3. a net on ANOTHER machine — you need its genesis.json and its IP
+./join.sh --client geth --genesis /path/to/genesis.json --ip <HOST_IP>
+```
+
+Swap `--client` for any of `oldxdc | geth | geth4 | erigon | reth | besu |
+nethermind | xone`, or `--client all` to attach one of each at once. See
+[Joining from another machine](#joining-from-another-machine) for ports,
+`--mine`, and the other flags.
+
+**Which one do I want?** If you are evaluating clients or testing consensus
+changes, start your own (A) — you control the genesis and the validator set. Use
+(B) only to follow a chain someone else is producing.
+
+---
+
 ## Choosing a client
 
 Seven node clients are selectable with `--client` (or `CLIENT=`), joining **devnet
@@ -200,7 +258,7 @@ toolchains) are download-only unless you point `join.sh` at your own binary via
 |--------|-------------|---------------|--------|
 | `oldxdc` (default) | [`XDCIndia/OLDXDC`](https://github.com/XDCIndia/OLDXDC) (XDPoSChain) | download (GitHub release) or build | local run + genesis + seal ✅; **5151 join: 0 peers observed — under investigation ([#13](../../issues/13))** |
 | `geth` | [`XDCIndia/go-ethereum`](https://github.com/XDCIndia/go-ethereum) (GP5) | download or build | **join/sync ✅ verified** (~400 blk/s); seal TODO; full-sync past the mid-history epoch switch needs the xdcSyncer fix |
-| `erigon` | [`XDCIndia/erigon-xdc`](https://github.com/XDCIndia/erigon-xdc) | download (`linux-amd64` only) or build | sync via built-in `--chain xdc\|xdc-apothem`; custom `--genesis` blocked ([#9](../../issues/9)) — fix proven in a lab (`PARITY OK 1..1054` incl. v1→v2 switch), not yet upstreamed |
+| `erigon` | [`XDCIndia/erigon-xdc`](https://github.com/XDCIndia/erigon-xdc) | download (linux-amd64 + darwin universal) or build | syncs a built-in `--chain xdc\|xdc-apothem` **or a custom genesis file** — v3.5.0+ loads `--chain <path>` directly, so [#9](../../issues/9) no longer applies |
 | `besu` | [`XDCIndia/besu-xdc`](https://github.com/XDCIndia/besu-xdc) | download or `BESU_BIN`/PATH | reads geth genesis natively; large prebuilt (**slow download**) and needs host **Java 21+** (the bundled JRE is linux/amd64) |
 | `nethermind` | `XDCIndia/xdc-nethermind-private` (private — no public repo) | download or `NETHERMIND_DIST`/PATH | **custom `NETHERMIND_DIST` required for 5151** — the prebuilt archive doesn't ship `chainspec/xdc-devnet5151.json` |
 | `reth` | [`XDCIndia/reth`](https://github.com/XDCIndia/reth) | download or `RETH_BIN`/PATH | reads geth genesis natively. Follows a private XDPoS net to tip with state-root parity **only from the build carrying the epoch-reward fix** — see the warning below |
