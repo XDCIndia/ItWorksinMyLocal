@@ -112,6 +112,15 @@ BASE_WS_PORT="${BASE_WS_PORT:-8554}"
 # block this wide rather than a single port.
 ALL_P2P_STRIDE="${ALL_P2P_STRIDE:-10}"
 
+# The local bootnode's port. Was the bare literal 30301 in three places, which
+# meant BASE_P2P_PORT/BASE_RPC_PORT/BASE_WS_PORT could move the whole node 1..N
+# topology out of the way but NOT the bootnode -- so on a host where 30301 was
+# already taken there was no documented way to start at all, and the pre-flight
+# correctly refused every attempt. Note the name: network.env uses the
+# DEFAULT_BOOTNODE_PORT spelling for the REMOTE network join.sh dials, so this
+# does not collide with it.
+BOOTNODE_PORT="${BOOTNODE_PORT:-30301}"
+
 # --all followers get their OWN rpc/ws/authrpc block, one decade each, well clear
 # of the sealers' ranges. Previously they were numbered BASE_RPC_PORT+idx and
 # BASE_WS_PORT+idx, which OVERLAPPED the sealers on a default run:
@@ -267,7 +276,11 @@ fi
 # Machine identity: hostname + LAN IP (advertised to peers so this works across
 # machines on the same network, not just localhost).
 HOST=$(hostname -s)
-IP=$(detect_ip)
+# Advertised address. NODE_IP overrides the autodetected one, for hosts where
+# detect_ip picks an interface peers cannot reach (NAT, WSL2, multi-homed boxes).
+# Deliberately NOT keyed on bare $IP: that name is far too generic to capture
+# from the environment safely.
+IP="${NODE_IP:-$(detect_ip)}"
 echo "Machine: host=$HOST ip=$IP platform=$PLATFORM mixed=$MIXED all=$ALL"
 if [ "$ALL" = 1 ]; then
   echo "Modern followers: ${ALL_SELECTED:-<none>}"
@@ -372,7 +385,7 @@ networkid="$CHAINID"
 # Local bootnode enode, built from bootnode.key + this machine's IP so every
 # node connects to a bootnode within the network.
 BOOTNODE_PUBKEY=$("$BOOTNODE_BIN" -nodekey ./bootnode.key -writeaddress)
-BOOTNODE_ENODE="enode://${BOOTNODE_PUBKEY}@${IP}:30301"
+BOOTNODE_ENODE="enode://${BOOTNODE_PUBKEY}@${IP}:${BOOTNODE_PORT}"
 echo "Local bootnode: $BOOTNODE_ENODE"
 
 # Pre-flight: every port this topology needs must be free BEFORE anything
@@ -401,7 +414,7 @@ ports_in_use() {
   return $busy
 }
 
-PORT_SPECS=("30301:bootnode")
+PORT_SPECS=("${BOOTNODE_PORT}:bootnode")
 for i in $(seq 1 $NUM_NODES); do
   PORT_SPECS+=("$((BASE_P2P_PORT + i)):node $i p2p" "$((BASE_RPC_PORT + i)):node $i rpc" "$((BASE_WS_PORT + i)):node $i ws")
 done
@@ -454,7 +467,7 @@ if ports_in_use "${PORT_SPECS[@]}"; then
 fi
 
 echo Starting the bootnode ...
-"$BOOTNODE_BIN" -nodekey ./bootnode.key -addr ${IP}:30301 &
+"$BOOTNODE_BIN" -nodekey ./bootnode.key -addr ${IP}:${BOOTNODE_PORT} &
 child_proc=$!
 
 echo Starting the nodes ...

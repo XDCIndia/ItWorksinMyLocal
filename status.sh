@@ -154,6 +154,57 @@ else
   print_summary "$name" "$port" "?" "?" "?" "?" "DOWN"
 fi
 
+# --- run.sh --all followers ---
+# These were MISSING, which made status.sh report a healthy `--all` network as
+# half dead: it knew only the node-1..5 ports and join.sh's separate scheme, so
+# every follower `run.sh --all` starts appeared nowhere -- or as a DOWN
+# join-client on an unrelated port. A newcomer told to run ./status.sh to see
+# whether things are working got the opposite answer.
+#
+# Port math must stay in step with run.sh's all_follower_rpc(): followers are
+# numbered from idx 5, one decade each, based at ALL_RPC_BASE.
+ALL_RPC_BASE="${ALL_RPC_BASE:-$((${BASE_RPC_PORT:-8544} + 200))}"
+ALL_PORT_STRIDE="${ALL_PORT_STRIDE:-10}"
+STATUS_ALL_CLIENTS="${ALL_CLIENTS:-geth geth4 erigon xone besu nethermind reth}"
+
+_any_all=0
+_idx=5
+for _c in $STATUS_ALL_CLIENTS; do
+  _p=$(( ALL_RPC_BASE + (_idx - 5) * ALL_PORT_STRIDE ))
+  _r=$(rpc_call "$_p" "eth_blockNumber")
+  echo "$_r" | grep -q result && _any_all=1
+  _idx=$((_idx + 1))
+done
+
+if [ "$_any_all" = 1 ]; then
+  echo ""
+  echo "=== Modern Followers (run.sh --all) ==="
+  print_table_row "NAME" "PORT" "BLOCK" "PEERS" "SYNCING" "CHAINID" "STATUS"
+  _idx=5
+  for _c in $STATUS_ALL_CLIENTS; do
+    port=$(( ALL_RPC_BASE + (_idx - 5) * ALL_PORT_STRIDE ))
+    name="all-$_c"
+    resp=$(rpc_call "$port" "eth_blockNumber")
+    block=$(echo "$resp" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(int(d.get("result","0x0"),16))' 2>/dev/null || echo "?")
+    if [ "$block" != "?" ]; then
+      resp=$(rpc_call "$port" "net_peerCount")
+      peers=$(echo "$resp" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(int(d.get("result","0x0"),16))' 2>/dev/null || echo "?")
+      resp=$(rpc_call "$port" "eth_syncing")
+      syncing=$(echo "$resp" | python3 -c 'import json,sys; d=json.load(sys.stdin); r=d.get("result",False); print("true" if r else "false")' 2>/dev/null || echo "?")
+      resp=$(rpc_call "$port" "eth_chainId")
+      chainId=$(echo "$resp" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(int(d.get("result","0x0"),16))' 2>/dev/null || echo "?")
+      print_summary "$name" "$port" "$block" "$peers" "$syncing" "$chainId" "RUNNING"
+      LOCAL_BLOCKS+=("$block")
+    else
+      # Not started, or started and its RPC never bound. The latter is a real
+      # failure shape (process syncs internally while invisible), so show the row
+      # rather than hiding it.
+      print_summary "$name" "$port" "?" "?" "?" "?" "DOWN"
+    fi
+    _idx=$((_idx + 1))
+  done
+fi
+
 # --- Join clients ---
 echo ""
 echo "=== Join Clients (join.sh) ==="
