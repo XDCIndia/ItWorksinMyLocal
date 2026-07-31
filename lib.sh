@@ -586,18 +586,13 @@ preflight_credentials() {
   [ -n "$_PREFLIGHT_DONE" ] && return 0
   _PREFLIGHT_DONE=1
   command -v gh >/dev/null 2>&1 || {
-    echo "NOTE: the GitHub CLI (gh) is not installed." >&2
-    echo "  It is REQUIRED, not optional: oldxdc (the default client) is published only as" >&2
-    echo "  a private GitHub release asset, and every client source repo is private too, so" >&2
-    echo "  the source-build fallback needs the same credentials." >&2
-    echo "    install: https://cli.github.com/    then: gh auth login" >&2
-    echo "  Continuing anyway -- this is fine if bin/ is already populated or you set the" >&2
-    echo "  per-client overrides (OLDXDC_BIN, BESU_BIN, RETH_BIN, NETHERMIND_DIST, ...)." >&2
+    echo "NOTE: the GitHub CLI (gh) is not installed. This is FINE for the normal path --" >&2
+    echo "  every client, including oldxdc, is downloadable anonymously from the public" >&2
+    echo "  mirror and verified by sha256, so no GitHub account or org membership is needed." >&2
+    echo "  gh is only required if you force a SOURCE BUILD (BIN_SOURCE=build), because the" >&2
+    echo "  client source repos are private." >&2
+    echo "    if you need it: https://cli.github.com/    then: gh auth login" >&2
     return 0
-  }
-  gh auth status >/dev/null 2>&1 || {
-    echo "NOTE: gh is installed but not authenticated (run: gh auth login)." >&2
-    echo "  Private release assets and private source repos will be unreachable." >&2
   }
 }
 
