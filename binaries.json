@@ -1,7 +1,7 @@
 {
   "_comment": "Prebuilt-binary manifest for lib.sh:download_bins() / join.sh. baseUrl + file (with {os}/{arch} substituted) form the download URL; archive says how to unpack it; produces maps a logical binary name to its path *inside* the download (\"\" = the download IS the binary, \".\" = the whole extracted directory is the product, e.g. a dist dir). platforms uses {os}-{arch} keys (darwin|linux, amd64|arm64); \"*\" = platform-independent. sha256 keys mirror platforms (or \"*\"), fetched from the upstream <file>.sha256 siblings on xdc.network. Re-run the fetch and bump 'updated' if xdc.network publishes new binaries. A client entry may set its own \"baseUrl\" to override this global one (e.g. to pull an urgent fix from a GitHub release before it's mirrored to xdc.network) -- see lib.sh:_binjson_query.",
   "baseUrl": "https://xdc.network/snapshots/bin/",
-  "updated": "2026-07-30",
+  "updated": "2026-07-31",
   "clients": {
     "oldxdc": {
       "_comment": "XDPoSChain (XDCIndia/OLDXDC), the legacy sealer client run.sh/setup.sh use by default. Previously ALWAYS built from source (lib.sh hardcoded this regardless of BIN_SOURCE) since no prebuilt existed anywhere -- every `run.sh --chainid N` / `setup.sh --new` clone+built from scratch even for a plain resume, adding minutes before any node came up. Published this tarball (XDC + bootnode + puppeth, linux-amd64) from XDCIndia/OLDXDC's pinned commit 0648a96a22affcc0b4dd2201614a118b084fe7bf (the 'XDPoSChain codebase snapshot with puppeth wizard genesis fix' XDPOS_REPO already points at) so lib.sh:download_bins() has something to fetch. Now respects BIN_SOURCE/BIN_SOURCE_oldxdc like every other client: download by default, `--build` (run.sh/setup.sh) or BIN_SOURCE_oldxdc=build forces a from-source clone+build instead. darwin/other-arch prebuilts not published yet -- falls back to a source build there same as before.",
@@ -70,7 +70,7 @@
         "darwin-arm64"
       ],
       "sha256": {
-        "linux-amd64": "bb35065175e0755eb98c671bb3d72ddfd79920352e04c69cde4fd36ce6c6c4db",
+        "linux-amd64": "55b25cf932bd416bc4c2e582f5ab7b4e4d800ae1ee5122e993c81e43b2c8b893",
         "darwin-amd64": "61b79adcf2fe4545e958c2868613c28e16bdb35b30201d3d9e45275cff60d070",
         "darwin-arm64": "61b79adcf2fe4545e958c2868613c28e16bdb35b30201d3d9e45275cff60d070"
       }
@@ -91,7 +91,7 @@
       "sha256": {
         "darwin-amd64": "f36af0771e58fbef834dd8863c35356c60724c3ad58a43f6a2f0bf5a14d80c98",
         "darwin-arm64": "f36af0771e58fbef834dd8863c35356c60724c3ad58a43f6a2f0bf5a14d80c98",
-        "linux-amd64": "6c1ae9b2dd877823d12ea9656096322a3f26cbcf520b54494b60ff21146b6675",
+        "linux-amd64": "1584a43309942d55ae8ee6480ad8c5600e1892c4e2ec74aee82bb288b691f692",
         "linux-arm64": "425dc422c7f1eecfbd655fdecff8827f208adee73b8060ffdde9507513497630"
       }
     },
@@ -106,7 +106,7 @@
         "*"
       ],
       "sha256": {
-        "*": "c35692dc9bec35858471e15aadba72d54e2282a0f43d9e9306f056412221edd1"
+        "*": "594f4ef60d8ce5be4f9914e36857c4d74c745cb1eb0c4f8dbc55875c38926712"
       }
     },
     "nethermind": {
@@ -142,7 +142,7 @@
         "linux-amd64"
       ],
       "sha256": {
-        "linux-amd64": "124cf26e770b8ec120c570b4c156e68fcbe7f42b461c3e2028244ae20f21cc04"
+        "linux-amd64": "1eb03cac0fc6ca2401f96e790667aede03cb7e2b86e257071e4a0758f98a6b30"
       }
     }
   }
