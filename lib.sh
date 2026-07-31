@@ -353,6 +353,10 @@ print("_BJ_URL=" + q(base + "/" + file if base else ""))
 print("_BJ_FILE=" + q(file))
 print("_BJ_GH_REPO=" + q(gh.get("repo", "")))
 print("_BJ_GH_TAG=" + q(gh.get("tag", "")))
+# noMirror: this client is published ONLY as a private GitHub release asset, so
+# its mirror URL is known-absent and must not be attempted -- doing so emits a
+# bare `curl: (22) 404` as the first output a newcomer ever sees (#147).
+print("_BJ_NO_MIRROR=" + q("1" if c.get("noMirror") else ""))
 print("_BJ_ARCHIVE=" + q(archive))
 print("_BJ_SHA256=" + q(sha))
 for k, v in (c.get("produces") or {}).items():
@@ -415,7 +419,15 @@ download_bins() {
     # urgent fix yet), which must NOT short-circuit the gh-release fallback
     # below (ItWorksinMyLocal#114 caught this: an earlier version of this
     # function treated "curl exited 0" as success and never tried gh at all).
-    if [ -n "$_BJ_URL" ]; then
+    # A client whose manifest entry sets "noMirror": true is published ONLY as a
+    # private GitHub release asset, so the mirror URL is known-absent. Attempting
+    # it just prints a raw `curl: (22) 404` as the very first thing a newcomer
+    # sees, which reads like the tool is broken. Skip straight to the gh fallback.
+    # (Note $_BJ_FILE is still needed below as the gh asset pattern, so the
+    # manifest cannot simply omit "file".)
+    if [ "$_BJ_NO_MIRROR" = "1" ] && [ -n "$_BJ_GH_REPO" ]; then
+      echo "$CLIENT: published only as a private GitHub release asset; skipping the mirror URL"
+    elif [ -n "$_BJ_URL" ]; then
       echo "Downloading $CLIENT for $slug: $_BJ_URL"
       if curl -fsSL --retry 3 --retry-delay 2 --connect-timeout 20 \
               --speed-time 60 --speed-limit 1024 -C - -o "$dl" "$_BJ_URL"; then
@@ -449,7 +461,30 @@ download_bins() {
       fi
     fi
     if [ -z "$verified" ]; then
-      echo "download failed: no source produced a $_BJ_FILE matching the recorded sha256 for $CLIENT/$slug (tried${_BJ_URL:+ curl $_BJ_URL}${_BJ_GH_REPO:+, gh release $_BJ_GH_REPO@$_BJ_GH_TAG})" >&2
+      # Distinguish "attempted and failed" from "NOT ATTEMPTED because the tool is
+      # missing". The old message listed the gh fallback under "tried" even when gh
+      # was absent, so a reader concluded the release asset was broken and went
+      # hunting for it, when the real answer was "install gh". That wording cost a
+      # newcomer their whole first run (ItWorksinMyLocal#147).
+      local _tried="" _notattempted=""
+      [ -n "$_BJ_URL" ] && _tried="curl $_BJ_URL"
+      if [ -n "$_BJ_GH_REPO" ]; then
+        if command -v gh >/dev/null 2>&1; then
+          _tried="${_tried:+$_tried, }gh release $_BJ_GH_REPO@$_BJ_GH_TAG"
+        else
+          _notattempted="gh release $_BJ_GH_REPO@$_BJ_GH_TAG (SKIPPED: the gh CLI is not installed)"
+        fi
+      fi
+      echo "download failed for $CLIENT/$slug ($_BJ_FILE): nothing produced a file matching the recorded sha256." >&2
+      [ -n "$_tried" ] && echo "  tried:         $_tried" >&2
+      if [ -n "$_notattempted" ]; then
+        echo "  NOT attempted: $_notattempted" >&2
+        echo "  => This client is distributed as a PRIVATE GitHub release asset, so gh is" >&2
+        echo "     required, not optional. Install https://cli.github.com/ then run:" >&2
+        echo "       gh auth login" >&2
+        echo "     A source build is NOT an alternative here: the client source repos are" >&2
+        echo "     private too, so cloning them needs the same credentials." >&2
+      fi
       rm -f "$dl"
       return 1
     fi
@@ -538,10 +573,40 @@ check_toolchain() {
 # prebuilt binary from binaries.json (BIN_SOURCE=download, the default);
 # build from source if unavailable, unsupported on this platform, or
 # BIN_SOURCE(_<client>)=build. REBUILD=1 always forces a source build.
+# Warn ONCE, before any download is attempted, if the single genuinely required
+# prerequisite is missing. Every client source repo in this org is private and
+# oldxdc -- the DEFAULT client -- ships only as a private release asset, so gh is
+# required rather than optional. Without this, a newcomer's first command emitted
+# a 404, then a message implying gh had been tried, then advice to install a Go
+# toolchain for a source build that also cannot work (ItWorksinMyLocal#147).
+# Deliberately a warning, not a hard abort: someone with a fully populated bin/
+# (or their own OLDXDC_BIN/BESU_BIN/... overrides) needs no credentials at all.
+_PREFLIGHT_DONE=""
+preflight_credentials() {
+  [ -n "$_PREFLIGHT_DONE" ] && return 0
+  _PREFLIGHT_DONE=1
+  command -v gh >/dev/null 2>&1 || {
+    echo "NOTE: the GitHub CLI (gh) is not installed." >&2
+    echo "  It is REQUIRED, not optional: oldxdc (the default client) is published only as" >&2
+    echo "  a private GitHub release asset, and every client source repo is private too, so" >&2
+    echo "  the source-build fallback needs the same credentials." >&2
+    echo "    install: https://cli.github.com/    then: gh auth login" >&2
+    echo "  Continuing anyway -- this is fine if bin/ is already populated or you set the" >&2
+    echo "  per-client overrides (OLDXDC_BIN, BESU_BIN, RETH_BIN, NETHERMIND_DIST, ...)." >&2
+    return 0
+  }
+  gh auth status >/dev/null 2>&1 || {
+    echo "NOTE: gh is installed but not authenticated (run: gh auth login)." >&2
+    echo "  Private release assets and private source repos will be unreachable." >&2
+  }
+}
+
 ensure_bins() {
   local t ready=1
   for t in $CLIENT_TARGETS; do [ -x "$BIN_DIR/$t" ] || ready=0; done
   [ "$ready" = 1 ] && [ "$REBUILD" != "1" ] && return 0
+  # Only reached when something actually has to be fetched or built.
+  preflight_credentials
 
   local src="$BIN_SOURCE"
   case "$CLIENT" in

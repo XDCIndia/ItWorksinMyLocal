@@ -9,6 +9,7 @@
         "repo": "XDCIndia/OLDXDC",
         "tag": "v2.7.1-stable-linux-amd64"
       },
+      "noMirror": true,
       "file": "oldxdc-{os}-{arch}.tar.gz",
       "archive": "tar.gz",
       "produces": {
