@@ -37,14 +37,18 @@ case "$CLIENT" in
     CLIENT_TARGETS="geth"
     NODE_NAME_BIN="geth"
     ;;
-  geth1175)
-    # geth 1.17.5-xdc.8, opt-in alongside the default `geth` (1.17.4-xdc.7) so
-    # existing users are not silently upgraded. Same repo and make target -- it is
-    # geth, just a newer tag -- but a separate binaries.json key (`geth1175`) and its
-    # own BIN_DIR, so the two coexist. See binaries.json's geth1175 entry for the
-    # validation behind it (9-client parity, then gate-proven minting at 11.12%
-    # against an 11.11% ideal on netv12).
-    CLIENT=geth1175
+  geth4)
+    # geth 1.17.4-xdc.7, PINNED. `geth` now tracks the base branch (1.17.5-xdc.8),
+    # so this token exists for anyone who needs to stay on -- or bisect against --
+    # 1.17.4. Same repo and make target (it is geth at an older tag) but a separate
+    # binaries.json key and its own BIN_DIR, so the two coexist.
+    #
+    # This slot was `geth1175` back when `geth` meant 1.17.4 and 1.17.5 was the
+    # opt-in. Now that geth IS 1.17.5 that token would be an exact duplicate, so it
+    # is retired and the arm repurposed for the older pin. The deprecation arm below
+    # gives `--client geth1175` a real error instead of silently resolving to
+    # something it no longer means.
+    CLIENT=geth4
     XDPOS_REPO="${XDPOS_REPO:-https://github.com/XDCIndia/go-ethereum}"
     XDPOS_DIR="${XDPOS_DIR:-$_LIB_DIR/../go-ethereum}"
     CLIENT_TARGETS="geth"
@@ -99,8 +103,17 @@ case "$CLIENT" in
     CLIENT_TARGETS=""
     NODE_NAME_BIN=""
     ;;
+  geth1175)
+    # RETIRED. This meant "geth 1.17.5, opt-in" back when `geth` was 1.17.4.
+    # `geth` now IS 1.17.5, so the token had no distinct meaning and silently
+    # resolving it would hand someone a different build than they asked for.
+    # Fail with the mapping instead.
+    echo "CLIENT 'geth1175' has been retired: \`geth\` now tracks 1.17.5-xdc.8." >&2
+    echo "  use --client geth    for 1.17.5 (what geth1175 used to give you)" >&2
+    echo "  use --client geth4   to stay pinned to 1.17.4-xdc.7" >&2
+    exit 1;;
   *)
-    echo "unknown CLIENT '$CLIENT' (use: oldxdc | geth | geth1175 | erigon | besu | nethermind | reth | xone | all)" >&2; exit 1;;
+    echo "unknown CLIENT '$CLIENT' (use: oldxdc | geth | geth4 | erigon | besu | nethermind | reth | xone | all)" >&2; exit 1;;
 esac
 
 # Binaries live under a per-client, per-platform dir so the clients coexist.
@@ -210,7 +223,7 @@ _vquery() {
 
 # Resolve this client's build identity. Echoes "<version> <commit>"; commit is
 # the literal "nocommit" when the build carries no git metadata -- a real state
-# for shipped artifacts (geth1175 and besu both lack it today), not an error.
+# for shipped artifacts (geth4 and besu both lack it today), not an error.
 #
 # Every client formats its version differently and TWO are booby-trapped:
 # xone's `version` SUBCOMMAND boots a full node (unknown subcommand -> node
@@ -221,7 +234,7 @@ _vquery() {
 client_version_commit() {
   local bin="${1:-$CLIENT_BIN}" out ver="" commit="" tok
   case "$CLIENT" in
-    oldxdc|geth|geth1175)
+    oldxdc|geth|geth4)
       out=$(_vquery "$bin" version 2>/dev/null)
       ver=$(printf '%s\n' "$out" | awk '/^Version:/{print $2; exit}')
       commit=$(printf '%s\n' "$out" | awk '/^Git Commit:/{print substr($3,1,8); exit}')
@@ -606,7 +619,7 @@ ensure_bins() {
   local src="$BIN_SOURCE"
   case "$CLIENT" in
     geth)   src="${BIN_SOURCE_geth:-$src}" ;;
-    geth1175) src="${BIN_SOURCE_geth1175:-$src}" ;;
+    geth4) src="${BIN_SOURCE_geth4:-$src}" ;;
     erigon) src="${BIN_SOURCE_erigon:-$src}" ;;
     oldxdc) src="${BIN_SOURCE_oldxdc:-$src}" ;;
   esac
@@ -752,7 +765,7 @@ client_exe_names() {
   case "$1" in
     oldxdc|xdc|XDC) echo "XDC" ;;
     geth)           echo "geth" ;;
-    geth1175)       echo "geth" ;;
+    geth4)          echo "geth" ;;
     erigon)         echo "erigon" ;;
     besu)           echo "besu java" ;;
     nethermind)     echo "nethermind dotnet" ;;
