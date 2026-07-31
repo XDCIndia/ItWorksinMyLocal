@@ -36,7 +36,7 @@
 set -e
 cd "$(dirname "$0")"
 
-NEW=0; N=4; CLIENT_EXPLICIT=0; CHAINID=20118; ALL=0
+NEW=0; N=4; CLIENT_EXPLICIT=0; CHAINID=20118; ALL=0; NETWORK_NAME=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --new) NEW=1; shift; case "$1" in [0-9]*) N=$1; shift;; esac;;
@@ -50,9 +50,16 @@ while [ $# -gt 0 ]; do
     # to this host's short hostname, so names are always qualified by WHERE they
     # run even when the operator says nothing.
     --name) export MACHINE=$2; shift 2;;
+    # --network is the NETWORK's own name, distinct from --name above: --name
+    # labels the nodes on THIS box, --network labels the chain itself. It is
+    # forwarded to gen-genesis.sh, which records it as NETWORK= in
+    # network-roles.env, which is what network-info.sh reports. Without this
+    # passthrough every network built through setup.sh was stuck with
+    # gen-genesis.sh's "localdpos" default no matter what it actually was.
+    --network) NETWORK_NAME=$2; shift 2;;
     --build) export BIN_SOURCE=build; shift;;
     -h|--help) sed -n '2,16p' "$0" | sed 's/^# \{0,1\}//'; exit 0;;
-    *) echo "usage: ./setup.sh [--new [N]] [--all] [--chainid N] [--client oldxdc|geth] [--name NAME] [--build]" >&2; exit 1;;
+    *) echo "usage: ./setup.sh [--new [N]] [--all] [--chainid N] [--client oldxdc|geth] [--name NAME] [--network NAME] [--build]" >&2; exit 1;;
   esac
 done
 
@@ -160,7 +167,8 @@ fi
 # Verified with the flag off: 0 "invalid difficulty", 0 "invalid gas used",
 # node 5 tracking the sealers block-for-block and agreeing on the block hash.
 # Do not re-add it while node 5 is a modern-geth client.
-bash ./gen-genesis.sh --chainid "$CHAINID" --signers "$SIGNERS" "${ROLE_ARGS[@]}"
+bash ./gen-genesis.sh --chainid "$CHAINID" --signers "$SIGNERS" \
+  ${NETWORK_NAME:+--network "$NETWORK_NAME"} "${ROLE_ARGS[@]}"
 bash ./reset.sh
 # --all launches one follower per modern client instead of just node 5 geth;
 # run.sh resolves which clients actually have a binary and skips the rest

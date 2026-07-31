@@ -542,25 +542,22 @@ except Exception:
   # An explicit --staticpeers is authoritative for STATICPEERS but must ALSO reach
   # the $BOOTNODES-reading clients, so merge it in rather than letting it bypass
   # this block entirely (which is what used to strand reth at 0 peers).
+  #
+  # Dedup the MERGED list, not just $BOOTNODES. Under `--client all` the parent
+  # harvests the sealers and forwards them to each child via --staticpeers; the
+  # child then harvests the very same sealers itself, so without this the two
+  # copies concatenate and the line below reports "8 local sealer peer(s)" on a
+  # 4-sealer net. The wiring was still correct (BOOTNODES was deduped anyway),
+  # but a peer count that double-counts is exactly the kind of number someone
+  # later trusts while debugging a peering problem.
   if [ "$STATICPEERS_EXPLICIT" = 1 ]; then
     _local_peers="${STATICPEERS:+$STATICPEERS}${STATICPEERS:+${_local_peers:+,}}$_local_peers"
   fi
+  _local_peers=$(dedupe_csv "$_local_peers")
   if [ -n "$_local_peers" ]; then
     [ "$STATICPEERS_EXPLICIT" = 1 ] || STATICPEERS="$_local_peers"
-    # Deduplicate: an explicit --staticpeers commonly repeats what the harvest
-    # just found, and a bootnode list with the same enode twice makes geth log
-    # "bad bootstrap node" noise on every start.
-    BOOTNODES=$(BN="${BOOTNODES:+$BOOTNODES,}$_local_peers" python3 -c "
-import os
-seen, out = set(), []
-for e in os.environ.get('BN', '').split(','):
-    e = e.strip()
-    if not e or e in seen:
-        continue
-    seen.add(e)
-    out.append(e)
-print(','.join(out))
-" 2>/dev/null) || BOOTNODES="${BOOTNODES:+$BOOTNODES,}$_local_peers"
+    # An enode repeated in the bootnode list makes geth log "bad bootstrap node".
+    BOOTNODES=$(dedupe_csv "${BOOTNODES:+$BOOTNODES,}$_local_peers")
     echo "Using $(echo "$_local_peers" | tr ',' '\n' | grep -c enode) local sealer peer(s) as staticpeers/bootnodes (overrides peers.list)"
   else
     echo "  warning: could not find any local sealer peers; clients may not sync (pass --staticpeers)" >&2
