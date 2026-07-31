@@ -32,18 +32,62 @@ source repo beside this one; `besu`/`nethermind`/`reth`/`xone` are download-only
 unless you point the scripts at your own binary. Force a build with
 `BIN_SOURCE=build` (or per client, `BIN_SOURCE_erigon=build`).
 
-**You also need the [GitHub CLI](https://cli.github.com/) (`gh`), authenticated.**
-Every client source repo in this org is private, and `oldxdc` — the *default*
-client — is published only as a private GitHub release asset, not on the
-xdc.network mirror. Its mirror fetch therefore 404s by design and the download
-falls back to `gh release download`, which needs your credentials:
+**No GitHub account is needed.** All eight clients — including `oldxdc`, the
+default — download anonymously from the public mirror and are verified by sha256.
+On a fresh Ubuntu box you need only `git`, `curl`, `python3` and `tar`.
+
+The [GitHub CLI](https://cli.github.com/) (`gh`) is required **only** if you force
+a source build (`BIN_SOURCE=build`), because the client *source* repos are
+private. The normal download path never touches it.
+
+### Quick start on a fresh Ubuntu box
 
 ```bash
-gh auth status || gh auth login
+./setup.sh --new 4 --all --chainid 20931 --name mylab
 ```
 
-Without that, `oldxdc` cannot be obtained and `./setup.sh --new` fails at the
-binary step. The other six clients come from the public mirror and do not need it.
+That is 4 `oldxdc` sealers plus one sync-only follower per modern client, on your
+own network. Pick any unused `--chainid`. `--name` labels every node on this
+machine; omit it and your hostname is used.
+
+Each node's identity is composed for you as
+
+```
+<machine>-<client>-v<version>-<commit>-<nodetype>-<ip>
+```
+
+so a dashboard row tells you which box, which client, which build, what the node
+is for, and where to reach it. Two nodes on the same released version but
+different commits stay distinguishable — which matters, because a stale binary
+otherwise looks identical to a current one.
+
+Watch it come up:
+
+```bash
+./status.sh                # heights and peers per node
+tail -f nodes/5-*.log      # one follower's log
+```
+
+Every follower should converge on the sealers' height **and the same genesis
+hash**. Two failure shapes are worth knowing, because both look like "it hangs":
+
+- **A client sits at block 0** — it never found a peer, or it rejected the genesis.
+- **A client stalls at block 16** — block 16 is the first block carrying `0x89`
+  BlockSigners `sign()` transactions, so it is where a gas or fork-activation
+  disagreement first becomes visible.
+
+Neither is normal. Please file an issue rather than working around it.
+
+### Which clients `--all` starts
+
+`geth`, `geth1175`, `erigon`, `xone`, `besu`, `nethermind`, `reth`, as followers
+beside the 4 sealers. Any client whose binary is missing or unrunnable is
+**skipped and reported**, so a partial `bin/` degrades gracefully rather than
+failing. Narrow it explicitly when you want to:
+
+```bash
+ALL_CLIENTS="geth erigon" ./setup.sh --new 4 --all --chainid 20931
+```
 
 Install the build toolchain once:
 
@@ -94,10 +138,10 @@ Control it with `BIN_SOURCE`:
 | `BIN_SOURCE_<client>=build` | per-client override, e.g. `BIN_SOURCE_erigon=build` |
 | `REBUILD=1` | force a fresh build/redownload, ignoring any cache |
 
-Notes: `oldxdc` (XDC + bootnode + puppeth) is published as a GitHub release
-asset rather than on xdc.network, so a plain `curl` of the mirror 404s and the
-download falls back to `gh release download` automatically — that 404 in the log
-is expected, not an error. It still builds from source with `BIN_SOURCE=build`.
+Notes: `oldxdc` (XDC + bootnode + puppeth) is served from the xdc.network mirror
+like every other client, so it needs no credentials. It keeps a `gh release`
+fallback for the case where the mirror is behind, and still builds from source
+with `BIN_SOURCE=build` (which does need `gh`, since the source repo is private).
 `erigon` is published for `linux-amd64` only, so on macOS/arm it auto-falls back
 to a source build. `besu`/`reth`/`nethermind` are download-only here (the scripts
 don't build them) — an explicit `BESU_BIN` / `RETH_BIN` / `NETHERMIND_DIST` (or a
@@ -150,7 +194,7 @@ for **all seven** clients:
 
 | Client | Result | Source actually used |
 |---|:---:|---|
-| `oldxdc` | ✅ | GitHub release (mirror 404s by design — see the note above) |
+| `oldxdc` | ✅ | xdc.network mirror (`gh release` kept only as a fallback) |
 | `geth` | ✅ | xdc.network mirror |
 | `erigon` | ✅ | xdc.network mirror |
 | `reth` | ✅ | xdc.network mirror |
