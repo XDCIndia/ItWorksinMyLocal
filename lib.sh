@@ -691,6 +691,44 @@ ensure_bins() {
   echo "$CLIENT binaries ready in $BIN_DIR"
 }
 
+# Guarantee a bootnode is LISTENING on this host, using the repo's static
+# ./bootnode.key, and print its enode.
+#
+# The key has always been static, so the enode is deterministic across restarts
+# -- but only run.sh ever actually STARTED a bootnode. join.sh merely *derived*
+# the enode from the same key (see its key-based derivation block) and handed it
+# to every client, so a join on a host where run.sh was not running pointed all
+# of them at an address nothing was bound to. Discovery then silently never
+# completed. Starting it here makes "connect to the bootnode first, then
+# discover" true for setup.sh, run.sh and join.sh alike.
+#
+#   $1 ip   $2 port (default 30301)
+# Prints the enode on stdout; logs to stderr. Non-fatal: prints nothing and
+# returns 1 if no bootnode binary or key is available, so a join degrades to
+# whatever static/trusted peers it already has rather than aborting.
+ensure_bootnode() {
+  local ip="${1:-$(detect_ip)}" port="${2:-30301}" bn pub
+  [ -f "$_LIB_DIR/bootnode.key" ] || { echo "  ensure_bootnode: no ./bootnode.key" >&2; return 1; }
+  bn="$BOOTNODE_BIN"
+  [ -x "$bn" ] || bn=$(ls "$_LIB_DIR"/bin/*/*/bootnode 2>/dev/null | head -1)
+  [ -x "$bn" ] || { echo "  ensure_bootnode: no bootnode binary (build the oldxdc client once)" >&2; return 1; }
+  pub=$("$bn" -nodekey "$_LIB_DIR/bootnode.key" -writeaddress 2>/dev/null)
+  [ -n "$pub" ] || { echo "  ensure_bootnode: could not read the pubkey from ./bootnode.key" >&2; return 1; }
+
+  # Already up? The bootnode is UDP-only (discv4), so check the UDP bind rather
+  # than a TCP listener -- lsof -iTCP would always miss it and we would spawn a
+  # second one on every join, each fighting for the same port.
+  if lsof -nP -iUDP:"$port" >/dev/null 2>&1; then
+    echo "  bootnode already listening on :$port (static key)" >&2
+  else
+    echo "  starting bootnode on ${ip}:${port} (static ./bootnode.key)" >&2
+    "$bn" -nodekey "$_LIB_DIR/bootnode.key" -addr "${ip}:${port}" >/dev/null 2>&1 &
+    # discv4 binds immediately; a short settle keeps the first dial from racing it.
+    sleep 1
+  fi
+  echo "enode://${pub}@${ip}:${port}"
+}
+
 # Harvest live peer enodes from a network by running a short-lived DISCOVERING
 # client (oldxdc/geth) against a bootnode, then reading its admin_peers. This is
 # how erigon gets its --staticpeers automatically from just an --ip: erigon's

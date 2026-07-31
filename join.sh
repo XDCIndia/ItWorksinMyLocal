@@ -417,7 +417,14 @@ if [ -z "$BOOTNODES" ] \
     *:*) bhost="${target%:*}"; bport="${target##*:}";;
     *)   bhost="$target";      bport=30301;;
   esac
-  BOOTNODES="enode://$("$bn" -nodekey ./bootnode.key -writeaddress)@${bhost}:${bport}"
+  # Derive AND guarantee it is actually running. This block used to only compute
+  # the enode from the static key; if run.sh was not up on this host, every client
+  # was then pointed at an address nothing was bound to and discovery silently
+  # never completed. ensure_bootnode() is idempotent (it reuses an already-bound
+  # one) and non-fatal, so a host without the oldxdc bootnode binary still joins
+  # on whatever static/trusted peers the harvest below finds.
+  BOOTNODES=$(ensure_bootnode "$bhost" "$bport") \
+    || BOOTNODES="enode://$("$bn" -nodekey ./bootnode.key -writeaddress)@${bhost}:${bport}"
   echo "Using key-based bootnode: $BOOTNODES"
   LOCAL_BOOTNODE=1
 fi
