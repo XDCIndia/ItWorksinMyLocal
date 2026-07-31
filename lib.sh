@@ -691,6 +691,30 @@ ensure_bins() {
   echo "$CLIENT binaries ready in $BIN_DIR"
 }
 
+# Collapse a comma-separated list to its first-seen unique entries, order
+# preserved. Used for enode lists, where a duplicate is never harmless: geth logs
+# "bad bootstrap node" for a repeated bootnode, and a double-counted peer list
+# misleads whoever reads it next while debugging a peering problem.
+# Pure shell (no python) so it stays usable on a host mid-bootstrap.
+dedupe_csv() {
+  printf '%s' "$1" | tr ',' '\n' | awk 'NF && !seen[$0]++' | paste -sd, -
+}
+
+# The Skynet dashboard URL for a given chain id. Nodes report to the ethstats
+# collector (join.sh's ETHSTATS, default stats.xdcindia.com:443); Skynet is the
+# front end that renders those reports and selects a network with a ?net=<chainId>
+# query. Printed on bring-up so the operator gets a link straight to THIS network
+# instead of having to know the convention.
+#   $1 chain id -- REQUIRED. Returns 1 rather than emitting a bare base URL,
+#   because a link with no ?net= silently shows whichever network the dashboard
+#   defaults to, which is worse than no link at all.
+# Override the base with SKYNET_BASE_URL (network.env or the environment).
+skynet_url() {
+  local chainid="$1"
+  [ -n "$chainid" ] || return 1
+  echo "${SKYNET_BASE_URL:-https://skynet.xdcindia.com/stats}?net=${chainid}"
+}
+
 # Guarantee a bootnode is LISTENING on this host, using the repo's static
 # ./bootnode.key, and print its enode.
 #
