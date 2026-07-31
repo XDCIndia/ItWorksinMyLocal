@@ -24,7 +24,7 @@
       }
     },
     "geth": {
-      "_comment": "geth, tracking the base branch at 1.17.5-xdc.8. darwin-amd64/darwin-arm64 are the SAME universal (lipo fat) binary -- identical sha256 under both filenames, runs natively on either Mac architecture. linux-amd64 is the artifact previously published as `geth1175`; that token is retired (see geth4 for the 1.17.4 pin). NOTE linux-arm64 is still a 1.17.4-era build and needs a rebuild -- it is the one slice this promotion did not cover.",
+      "_comment": "geth, tracking the base branch at 1.17.5-xdc.8. darwin-amd64/darwin-arm64 are the SAME universal (lipo fat) binary -- identical sha256 under both filenames, runs natively on either Mac architecture. linux-amd64 REBUILT 2026-07-31 at f39bb0769d0c so it carries a Git Commit stamp (ItWorksinMyLocal#156): the previous artifact reported none, which made it impossible to tell from --version whether a node ran a current or a stale build. Now agrees with the darwin slices on both version and commit. NOTE linux-arm64 is still a 1.17.4-era build and needs a rebuild on an arm64 host or via QEMU/binfmt (see #159) -- geth pulls cgo deps with arch-specific assembly, so it does NOT cross-compile from x86_64.",
       "file": "geth-{os}-{arch}",
       "archive": "none",
       "produces": {
@@ -39,7 +39,7 @@
       "sha256": {
         "darwin-amd64": "a68048665b8e4c42e019cfedc6c5a3e3e47e4991b8a3c4d87e675896ecb6ff4c",
         "darwin-arm64": "a68048665b8e4c42e019cfedc6c5a3e3e47e4991b8a3c4d87e675896ecb6ff4c",
-        "linux-amd64": "84ea1b653d91f42fcf1cfe787f4848dec15f3b63733120f89de27eddecc70bf1",
+        "linux-amd64": "d2ed78725c01e05a2afb93d3b81279da445c506f7dfc3c7b647b0985a700608e",
         "linux-arm64": "b74452cc43587f4aca482166c4214c2b6f72c37e77dd4424b4eeabfc15d9b7b7"
       }
     },
