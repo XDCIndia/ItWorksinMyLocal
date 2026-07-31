@@ -56,7 +56,7 @@ ALL="${ALL:-0}"
 # below), so widening the default degrades gracefully on a partial bin/ instead
 # of failing. Narrow it explicitly when you want to:
 #   ALL_CLIENTS="geth erigon" ./run.sh --all
-ALL_CLIENTS="${ALL_CLIENTS:-geth geth1175 erigon xone besu nethermind reth}"
+ALL_CLIENTS="${ALL_CLIENTS:-geth geth4 erigon xone besu nethermind reth}"
 CHAINID="${CHAINID:-20118}"
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -150,12 +150,12 @@ fi
 _client_binary() {   # -> prints the path it will look for
   case "$1" in
     geth)       echo "${MODERN_GETH_BIN:-$_LIB_DIR/bin/geth/$PLATFORM/geth}" ;;
-    # geth1175 is a SEPARATE client token with its own bin/ tree, but its
+    # geth4 is a SEPARATE client token with its own bin/ tree, but its
     # executable is still named "geth" (see lib.sh client_exe_names). Without this
     # arm it fell to the *) empty case and could never be selected by --all --
     # the same "client token missing from one of several parallel lists" shape as
-    # the three defects that made geth1175 unlaunchable in #143.
-    geth1175)   echo "$_LIB_DIR/bin/geth1175/$PLATFORM/geth" ;;
+    # the three defects that made geth4 unlaunchable in #143.
+    geth4)   echo "$_LIB_DIR/bin/geth4/$PLATFORM/geth" ;;
     xone)       echo "$_LIB_DIR/bin/xone/$PLATFORM/xone" ;;
     erigon)     echo "$_LIB_DIR/bin/erigon/$PLATFORM/erigon" ;;
     besu)       echo "${BESU_BIN:-$_LIB_DIR/bin/besu/$PLATFORM/besu}" ;;

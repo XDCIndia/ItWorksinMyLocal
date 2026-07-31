@@ -80,7 +80,7 @@ Neither is normal. Please file an issue rather than working around it.
 
 ### Which clients `--all` starts
 
-`geth`, `geth1175`, `erigon`, `xone`, `besu`, `nethermind`, `reth`, as followers
+`geth`, `geth4`, `erigon`, `xone`, `besu`, `nethermind`, `reth`, as followers
 beside the 4 sealers. Any client whose binary is missing or unrunnable is
 **skipped and reported**, so a partial `bin/` degrades gracefully rather than
 failing. Narrow it explicitly when you want to:

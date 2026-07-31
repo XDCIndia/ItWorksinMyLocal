@@ -529,7 +529,7 @@ fi
 # A client whose extra inputs are missing (erigon needs --chain; nethermind needs
 # a dist) exits with its own hint and is skipped -- the rest keep syncing.
 if [ "$CLIENT" = all ]; then
-  ALL_CLIENTS="oldxdc geth erigon besu nethermind reth xone geth1175"
+  ALL_CLIENTS="oldxdc geth erigon besu nethermind reth xone geth4"
   # Forward the shared, already-resolved network inputs to every child so they all
   # dial the SAME network (and a child doesn't re-run default resolution).
   shared=()
@@ -612,7 +612,7 @@ NODETYPE=sync
 # 30313+) -- so a `--client all` fan-out won't collide with those or a second run.
 case "$CLIENT" in
   geth) O=100;; erigon) O=200;; besu) O=300;; nethermind) O=400;; reth) O=500;; xone) O=600;;
-  geth1175) O=700;; *) O=0;;
+  geth4) O=700;; *) O=0;;
 esac
 PORT="${PORT:-$((31413 + O))}"                  # p2p     31413..32013
 RPCPORT="${RPCPORT:-$((9645 + O))}"             # http    9645..10245
@@ -820,17 +820,17 @@ NAME=$(node_name "$HOST" "$CLIENT" "$VER" "$COMMIT" "$NODETYPE" "$IP")
 [ -n "$MINEADDR" ] && NAME="${NAME}-$(name_part "${MINEADDR:0:10}")"
 
 # Initialise the datadir against the genesis (first run only). oldxdc and the
-# GP5 geth fork (both `geth` and the opt-in `geth1175`) store chaindata under
+# GP5 geth fork (both `geth` and the opt-in `geth4`) store chaindata under
 # <datadir>/XDC and need an explicit init -- their launch arm passes only
 # --networkid, and network id does NOT select a genesis. Omitting a geth-family
 # client here means it silently builds ETHEREUM MAINNET's genesis instead: it logs
 # "Chain ID: 1 (mainnet)", its block 0 hash differs from the sealers', and the
 # handshake can never complete, so it sits at 0 peers no matter what --bootnodes
-# says. That is exactly how geth1175 failed before it was added to this list.
+# says. That is exactly how geth4 failed before it was added to this list.
 # erigon (derives from --chain), besu/reth (write genesis on first launch), and
 # nethermind (loads its own chainspec) do their own thing, so skip init there.
 case "$CLIENT" in
-  oldxdc|geth|geth1175|"")
+  oldxdc|geth|geth4|"")
     if [ ! -d "$DATADIR/XDC/chaindata" ]; then
       echo "Initialising $DATADIR from $GENESIS ..."
       "$XDC" --datadir "$DATADIR" init "$GENESIS" || exit 1
@@ -911,7 +911,7 @@ if [ "$CLIENT" = erigon ]; then
     --authrpc.port "$AUTHRPC_PORT" --torrent.port "$TORRENT_PORT" \
     --private.api.addr "$PRIVAPI" --mcp.port "$MCP_PORT" \
     $ETHSTATS_ARG &
-elif [ "$CLIENT" = geth ] || [ "$CLIENT" = geth1175 ]; then
+elif [ "$CLIENT" = geth ] || [ "$CLIENT" = geth4 ]; then
   # Modern geth: dot-notation flags, sync-only (it can't seal here). --maxpeers
   # keeps its long-standing default of 25 unless --maxpeers/env MAXPEERS overrides it.
   #
