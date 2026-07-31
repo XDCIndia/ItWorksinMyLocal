@@ -23,31 +23,15 @@ MIXED="${MIXED:-0}"
 ALL="${ALL:-0}"
 # Modern clients --all will try, in port order. Override to narrow it, e.g.
 #   ALL_CLIENTS="geth erigon" ./run.sh --all
-# Two clients are deliberately absent from this default, both because they
-# START but never FOLLOW the chain -- the silent half-failure this flag exists
-# to avoid. Add either explicitly via ALL_CLIENTS if you are working on it.
 #
-#   nethermind: loads a Parity-style chainspec keyed to the chain id and does
-#     NOT read the geth-format --genesis (join.sh aborts saying so). A freshly
-#     generated local chain id can never have one.
-#
-#   erigon: instantiates the XDPoS *V2* BFT engine at startup ("[XDPoS] V2
-#     engine created switchBlock=2700", "V2 BFT engine started currentRound=1")
-#     and then sits at "[p2p] No GoodPeers", peers=0, block=0 while the sealers
-#     climb past 200. Our genesis is in V1 until v2block (2700), so there is
-#     nothing it will follow. Verified it is NOT a port or peer-discovery
-#     problem: it binds all four protocol listeners, receives all 4 sealer
-#     enodes via --staticpeers (confirmed in its own "Startup command" line),
-#     and behaves identically with --no-downloader. Devnet 5151, which erigon
-#     does join, is long past its own v2 switch. Worth retrying with
-#     `gen-genesis.sh --v2block 0`.
-#
-#   reth: starts, binds its p2p port, and then stays at connected_peers=0 /
-#     latest_block=0 while the sealers climb past 100. It drives itself off
-#     the Engine API ("Forkchoice updated" in its log), i.e. it expects a
-#     separate consensus layer to feed it heads -- there is none on an XDPoS
-#     net, and it never joins the XDPoS gossip. Not a peer-discovery problem:
-#     it receives the same bootnode the working geth follower does.
+# NOTE: this file used to carry a long block explaining why erigon, reth and
+# nethermind were "deliberately absent" from this default -- each supposedly
+# starting but never following the chain. That is no longer true and the block
+# has been removed rather than left to mislead: all three now follow a local
+# genesis (erigon via --chain <file>, nethermind via a generated chainspec, reth
+# once its EIP-1559-from-genesis fix landed). They are in the default set below.
+# If one regresses, prefer fixing it or narrowing ALL_CLIENTS at the call site
+# over re-adding prose here that the code contradicts.
 # --all means ALL modern clients, matching join.sh's own --client all list. It
 # used to default to just "geth xone besu", so `./setup.sh --all` quietly gave a
 # 3-client net while the docs said "one follower per modern client", and a user
@@ -72,8 +56,7 @@ while [ $# -gt 0 ]; do
       echo "  --mixed       also start node 5: modern geth, sync-only, from genesis"
       echo "                (same as MIXED=1 ./run.sh)"
       echo "  --all         also start ONE sync-only follower per modern client"
-      echo "                (default: $ALL_CLIENTS; env: ALL_CLIENTS -- erigon, reth"
-      echo "                and nethermind are opt-in; see the comments in this file)"
+      echo "                (default: $ALL_CLIENTS; env: ALL_CLIENTS to narrow it)"
       echo "                Clients whose binary is absent are skipped with a"
       echo "                reason rather than taking the network down."
       echo "  --chainid N   chain id (default: 20118; env: CHAINID)"
@@ -128,6 +111,33 @@ BASE_WS_PORT="${BASE_WS_PORT:-8554}"
 # listener (erigon: one per eth protocol version), so each follower gets a
 # block this wide rather than a single port.
 ALL_P2P_STRIDE="${ALL_P2P_STRIDE:-10}"
+
+# --all followers get their OWN rpc/ws/authrpc block, one decade each, well clear
+# of the sealers' ranges. Previously they were numbered BASE_RPC_PORT+idx and
+# BASE_WS_PORT+idx, which OVERLAPPED the sealers on a default run:
+#
+#   sealer  node i  rpc = 8545..8549   ws = 8555..8559        (BASE_*+i, i=1..5)
+#   follower idx    rpc = 8549..8555   ws = 8559..8565        (BASE_*+idx, idx=5..11)
+#
+# so follower 11's rpc (8555) landed on sealer 1's ws, and follower 5's ws (8559)
+# on sealer 5's ws. reth (last in ALL_CLIENTS) died at startup with "address
+# 127.0.0.1:8555 already in use"; nethermind's process survived but its JSON-RPC
+# never bound, leaving a node that syncs internally and is invisible to every
+# tool -- a worse failure than crashing. Deterministic on any clean host with
+# pure defaults, which is why a warm bin/ and pre-existing datadirs hid it.
+#
+# One decade per follower also leaves room for clients that derive extra ports
+# from their rpc port: nethermind opens a second JSON-RPC URL at rpc+1, which
+# under consecutive numbering took the NEXT follower's rpc port.
+ALL_RPC_BASE="${ALL_RPC_BASE:-$((BASE_RPC_PORT + 200))}"
+ALL_PORT_STRIDE="${ALL_PORT_STRIDE:-10}"
+
+# Follower port helpers -- ONE definition, used by both the pre-flight check and
+# the launch loop. Those two computed the same arithmetic independently before,
+# which is exactly how they were free to disagree.
+all_follower_rpc()  { echo $(( ALL_RPC_BASE + ($1 - 5) * ALL_PORT_STRIDE )); }
+all_follower_ws()   { echo $(( $(all_follower_rpc "$1") + 5 )); }
+all_follower_auth() { echo $(( $(all_follower_rpc "$1") + 7 )); }
 
 # Ensure platform-native binaries exist (builds from XDPoSChain if needed).
 ensure_bins
@@ -416,9 +426,10 @@ if [ "$ALL" = 1 ]; then
       PORT_SPECS+=("$((_p2p + _k)):node $_idx ($_c) p2p block")
       _k=$((_k + 1))
     done
-    PORT_SPECS+=("$((BASE_RPC_PORT + _idx)):node $_idx ($_c) rpc" \
-                 "$((BASE_WS_PORT + _idx)):node $_idx ($_c) ws" \
-                 "$((BASE_RPC_PORT + 50 + _idx)):node $_idx ($_c) authrpc")
+    PORT_SPECS+=("$(all_follower_rpc "$_idx"):node $_idx ($_c) rpc" \
+                 "$(($(all_follower_rpc "$_idx") + 1)):node $_idx ($_c) rpc+1 (nethermind 2nd url)" \
+                 "$(all_follower_ws "$_idx"):node $_idx ($_c) ws" \
+                 "$(all_follower_auth "$_idx"):node $_idx ($_c) authrpc")
     # erigon additionally takes its eth-protocol listeners from the hardcoded
     # 30303..30307 (see the ALL_SELECTED block above). Reserve them so a clash
     # is reported here by name instead of surfacing as "run out of allowed
@@ -551,8 +562,8 @@ if [ "$ALL" = 1 ]; then
 
   idx=5
   for c in $ALL_SELECTED; do
-    P2P=$((BASE_P2P_PORT + 5 + (idx - 5) * ALL_P2P_STRIDE)); RPC=$((BASE_RPC_PORT + idx))
-    WS=$((BASE_WS_PORT + idx));   AUTH=$((BASE_RPC_PORT + 50 + idx))
+    P2P=$((BASE_P2P_PORT + 5 + (idx - 5) * ALL_P2P_STRIDE))
+    RPC=$(all_follower_rpc "$idx"); WS=$(all_follower_ws "$idx"); AUTH=$(all_follower_auth "$idx")
     DD="./nodes/${idx}-${c}"
     echo "Starting node $idx ($c, sync-only follower) rpc=$RPC ..."
     # Deliberately NO --name below. join.sh composes the canonical identity

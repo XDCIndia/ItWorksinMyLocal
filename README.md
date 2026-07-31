@@ -46,9 +46,17 @@ private. The normal download path never touches it.
 ./setup.sh --new 4 --all --chainid 20931 --name mylab
 ```
 
-That is 4 `oldxdc` sealers plus one sync-only follower per modern client, on your
-own network. Pick any unused `--chainid`. `--name` labels every node on this
-machine; omit it and your hostname is used.
+That is 4 `oldxdc` sealers plus one sync-only follower per modern client. Pick any
+unused `--chainid`. `--name` labels every node on this machine; omit it and your
+hostname is used.
+
+> **On a brand-new clone, expect only `oldxdc` and `geth` to start.** `setup.sh`
+> pre-builds just those two, so the other followers are reported as
+> `binary not found` and skipped — the run still succeeds, it is simply smaller
+> than the full set. To fetch the rest, either run `./join.sh --client all`
+> (which downloads each client on demand), or re-run the command above once
+> `bin/` is populated. The skip lines name every client that was left out and
+> why, so you can tell this apart from a failure.
 
 Each node's identity is composed for you as
 
@@ -527,7 +535,7 @@ in the lab but not yet upstreamed. Design/status: [`docs/lab/DESIGN.md`](docs/la
 | Symptom | Fix |
 |---------|-----|
 | `Permission denied` running a script | `chmod +x *.sh` |
-| `address already in use` | a node is still running: `pkill -f bin/XDC`, then retry |
+| `address already in use` | a node from a previous run is still up. Find it by PORT, not by name: `ss -ltnp "sport = :8545"` (and `ss -lunp` for UDP — the bootnode's discovery port is UDP-only, so a TCP-only check misses it). Then `kill -TERM <pid>`. **Do not use `pkill -f`** — a substring match can hit unrelated processes, including your own shell, and on a shared host it will take out someone else's nodes. |
 | `incompatible genesis (have … new …)` | old data vs new genesis: `./reset.sh` then start again |
 | Blocks stop / stuck at an epoch (e.g. 900) | genesis validators don't match `0x88` — regenerate with `gen-genesis.sh` (see below) |
 | A joining peer won't connect | its `genesis.json` must be byte-identical to the target's; check firewall on `30301`/`30303` |

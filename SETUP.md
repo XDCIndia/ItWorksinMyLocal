@@ -39,10 +39,15 @@ sudo rm -rf /usr/local/go && sudo tar -C /usr/local -xzf go1.23.4.linux-amd64.ta
 export PATH=$PATH:/usr/local/go/bin   # add this line to ~/.profile to persist
 ```
 
-The first run downloads the node software from the pre-fixed
-`XDCIndia/OLDXDC` source and builds it (a few minutes, one time). You need
-access to that repository — if you're in the XDCIndia org and signed in to
-git/GitHub, it just works. After that, everything below is the same on both.
+The first run downloads a ready-built node binary from the public mirror and
+checks it against a recorded sha256 (under a minute, one time). **You do not
+need a GitHub account or any org access** — this includes `oldxdc`, the
+default client. Nothing on this path uses `git clone` or the GitHub CLI.
+
+`gh` is only required if you deliberately force a build from source
+(`BIN_SOURCE=build`), because the client *source* repos are private. You do
+not need to do that to follow this guide. After the first run, everything
+below is the same on both.
 
 ---
 
@@ -175,7 +180,12 @@ full instructions for the second machine are in `README.md` under
 
 - **"Permission denied"** → run `chmod +x *.sh` once, then try again.
 - **"address already in use"** → an old copy is still running. Close it with
-  `Ctrl + C`, or run: `pkill -f bin/XDC` then start again.
+  `Ctrl + C`. If a node from an earlier run is still up, find it by its PORT
+  rather than by name — `ss -ltnp "sport = :8545"`, plus `ss -lunp` for UDP
+  since the bootnode's discovery port is UDP-only — then `kill -TERM <pid>`.
+  Avoid `pkill -f`: it matches on a substring and can kill unrelated
+  processes (including your own shell) or other people's nodes on a shared
+  machine.
 - **The block number isn't growing** → stop (`Ctrl + C`), then
   `./reset.sh` and `./setup.sh --new`.
 - **Still stuck?** Share the last ~20 lines from the Terminal with whoever set
