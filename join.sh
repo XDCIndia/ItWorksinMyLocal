@@ -178,6 +178,8 @@ MINEADDR=""; STATICPEERS=""; NETWORK=""; SYNCMODE=""
 # STATICPEERS_EXPLICIT: set when the caller passes --staticpeers directly, so
 # the local-sealer harvest below (LOCAL_BOOTNODE=1) knows to never clobber an
 # explicit choice -- it only overrides STATICPEERS it (or peers.list) derived.
+# It does NOT skip the harvest: the explicit peers are merged into $BOOTNODES so
+# the six clients that never read $STATICPEERS still get them. See the harvest.
 STATICPEERS_EXPLICIT=0
 # LOCAL_BOOTNODE: set to 1 when BOOTNODES is derived from ./bootnode.key below
 # (i.e. we're joining THIS machine's own local run.sh network), so the
@@ -460,7 +462,26 @@ if [ "$LOCAL_BOOTNODE" != 1 ] && [ -n "$BOOTNODES" ]; then
     *) [ -n "$_myip" ] && case "$BOOTNODES" in *"@${_myip}:"*) LOCAL_BOOTNODE=1 ;; esac ;;
   esac
 fi
-if [ "$LOCAL_BOOTNODE" = 1 ] && [ "$STATICPEERS_EXPLICIT" != 1 ]; then
+# Runs on EVERY local join, including one that passed --staticpeers explicitly.
+#
+# It used to be gated on `[ "$STATICPEERS_EXPLICIT" != 1 ]`, which looked like it
+# was only protecting an explicit choice from being clobbered. In practice it
+# threw the peers away for six of the seven clients: ONLY erigon's launch section
+# reads $STATICPEERS. oldxdc/geth/xone use --bootnodes, besu builds its
+# static-nodes file FROM --bootnodes, nethermind uses --Network.StaticPeers, and
+# reth passes `--trusted-peers "$BOOTNODES"` (see its launch below) -- all of them
+# off $BOOTNODES. So `join.sh --client reth --staticpeers <4 sealer enodes>`
+# skipped this block, left BOOTNODES holding only the discovery bootnode, and reth
+# sat at connected_peers=0 latest_block=0 forever while the sealers climbed.
+# Measured, then fixed by folding the same enodes into --bootnodes instead.
+#
+# The invariant now: a local join ALWAYS ends up with real, dialable, block-serving
+# sealer enodes in $BOOTNODES, so every client peers immediately instead of waiting
+# on Kademlia propagation through a discovery-only bootnode (which erigon's discv4
+# cannot do through an XDPoSChain bootnode at all). An explicit --staticpeers is
+# still never overwritten -- it is now ADDITIVE: it seeds $BOOTNODES too, and is
+# kept as-is for erigon.
+if [ "$LOCAL_BOOTNODE" = 1 ]; then
   _local_nid="$NETWORKID"
   if [ -z "$_local_nid" ] && [ -n "$GENESIS" ] && [ -f "$GENESIS" ]; then
     _local_nid=$(python3 -c "import json,sys;print(json.load(open('$GENESIS'))['config']['chainId'])" 2>/dev/null)
@@ -511,9 +532,28 @@ except Exception:
     echo "  no local sealer RPC reachable on 8545-8548; falling back to bootnode-discovery harvest" >&2
     _local_peers=$(harvest_peers "$GENESIS" "$BOOTNODES" "${_local_nid:-0}")
   fi
+  # An explicit --staticpeers is authoritative for STATICPEERS but must ALSO reach
+  # the $BOOTNODES-reading clients, so merge it in rather than letting it bypass
+  # this block entirely (which is what used to strand reth at 0 peers).
+  if [ "$STATICPEERS_EXPLICIT" = 1 ]; then
+    _local_peers="${STATICPEERS:+$STATICPEERS}${STATICPEERS:+${_local_peers:+,}}$_local_peers"
+  fi
   if [ -n "$_local_peers" ]; then
-    STATICPEERS="$_local_peers"
-    BOOTNODES="${BOOTNODES:+$BOOTNODES,}$_local_peers"
+    [ "$STATICPEERS_EXPLICIT" = 1 ] || STATICPEERS="$_local_peers"
+    # Deduplicate: an explicit --staticpeers commonly repeats what the harvest
+    # just found, and a bootnode list with the same enode twice makes geth log
+    # "bad bootstrap node" noise on every start.
+    BOOTNODES=$(BN="${BOOTNODES:+$BOOTNODES,}$_local_peers" python3 -c "
+import os
+seen, out = set(), []
+for e in os.environ.get('BN', '').split(','):
+    e = e.strip()
+    if not e or e in seen:
+        continue
+    seen.add(e)
+    out.append(e)
+print(','.join(out))
+" 2>/dev/null) || BOOTNODES="${BOOTNODES:+$BOOTNODES,}$_local_peers"
     echo "Using $(echo "$_local_peers" | tr ',' '\n' | grep -c enode) local sealer peer(s) as staticpeers/bootnodes (overrides peers.list)"
   else
     echo "  warning: could not find any local sealer peers; clients may not sync (pass --staticpeers)" >&2
