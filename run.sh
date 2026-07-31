@@ -9,6 +9,12 @@ trap _interupt INT TERM
 
 cd "$(dirname "$0")" || exit 1
 
+# Sourced early (before flag parsing) purely so DEFAULT_ALL_CLIENTS below can
+# reference lib.sh's shared constant instead of keeping its own copy; nothing
+# lib.sh sets at source-time depends on run.sh's flags/CHAINID validation, so
+# this does not reorder anything the network itself sees.
+source ./lib.sh
+
 # --mixed (or MIXED=1 in the environment/.env): also launch a 5th node --
 # modern go-ethereum, sync-only (no --mine), joining from genesis alongside
 # the 4 legacy oldxdc sealers below. Default is unchanged (4 legacy sealers
@@ -40,7 +46,7 @@ ALL="${ALL:-0}"
 # below), so widening the default degrades gracefully on a partial bin/ instead
 # of failing. Narrow it explicitly when you want to:
 #   ALL_CLIENTS="geth erigon" ./run.sh --all
-ALL_CLIENTS="${ALL_CLIENTS:-geth geth4 erigon xone besu nethermind reth}"
+ALL_CLIENTS="${ALL_CLIENTS:-$DEFAULT_ALL_CLIENTS}"
 CHAINID="${CHAINID:-20118}"
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -81,7 +87,6 @@ case "$CHAINID" in
   ''|*[!0-9]*) echo "run.sh: --chainid must be a positive integer (got '$CHAINID')" >&2; exit 1;;
 esac
 
-source ./lib.sh
 # Same pattern join.sh uses. Only SKYNET_BASE_URL is consumed here; the file's
 # other keys (DEFAULT_HOST/BOOTNODE_PORT/GENESIS/BOOTNODES) describe a REMOTE
 # network to join and are deliberately unreferenced by run.sh, which always
@@ -97,20 +102,23 @@ set -a
 set +a
 
 Bin_NAME=XDC
-NUM_NODES=4
+# Not currently operator-overridable (run.sh always launches exactly this
+# many legacy sealers) -- set from the shared default so the manifest below
+# and status.sh's own fallback can never disagree with it.
+NUM_NODES=$DEFAULT_NUM_NODES
 
 # Base ports for the whole local net (nodes 1-4 use BASE+1..BASE+4, and when
 # --mixed is set node 5 uses BASE+5) -- override to move the entire topology
 # off a set of ports already in use on a shared host, e.g.:
 #   BASE_P2P_PORT=31302 BASE_RPC_PORT=9544 BASE_WS_PORT=9554 ./run.sh --mixed
 _BASE_P2P_EXPLICIT="${BASE_P2P_PORT:+1}"
-BASE_P2P_PORT="${BASE_P2P_PORT:-30302}"
-BASE_RPC_PORT="${BASE_RPC_PORT:-8544}"
-BASE_WS_PORT="${BASE_WS_PORT:-8554}"
+BASE_P2P_PORT="${BASE_P2P_PORT:-$DEFAULT_BASE_P2P_PORT}"
+BASE_RPC_PORT="${BASE_RPC_PORT:-$DEFAULT_BASE_RPC_PORT}"
+BASE_WS_PORT="${BASE_WS_PORT:-$DEFAULT_BASE_WS_PORT}"
 # --all only: p2p ports per follower. A client may need more than one
 # listener (erigon: one per eth protocol version), so each follower gets a
 # block this wide rather than a single port.
-ALL_P2P_STRIDE="${ALL_P2P_STRIDE:-10}"
+ALL_P2P_STRIDE="${ALL_P2P_STRIDE:-$DEFAULT_ALL_P2P_STRIDE}"
 
 # The local bootnode's port. Was the bare literal 30301 in three places, which
 # meant BASE_P2P_PORT/BASE_RPC_PORT/BASE_WS_PORT could move the whole node 1..N
@@ -119,7 +127,7 @@ ALL_P2P_STRIDE="${ALL_P2P_STRIDE:-10}"
 # correctly refused every attempt. Note the name: network.env uses the
 # DEFAULT_BOOTNODE_PORT spelling for the REMOTE network join.sh dials, so this
 # does not collide with it.
-BOOTNODE_PORT="${BOOTNODE_PORT:-30301}"
+BOOTNODE_PORT="${BOOTNODE_PORT:-$DEFAULT_BOOTNODE_PORT}"
 
 # --all followers get their OWN rpc/ws/authrpc block, one decade each, well clear
 # of the sealers' ranges. Previously they were numbered BASE_RPC_PORT+idx and
@@ -139,14 +147,11 @@ BOOTNODE_PORT="${BOOTNODE_PORT:-30301}"
 # from their rpc port: nethermind opens a second JSON-RPC URL at rpc+1, which
 # under consecutive numbering took the NEXT follower's rpc port.
 ALL_RPC_BASE="${ALL_RPC_BASE:-$((BASE_RPC_PORT + 200))}"
-ALL_PORT_STRIDE="${ALL_PORT_STRIDE:-10}"
+ALL_PORT_STRIDE="${ALL_PORT_STRIDE:-$DEFAULT_ALL_PORT_STRIDE}"
 
-# Follower port helpers -- ONE definition, used by both the pre-flight check and
-# the launch loop. Those two computed the same arithmetic independently before,
-# which is exactly how they were free to disagree.
-all_follower_rpc()  { echo $(( ALL_RPC_BASE + ($1 - 5) * ALL_PORT_STRIDE )); }
-all_follower_ws()   { echo $(( $(all_follower_rpc "$1") + 5 )); }
-all_follower_auth() { echo $(( $(all_follower_rpc "$1") + 7 )); }
+# Follower port helpers (all_follower_rpc/_ws/_auth) now live in lib.sh --
+# used by both the pre-flight check and the launch loop below, AND by
+# status.sh's report, so all three compute this arithmetic exactly once.
 
 # Ensure platform-native binaries exist (builds from XDPoSChain if needed).
 ensure_bins
@@ -312,6 +317,15 @@ if [ "$ALL" = 1 ]; then
     printf '%s' "$ALL_SKIP_WHY"
   fi
 fi
+
+# Record the topology this invocation actually resolved (ports, --all's
+# ALL_SELECTED set, chain id, machine label) so status.sh can report on it
+# later without the operator re-passing the same overrides (ItWorksinMyLocal
+# #181). Every value above is final by this point (ALL_SELECTED resolved,
+# the erigon BASE_P2P_PORT bump already applied); nothing below this line
+# changes any of them. Reporting-only: run.sh itself never reads this file.
+MACHINE_LABEL="$(machine_name)"
+write_topology_manifest ./nodes/.topology
 
 # The chain id the nodes run with and the chainId baked into genesis.json must
 # agree. When they don't, nothing here fails loudly: the nodes start, seal, and

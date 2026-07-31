@@ -593,7 +593,7 @@ fi
 # A client whose extra inputs are missing (erigon needs --chain; nethermind needs
 # a dist) exits with its own hint and is skipped -- the rest keep syncing.
 if [ "$CLIENT" = all ]; then
-  ALL_CLIENTS="oldxdc geth erigon besu nethermind reth xone geth4"
+  ALL_CLIENTS="$JOIN_ALL_CLIENTS"
   # Forward the shared, already-resolved network inputs to every child so they all
   # dial the SAME network (and a child doesn't re-run default resolution).
   shared=()
@@ -674,10 +674,7 @@ NODETYPE=sync
 # run.sh's local net (30301, 30303-6, 8545-58), any XDPoS validator ports
 # (85xx / 91xx / 99xx / 310xx), and the previous join defaults (83xx/85-86xx/
 # 30313+) -- so a `--client all` fan-out won't collide with those or a second run.
-case "$CLIENT" in
-  geth) O=100;; erigon) O=200;; besu) O=300;; nethermind) O=400;; reth) O=500;; xone) O=600;;
-  geth4) O=700;; *) O=0;;
-esac
+O=$(join_client_port_offset "$CLIENT")
 PORT="${PORT:-$((31413 + O))}"                  # p2p     31413..32013
 RPCPORT="${RPCPORT:-$((9645 + O))}"             # http    9645..10245
 WSPORT="${WSPORT:-$((RPCPORT + 1))}"            # ws      http+1

@@ -1,5 +1,10 @@
 *_network
 nodes*
+# nodes/.topology -- the per-run launch manifest run.sh writes and status.sh
+# reads (ItWorksinMyLocal#181). Already covered by the "nodes*" pattern above
+# (it ignores the whole nodes/ tree); listed explicitly too so it reads as
+# deliberate local state, not an accident of a broader glob.
+nodes/.topology
 .env
 
 localdpos.json

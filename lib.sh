@@ -232,6 +232,75 @@ node_name() {
   echo "${m}-${c}-v${v}-${k}-${t}-${i}"
 }
 
+# --- local-topology defaults + run manifest (ItWorksinMyLocal#181) ---------
+# run.sh's local net accepts BASE_P2P_PORT/BASE_RPC_PORT/BASE_WS_PORT/
+# BOOTNODE_PORT/ALL_RPC_BASE/ALL_PORT_STRIDE/ALL_CLIENTS overrides so it can be
+# moved off busy ports. status.sh has to report the SAME topology, which means
+# it needs the SAME defaults -- previously it kept its own copy of a subset of
+# them (and simply lacked the rest), so a run started with overrides was
+# reported as entirely DOWN by a bare ./status.sh (#181: the network tip read
+# 0 because status.sh silently probed the wrong ports).
+#
+# These are ONLY the fallback used when neither the manifest below nor an
+# explicit environment variable says otherwise -- run.sh's own port math is
+# unchanged; this just names the same literals once instead of twice.
+DEFAULT_BASE_P2P_PORT=30302
+DEFAULT_BASE_RPC_PORT=8544
+DEFAULT_BASE_WS_PORT=8554
+DEFAULT_BOOTNODE_PORT=30301
+DEFAULT_ALL_PORT_STRIDE=10
+DEFAULT_ALL_P2P_STRIDE=10
+DEFAULT_NUM_NODES=4
+# run.sh --all's default modern-client set. Shared so status.sh's "Modern
+# Followers" section falls back to the exact same list run.sh would launch,
+# rather than a second hand-maintained copy that can drift from it (as the
+# in-repo one did: it was missing geth4 until fixed here).
+DEFAULT_ALL_CLIENTS="geth geth4 erigon xone besu nethermind reth"
+
+# --all follower port helpers -- ONE definition, used by run.sh's pre-flight
+# check, its launch loop, AND status.sh's "Modern Followers" report. All three
+# used to compute this arithmetic independently, which is exactly how they
+# were free to disagree (and did: status.sh's copy went stale more than once).
+# Depend on ALL_RPC_BASE/ALL_PORT_STRIDE being set in the caller's shell
+# (by run.sh directly, or by status.sh via the manifest/defaults below).
+all_follower_rpc()  { echo $(( ALL_RPC_BASE + ($1 - 5) * ALL_PORT_STRIDE )); }
+all_follower_ws()   { echo $(( $(all_follower_rpc "$1") + 5 )); }
+all_follower_auth() { echo $(( $(all_follower_rpc "$1") + 7 )); }
+
+# The manifest's field set. ONE list, so the writer (run.sh, below) and the
+# reader (status.sh) can never disagree about what the file contains.
+TOPOLOGY_MANIFEST_KEYS="BASE_P2P_PORT BASE_RPC_PORT BASE_WS_PORT BOOTNODE_PORT ALL_RPC_BASE ALL_PORT_STRIDE ALL_P2P_STRIDE NUM_NODES MIXED ALL CHAINID ALL_SELECTED MACHINE_LABEL"
+
+# write_topology_manifest <path>: record the topology THIS run.sh invocation
+# actually resolved (after every override/adjustment -- e.g. the erigon
+# BASE_P2P_PORT bump, or a --all client dropped for a missing binary) into a
+# small sourceable file, so a later bare ./status.sh (run by anyone, in any
+# shell, any time later) reports on the topology that is actually running
+# instead of today's hardcoded guesses. Per-run local state: not the ports a
+# future run.sh call will necessarily reuse, so it belongs in nodes/ (already
+# gitignored) and is never read by run.sh itself.
+#
+# Plain `KEY=value` lines via printf %q, so `. ./nodes/.topology` (status.sh's
+# side) restores ALL_SELECTED's embedded spaces correctly -- a naive
+# `IFS='=' read` parse would not.
+write_topology_manifest() {
+  local path="$1" k v
+  mkdir -p "$(dirname "$path")" 2>/dev/null
+  {
+    echo "# Written by run.sh -- the topology THIS invocation actually used."
+    echo "# Sourced by status.sh (ItWorksinMyLocal#181) so a bare ./status.sh"
+    echo "# reports it without re-passing the same overrides given to"
+    echo "# setup.sh/run.sh. An explicit environment variable at status.sh's"
+    echo "# own invocation still wins over any value below."
+    echo "# Per-run local state -- gitignored (nodes*); do not commit, do not"
+    echo "# hand-edit (run ./run.sh again to regenerate it)."
+    for k in $TOPOLOGY_MANIFEST_KEYS; do
+      v="${!k:-}"
+      printf '%s=%q\n' "$k" "$v"
+    done
+  } > "$path"
+}
+
 # `timeout` is GNU coreutils and is absent on stock macOS, which this harness
 # also targets (see platform_slug). Wrap version queries so a wedged binary can
 # never hang a launch, WITHOUT making the query fail outright where timeout does
@@ -927,6 +996,34 @@ client_exe_names() {
     *)              echo "" ;;
   esac
 }
+
+# join.sh's `--client all` fan-out and per-client default RPC port. ONE
+# definition, shared by join.sh (which launches this set) and status.sh
+# (which reports a "Join Clients" table) -- previously status.sh kept its own
+# 7-entry copy with no geth4, so a `join.sh --client all` run (which starts 8
+# clients) was reported as only 7 (ItWorksinMyLocal#181 investigation).
+JOIN_ALL_CLIENTS="oldxdc geth erigon besu nethermind reth xone geth4"
+
+# join_client_port_offset <client>: the "O" in join.sh's per-client port
+# block (case "$CLIENT" in geth) O=100;; ...). RPC port = 9645 + offset (see
+# join_client_rpc_port below); p2p/authrpc/etc. follow the same offset in
+# join.sh directly.
+join_client_port_offset() {
+  case "$1" in
+    geth)       echo 100 ;;
+    erigon)     echo 200 ;;
+    besu)       echo 300 ;;
+    nethermind) echo 400 ;;
+    reth)       echo 500 ;;
+    xone)       echo 600 ;;
+    geth4)      echo 700 ;;
+    *)          echo 0 ;;
+  esac
+}
+
+# join_client_rpc_port <client>: default JSON-RPC port join.sh gives this
+# client under `--client all` (or bare `--client <c>` with no --rpcport).
+join_client_rpc_port() { echo $(( 9645 + $(join_client_port_offset "$1") )); }
 
 # proc_pids_for_datadir <datadir_abspath> [exe_basename ...]: one live pid
 # per line -- any process whose /proc/<pid>/cmdline contains
