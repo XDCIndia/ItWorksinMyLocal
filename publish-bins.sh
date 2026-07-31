@@ -725,13 +725,41 @@ docker_run_build() {
 # real build failure, 2 when neither capability is available (SKIP, not
 # FAILED).
 RUN_STEP_WHERE=""
+# No client is currently known to cross-compile to a DIFFERENT arch on the host.
+# geth was tried and does not: despite being mostly Go it pulls cgo dependencies
+# with arch-specific assembly, so an x86_64 host assembles gcc_arm64.S with the
+# wrong assembler ("no such instruction: ldp x23,x24"). Supplying
+# CC=aarch64-linux-gnu-gcc does not rescue it either, because build/ci.go injects
+# the x86-only `-m64` flag, which that compiler rejects. CGO_ENABLED=0 does not
+# avoid it. A foreign-arch linux slice therefore needs a real machine of that arch,
+# or docker with QEMU/binfmt registered.
+#
+# Kept as a hook so the next person has somewhere obvious to add a client that
+# genuinely does cross-compile, with the evidence rather than an assumption.
+client_cross_compiles_on_host() {
+  case "$1" in
+    *) return 1 ;;
+  esac
+}
+
 run_step() {
   local client="$1" slug="$2" srcdir="$3" cmd="$4" image="$5" log="$6" os_ arch_
   os_="${slug%-*}"; arch_="${slug#*-}"
-  if [ "${os_}-${arch_}" = "$(platform_slug)" ]; then
+  # Build on the host when the target IS this machine, OR when the client
+  # cross-compiles on the host anyway. That second case was missing: a
+  # linux-arm64 slug on an x86_64 host fell straight through to docker with
+  # --platform linux/arm64, which pulls an arm64 image and dies with
+  # "exec /usr/bin/bash: exec format error" unless QEMU/binfmt happens to be
+  # registered. The command is `GOOS=linux GOARCH=arm64 make geth` -- a plain Go
+  # cross-compile needing no container at all. That is why geth's linux-arm64
+  # slice quietly stopped being republishable and drifted a release behind its
+  # own linux-amd64 sibling.
+  if [ "${os_}-${arch_}" = "$(platform_slug)" ] || client_cross_compiles_on_host "$client"; then
     echo "[$client/$slug] host build: $cmd" >>"$log"
     if ( cd "$srcdir" && eval "$cmd" ) >>"$log" 2>&1; then RUN_STEP_WHERE=host; return 0; fi
-    return 1
+    # Fall through to docker rather than failing outright -- a cross-compile can
+    # still fail for a reason a matching-arch container would solve.
+    echo "[$client/$slug] host build failed; falling back to docker" >>"$log"
   fi
   if [ "$os_" = linux ] && docker_available; then
     echo "[$client/$slug] docker build ($image, linux/$arch_): $cmd" >>"$log"
@@ -905,7 +933,21 @@ build_linux_slice() {
     echo "[$client] $slug already built for commit $commit (cached; --force-rebuild to redo)"
     return 0
   fi
-  local cmd="GOOS=linux GOARCH=$arch $extra_env make $make_target" rc=0
+  # go-ethereum-derived trees drive their Makefile through `go run build/ci.go`.
+  # Setting GOOS/GOARCH there cross-compiles CI.GO ITSELF for the target, so `go
+  # run` then tries to execute an arm64 helper on an amd64 host and dies with
+  # "fork/exec ...: exec format error". ci.go takes the target as a flag instead.
+  # build_darwin_universal already does this; the linux path did not, which is the
+  # real reason geth's linux-arm64 slice could not be rebuilt (the docker fallback
+  # then failed too, for the unrelated foreign-image reason). Trees without
+  # build/ci.go keep the plain GOOS/GOARCH make invocation that already worked.
+  local cmd
+  if [ -f "$srcdir/build/ci.go" ]; then
+    cmd="$extra_env go run build/ci.go install -arch $arch ./cmd/$make_target"
+  else
+    cmd="GOOS=linux GOARCH=$arch $extra_env make $make_target"
+  fi
+  local rc=0
   local out; out="$(client_build_out "$client" "$make_target")"
   # Same reason as build_darwin_universal: drop any output left by an earlier
   # commit's build so a no-op build cannot stage it under this commit's name.
