@@ -48,7 +48,15 @@ ALL="${ALL:-0}"
 #     separate consensus layer to feed it heads -- there is none on an XDPoS
 #     net, and it never joins the XDPoS gossip. Not a peer-discovery problem:
 #     it receives the same bootnode the working geth follower does.
-ALL_CLIENTS="${ALL_CLIENTS:-geth xone besu}"
+# --all means ALL modern clients, matching join.sh's own --client all list. It
+# used to default to just "geth xone besu", so `./setup.sh --all` quietly gave a
+# 3-client net while the docs said "one follower per modern client", and a user
+# had to know to set ALL_CLIENTS by hand to get the rest (#152). Anything whose
+# binary is missing or unrunnable is skipped and REPORTED (see ALL_SKIP_WHY
+# below), so widening the default degrades gracefully on a partial bin/ instead
+# of failing. Narrow it explicitly when you want to:
+#   ALL_CLIENTS="geth erigon" ./run.sh --all
+ALL_CLIENTS="${ALL_CLIENTS:-geth geth1175 erigon xone besu nethermind reth}"
 CHAINID="${CHAINID:-20118}"
 while [ $# -gt 0 ]; do
   case "$1" in
