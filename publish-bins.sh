@@ -263,10 +263,29 @@ client_file_pattern() {
 
 # The manifest "produces" key -- also the produced binary's own filename
 # inside a checkout's build output (used to locate it after `make`/`cargo`).
+# Where `make <target>` leaves its binary, relative to the checkout root.
+# geth/erigon use go-ethereum's build/bin/<target>. xOneGo does not: its Go module
+# lives in pkg/, and its root Makefile (added in xOneGo#710 so `make xone` works
+# from the root at all) copies output to ./bin/.
+#
+# xone also needs a DIFFERENT binary than its make target. `make xone` builds two:
+#   xone         - a launcher that only parses --engine and execs an engine binary
+#   xone-native  - the actual standalone client (the default engine)
+# The published artifact is a single bare file, so shipping the launcher would give
+# users something that starts and then immediately fails for want of an engine.
+# Ship xone-native under the published name instead; that is also what the working
+# deployed binary has always been (monolithic, no launcher).
+client_build_out() {
+  case "$1" in
+    xone) echo "bin/xone-native" ;;
+    *)    echo "build/bin/$2" ;;
+  esac
+}
+
 client_binary_name() {
   case "$1" in
     geth) echo geth ;;
-    xone) echo xone ;;
+    xone) echo xone-native ;;
     erigon) echo erigon ;;
     reth) echo xdc-reth ;;
     besu) echo besu ;;
@@ -310,6 +329,34 @@ ASSUME_YES=0
 hard_abort() {
   echo "ABORT: $*" >&2
   exit 1
+}
+
+# Classify a binary by its MAGIC BYTES: elf | macho-universal | macho | unknown.
+#
+# This used to call `file -b`, which is not in coreutils and is absent from plenty
+# of build hosts -- including the one this script normally runs on. When `file` is
+# missing the command substitution yields an EMPTY string, so the sanity gate
+# reported "expected an ELF binary, got: " and rejected a perfectly good binary.
+# That is exactly how the erigon artifact silently stopped being republishable: a
+# valid 155MB ELF was built and then thrown away by the gate, every run.
+#
+# `od` is POSIX and always present, so read the first four bytes ourselves:
+#   ELF                  7f 45 4c 46   (\177ELF)
+#   Mach-O universal/fat  ca fe ba be  (big-endian) or be ba fe ca (byte-swapped)
+#   Mach-O thin          cf fa ed fe / ce fa ed fe (64/32-bit little-endian)
+# A fat binary is what `lipo` produces and is what the darwin artifacts must be,
+# so thin Mach-O is reported separately rather than being conflated with it.
+binary_magic() {
+  local f="$1" m
+  [ -r "$f" ] || { echo "unreadable"; return 0; }
+  m=$(od -An -tx1 -N4 "$f" 2>/dev/null | tr -d ' \n')
+  case "$m" in
+    7f454c46)          echo elf ;;
+    cafebabe|bebafeca) echo macho-universal ;;
+    cffaedfe|cefaedfe|feedface|feedfacf) echo macho ;;
+    "")                echo "unreadable" ;;
+    *)                 echo "unknown(magic=$m)" ;;
+  esac
 }
 
 print_usage() {
@@ -859,15 +906,16 @@ build_linux_slice() {
     return 0
   fi
   local cmd="GOOS=linux GOARCH=$arch $extra_env make $make_target" rc=0
+  local out; out="$(client_build_out "$client" "$make_target")"
   # Same reason as build_darwin_universal: drop any output left by an earlier
   # commit's build so a no-op build cannot stage it under this commit's name.
-  rm -f "$srcdir/build/bin/$make_target"
+  rm -f "$srcdir/$out"
   run_step "$client" "$slug" "$srcdir" "$cmd" "$IMG_GOLANG" "$log" || rc=$?
   if [ "$rc" = 0 ]; then
     # Guarded explicitly (not bare cp/chmod): this function is called as a
     # plain statement, so an unguarded staging failure would trip `set -e`
     # and abort the whole script instead of just failing this one item.
-    if cp "$srcdir/build/bin/$make_target" "$STAGE_DIR/$(resolved_filename "$client" "$slug")" \
+    if cp "$srcdir/$out" "$STAGE_DIR/$(resolved_filename "$client" "$slug")" \
        && chmod +x "$STAGE_DIR/$(resolved_filename "$client" "$slug")"; then
       mark_built "$client" "$slug" "$commit" "$RUN_STEP_WHERE"
     else
@@ -924,7 +972,7 @@ build_pure_go_client() {
     build_darwin_universal "$client" "$srcdir" "$commit" "$log" \
       "GOOS=darwin GOARCH=arm64 make $make_target" \
       "$amd64_cmd" \
-      "build/bin/$make_target" "build/bin/$make_target" "go make"
+      "$(client_build_out "$client" "$make_target")" "$(client_build_out "$client" "$make_target")" "go make"
   fi
   for s in $requested; do
     case "$s" in
@@ -986,8 +1034,8 @@ build_reth() {
     # under its own target-triple directory, so (unlike geth/xone/erigon)
     # the arm64 and amd64 slices have DIFFERENT output paths -- pass both.
     build_darwin_universal "$client" "$srcdir" "$commit" "$log" \
-      "rustup target add aarch64-apple-darwin --toolchain stable && cargo +stable build --release --target aarch64-apple-darwin" \
-      "rustup target add x86_64-apple-darwin --toolchain stable && cargo +stable build --release --target x86_64-apple-darwin" \
+      "rustup target add aarch64-apple-darwin --toolchain stable && cargo +stable build --release -p xdc-reth --bin xdc-reth --target aarch64-apple-darwin" \
+      "rustup target add x86_64-apple-darwin --toolchain stable && cargo +stable build --release -p xdc-reth --bin xdc-reth --target x86_64-apple-darwin" \
       "target/aarch64-apple-darwin/release/$binname" "target/x86_64-apple-darwin/release/$binname" "rustup cargo lipo"
   fi
   for s in $requested; do
@@ -1006,7 +1054,15 @@ build_reth_linux_slice() {
     echo "[$client] $slug already built for commit $commit (cached; --force-rebuild to redo)"
     return 0
   fi
-  run_step "$client" "$slug" "$srcdir" "cargo build --release" "$IMG_RUST" "$log" || rc=$?
+  # -p xdc-reth --bin xdc-reth, NOT a bare `cargo build --release`. The XDC binary
+  # is its own crate at bin/xdc-reth; the workspace default-run target is upstream's
+  # vanilla `reth`. A bare build therefore produced target/release/reth and the
+  # staging copy of target/release/xdc-reth failed with "failed staging the built
+  # binary" -- after a full 13-minute compile, every run. Worse, the vanilla binary
+  # is not a silent substitute: it lacks the XDC feature set and panics at startup
+  # in rustls ("Could not automatically determine the process-level CryptoProvider")
+  # as soon as ethstats is enabled, so shipping it would be worse than failing.
+  run_step "$client" "$slug" "$srcdir" "cargo build --release -p xdc-reth --bin xdc-reth" "$IMG_RUST" "$log" || rc=$?
   if [ "$rc" = 0 ]; then
     if cp "$srcdir/target/release/$binname" "$STAGE_DIR/$(resolved_filename "$client" "$slug")" \
        && chmod +x "$STAGE_DIR/$(resolved_filename "$client" "$slug")"; then
@@ -1265,16 +1321,16 @@ sanity_check_file() {
       [ -x "$file" ] || { mark_failed "$c" "$s" sanity "staged binary not executable: $file"; return 1; }
       case "$s" in
         darwin-*)
-          ftype="$(file -b "$file" 2>/dev/null || true)"
+          ftype="$(binary_magic "$file")"
           case "$ftype" in
-            *"Mach-O universal"*) : ;;
+            macho-universal) : ;;
             *) mark_failed "$c" "$s" sanity "expected a Mach-O universal (lipo) binary, got: $ftype"; return 1 ;;
           esac
           ;;
         linux-*)
-          ftype="$(file -b "$file" 2>/dev/null || true)"
+          ftype="$(binary_magic "$file")"
           case "$ftype" in
-            *ELF*) : ;;
+            elf) : ;;
             *) mark_failed "$c" "$s" sanity "expected an ELF binary, got: $ftype"; return 1 ;;
           esac
           ;;
