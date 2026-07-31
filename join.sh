@@ -824,6 +824,39 @@ if [ "$CLIENT" != erigon ] && [ -z "$NETWORKID" ]; then
   echo "could not read chainId from $GENESIS; pass --chainid" >&2; exit 1
 fi
 
+# The networkid the node runs with and the chainId inside --genesis must agree.
+# Nothing downstream fails loudly when they don't: the node starts, reports
+# healthy, and simply never peers -- the eth handshake rejects a mismatched
+# network -- so it surfaces much later as an unexplained "peers=0, block=0".
+#
+# The trap this closes: `--chainid N` WITHOUT `--genesis` is not an error today.
+# GENESIS silently falls back to DEFAULT_GENESIS from network.env (the public
+# devnet 5151 file), so you get networkid=N on a 5151 genesis -- a chain that
+# exists nowhere and can never peer with anything. Observed live: five
+# followers launched as `--chainid 919` sat at block 0 / peers 0 while
+# eth_chainId reported 5151, and ethstats made it look fine because it reports
+# `net` from the NETWORKID, so the dashboard grouped them under 919 alongside
+# the healthy sealers.
+#
+# run.sh has asserted this for its own nodes since the --chainid work; join.sh
+# did not, which is why the same class of bug reappeared here.
+if [ -f "$GENESIS" ] && [ -n "$NETWORKID" ]; then
+  _g_chainid=$(python3 -c "import json,sys;print(json.load(open('$GENESIS'))['config']['chainId'])" 2>/dev/null)
+  if [ -n "$_g_chainid" ] && [ "$_g_chainid" != "$NETWORKID" ]; then
+    echo "join.sh: --chainid $NETWORKID does not match the chainId in $GENESIS ($_g_chainid)." >&2
+    echo "  This node would start but never peer. Either:" >&2
+    echo "    - pass the matching genesis:  --genesis <file with chainId $NETWORKID>" >&2
+    echo "    - or drop --chainid and let it default to the genesis's own id ($_g_chainid)" >&2
+    if [ "$GENESIS" = "${DEFAULT_GENESIS:-}" ]; then
+      echo "  NOTE: no --genesis was given, so this is network.env's DEFAULT_GENESIS" >&2
+      echo "  ($DEFAULT_GENESIS) -- almost certainly not the network you meant to join." >&2
+      echo "  For a LOCAL net, pass --genesis genesis/genesis-$NETWORKID.json (and the" >&2
+      echo "  local --bootnodes), or use ./run.sh --all which wires all of that up." >&2
+    fi
+    exit 1
+  fi
+fi
+
 # erigon can't discover XDPoS peers through the bootnode (its discv4 doesn't
 # traverse it), so when joining by --ip/--genesis without explicit --staticpeers
 # we borrow a discovering client (oldxdc/geth) to harvest the live peer enodes
