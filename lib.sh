@@ -529,6 +529,22 @@ download_bins() {
   if [ "$_BJ_ARCHIVE" = tar.gz ]; then
     rm -rf "$distdir"; mkdir -p "$distdir"
     tar xzf "$dl" -C "$distdir" || { echo "extract failed: $dl" >&2; return 1; }
+    # Sign what stays INSIDE the dist. The per-product codesign further down only
+    # covers binaries copied out to $BIN_DIR/<name>; both `continue` paths below
+    # -- the whole-directory product (produces "." , e.g. nethermind) and the
+    # nested launcher (produces "bin/besu") -- skip it, so an arm64 executable
+    # extracted from a tarball was never signed at all.
+    #
+    # On Apple Silicon that is fatal, not cosmetic: an unsigned arm64 Mach-O is
+    # SIGKILLed by the kernel on exec. nethermind died as a bare
+    # "Killed: 9" from join.sh with no diagnostic, which reads like an OOM or a
+    # crash rather than a signature problem. Measured: `codesign -dv` reported
+    # "code object is not signed at all"; after an ad-hoc re-sign the same binary
+    # runs and reports 1.36.0-unstable+151fe96b on macOS arm64.
+    resign_macho_tree "$distdir"
+    # Same class of problem, other runtime: a bundled JRE built for another OS/arch
+    # would otherwise shadow a perfectly good host JDK. See the function comment.
+    neutralise_foreign_jre "$distdir"
   fi
 
   local i name relpath src_path dest
@@ -689,6 +705,60 @@ ensure_bins() {
     fi
   done
   echo "$CLIENT binaries ready in $BIN_DIR"
+}
+
+# Ad-hoc re-sign every Mach-O executable/dylib under a directory (macOS only;
+# a no-op everywhere else, and never fatal -- a client that signs fine already
+# must not be blocked by a codesign hiccup).
+#
+# Needed because an arm64 Mach-O with no signature at all is SIGKILLed on exec by
+# the kernel on Apple Silicon. Archives published from Linux CI carry no macOS
+# signature, so anything run straight out of an extracted dist dies as a bare
+# "Killed: 9" with no message pointing at the cause.
+#
+# Scoped deliberately: only files that are executable or *.dylib, and only those
+# whose magic really is Mach-O. A .NET dist like nethermind's ships thousands of
+# managed .dll files that are NOT Mach-O -- signing them would be pointless work
+# and, on a 336MB tree, slow enough to look like a hang.
+resign_macho_tree() {
+  local root="$1" f
+  [ -d "$root" ] || return 0
+  [ "$(uname -s)" = Darwin ] || return 0
+  command -v codesign >/dev/null 2>&1 || return 0
+  while IFS= read -r f; do
+    case "$(file -b "$f" 2>/dev/null)" in
+      Mach-O*) codesign -f -s - "$f" >/dev/null 2>&1 || true ;;
+    esac
+  done < <(find "$root" -type f \( -perm -u+x -o -name '*.dylib' \) 2>/dev/null)
+}
+
+# Neutralise a bundled JRE that cannot run on THIS platform, so the launcher
+# falls back to host Java instead of dying.
+#
+# besu ships as one "platform-independent" archive (binaries.json platforms: ["*"])
+# whose bin/besu launcher prefers $APP_HOME/jre. The jars really are portable, but
+# the bundled runtime is not: it is extracted from the linux/amd64 Temurin image,
+# so on macOS jre/bin/java is an "ELF 64-bit LSB executable, x86-64" and the whole
+# archive is unusable. Measured here: the launcher fell through to host Java and
+# aborted with "Java version must be at least 21 (detected: 8)".
+#
+# Renaming the unusable runtime aside is the smallest honest fix at THIS layer: it
+# does not touch the manifest shape (per-platform besu archives vs a JRE-less one
+# is a human decision -- publish-bins.sh header OPEN QUESTION #2, ItWorksinMyLocal
+# #159) and it does not pretend the archive is self-contained. It just stops a
+# runtime that provably cannot exec here from shadowing one that can, and says so.
+neutralise_foreign_jre() {
+  local distdir="$1" jre="$1/jre"
+  [ -d "$jre" ] || return 0
+  [ -x "$jre/bin/java" ] || return 0
+  # Exec is the only honest test -- a Mach-O check would still pass for the wrong
+  # ARCH, and a fat/thin mismatch fails just as hard as an ELF does.
+  "$jre/bin/java" -version >/dev/null 2>&1 && return 0
+  local tag; tag="$(uname -s)-$(uname -m)"
+  mv "$jre" "$distdir/jre.unusable-on-$tag" 2>/dev/null || return 0
+  echo "  note: the archive's bundled jre/ cannot execute on $tag -- moved aside." >&2
+  echo "        This client now needs Java 21+ on the host (JAVA_HOME or PATH)." >&2
+  echo "        See ItWorksinMyLocal #159 / publish-bins.sh OPEN QUESTION #2." >&2
 }
 
 # Collapse a comma-separated list to its first-seen unique entries, order
