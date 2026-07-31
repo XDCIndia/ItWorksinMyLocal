@@ -58,7 +58,7 @@
       }
     },
     "erigon": {
-      "_comment": "linux-amd64 + darwin (universal) published. darwin-amd64/darwin-arm64 are the SAME lipo fat binary built 2026-07-24 from main (arm64 native + amd64 cross-compiled with CGO_ENABLED=1 CC/CXX=clang -arch x86_64, needed since erigon uses cgo for mdbx/blst/evmone) -- includes the node/cli p2p.allowed-ports flag-registration fix (PR XDCIndia/erigon-xdc#361, pending human merge). --chain xdc-net5151 genesis 0x96f121 verified on the arm64 slice + live-synced past block 20000. Other platforms fall back to a source build (lib.sh).",
+      "_comment": "linux-amd64 + darwin (universal) published. darwin-amd64/darwin-arm64 are the SAME lipo fat binary, REBUILT 2026-07-31 from main at commit 1ccfe435847bcedcec5d651f4514fb7ec3429c94, self-reporting 'erigon version 3.5.2-1ccfe435' (arm64 native + amd64 cross-compiled with CGO_ENABLED=1 CC/CXX=clang -arch x86_64, needed since erigon uses cgo for mdbx/blst/evmone). This is the merge of PR XDCIndia/erigon-xdc#369 'gate genesis baseFee on IsEIP1559, not IsLondon' -- the pre-#369 darwin artifact (2026-07-24, sha 61b79adc) synthesises a baseFee into the genesis header on any chain that defers EIP-1559 (londonBlock=0 while eip1559Block>0), giving a genesis hash the other clients reject, which presents as permanent '[p2p] No GoodPeers'. Gated before publish on a live 4-sealer oldxdc net (chainId 4114, londonBlock=0/eip1559Block=2250 -- the divergent shape): genesis 0xbff02fb6a1068192a2b63a5c3406e6c2ed487661fdf1949a1aa173c42945ee29 identical to the sealers with baseFeePerGas absent, peers=4, tracked tip in lockstep, block-hash parity with the sealers and reth at blocks 0/16/81/82. Only the arm64 slice was exercised at runtime (arm64 host); the amd64 slice is verified structurally via lipo -info. Other platforms fall back to a source build (lib.sh). See ItWorksinMyLocal #159.",
       "file": "erigon-{os}-{arch}",
       "archive": "none",
       "produces": {
@@ -71,12 +71,12 @@
       ],
       "sha256": {
         "linux-amd64": "55b25cf932bd416bc4c2e582f5ab7b4e4d800ae1ee5122e993c81e43b2c8b893",
-        "darwin-amd64": "61b79adcf2fe4545e958c2868613c28e16bdb35b30201d3d9e45275cff60d070",
-        "darwin-arm64": "61b79adcf2fe4545e958c2868613c28e16bdb35b30201d3d9e45275cff60d070"
+        "darwin-amd64": "091e5be358bac195966b34387f0279e9b6e89bdd4853db5d38b47f7cff105dec",
+        "darwin-arm64": "091e5be358bac195966b34387f0279e9b6e89bdd4853db5d38b47f7cff105dec"
       }
     },
     "reth": {
-      "_comment": "darwin-amd64/darwin-arm64 are now the SAME universal (lipo fat) binary built 2026-07-24 from main, which now includes the #12 chain-recognition fix (PR XDCIndia/reth#253, merged) \u2014 genesis-config-driven XDC detection, verified live-syncing net5151 (3 peers, block import, no Ethereum-bootnode fallback) on the arm64 slice. amd64 cross-compiled via `rustup target add x86_64-apple-darwin --toolchain stable` (default toolchain here is a pre-2024-edition nightly; must use stable). Other platforms unchanged.",
+      "_comment": "darwin-amd64/darwin-arm64 are the SAME universal (lipo fat) binary, REBUILT 2026-07-31 from main at commit 180f037fe0224b308649b25dcc57d04921ee1918, self-reporting 'Reth Version: 2.2.0 / Commit SHA: 180f037fe0224b308649b25dcc57d04921ee1918'. This is the merge of PR XDCIndia/reth#278 'read EIP-1559 activation from genesis in the shared executed-spec helper' (supersedes #277, with #276 behind it); it carries the earlier #12/#253 chain-recognition fix too. The pre-#278 darwin artifact (2026-07-24, sha f36af077) REJECTS blocks containing BlockSigners 0x89 sign() txs -- measured invalid at blocks 81/82 on chainId 20931. Gated before publish on a live 4-sealer oldxdc net (chainId 4114): recognised XDPoS V1+V2 natively, computed genesis 0xbff02fb6a1068192a2b63a5c3406e6c2ed487661fdf1949a1aa173c42945ee29 matching the sealers, executed 24 sign() txs to 0x...0089 (selector 0xe341eaa4, first at block 16) with ZERO Invalid payload statuses, and reached tip with block-hash parity against the sealers and erigon at blocks 0/16/81/82. Only the arm64 slice was exercised at runtime (arm64 host); the amd64 slice is verified structurally via lipo -info. amd64 cross-compiled via `rustup target add x86_64-apple-darwin --toolchain stable` (default toolchain here is a pre-2024-edition nightly; must use stable). Other platforms unchanged. See ItWorksinMyLocal #159.",
       "file": "reth-{os}-{arch}",
       "archive": "none",
       "produces": {
@@ -89,8 +89,8 @@
         "linux-arm64"
       ],
       "sha256": {
-        "darwin-amd64": "f36af0771e58fbef834dd8863c35356c60724c3ad58a43f6a2f0bf5a14d80c98",
-        "darwin-arm64": "f36af0771e58fbef834dd8863c35356c60724c3ad58a43f6a2f0bf5a14d80c98",
+        "darwin-amd64": "36e7e0763a0ea63a3998bc39a06042fe71c1289539e938f84e110d6772c55157",
+        "darwin-arm64": "36e7e0763a0ea63a3998bc39a06042fe71c1289539e938f84e110d6772c55157",
         "linux-amd64": "1584a43309942d55ae8ee6480ad8c5600e1892c4e2ec74aee82bb288b691f692",
         "linux-arm64": "425dc422c7f1eecfbd655fdecff8827f208adee73b8060ffdde9507513497630"
       }
