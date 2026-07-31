@@ -122,8 +122,8 @@
         "linux-amd64"
       ],
       "sha256": {
-        "darwin-amd64": "bd5e95912d4b01d3952047949f440a49ce56c584e7d0a632f2ca8fbdbb1a1459",
-        "darwin-arm64": "99573a88c4fc6dbaf33bfc3f37b0082fe39810209644f1ec8c30418b1925dc94",
+        "darwin-amd64": "73605504463a957d9f89991bdc3c8c9bcab66fa6c3f6e78e219cdb642db1aa42",
+        "darwin-arm64": "b72cb2a7e7fcbd1151121d586e84bfb209b4b977bb7854893d84f0abb09f1292",
         "linux-amd64": "050679e0e70078f0bcb96513eb460fb64e2df609ef1b7a686c49891c70f6e736"
       }
     },
