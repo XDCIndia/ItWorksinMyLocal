@@ -233,6 +233,29 @@ ALL_SKIP_WHY=""
 if [ "$ALL" = 1 ]; then
   for _c in $ALL_CLIENTS; do
     _bin="$(_client_binary "$_c")"
+    # Fetch a missing prebuilt instead of just reporting it absent.
+    #
+    # This loop only ever TESTED for the binary, so on a fresh clone -- where
+    # bin/ is empty by definition -- every follower was reported "binary not
+    # found" and skipped. `./setup.sh --new --all` then produced a network with
+    # exactly ONE follower (geth, and only because setup.sh fetches that one
+    # explicitly), while both the --all help text and the README promise "one
+    # sync-only follower per modern client". Measured on a clean clone: 6 of 7
+    # skipped. join.sh has always downloaded on demand via ensure_bins, so
+    # `./join.sh --client all` gave the documented result and `--all` did not --
+    # the same flag, two different outcomes, which is the confusing part.
+    #
+    # download_bins, NOT ensure_bins: ensure_bins falls back to a from-source
+    # clone+build when no prebuilt exists for this platform. For a client with
+    # no darwin artifact (geth4, xone today) that would silently turn `--all`
+    # into a multi-minute compile of a third-party repo nobody asked for. A
+    # download that fails just leaves the client skipped, with the reason it
+    # already prints. Source builds stay opt-in via BIN_SOURCE/--build.
+    if [ -n "$_bin" ] && [ ! -x "$_bin" ] && ! command -v "$_c" >/dev/null 2>&1; then
+      echo "run.sh --all: $_c binary missing -- trying the published prebuilt ..."
+      ( CLIENT="$_c"; . ./lib.sh; download_bins ) >/dev/null 2>&1 || true
+      _bin="$(_client_binary "$_c")"
+    fi
     if { [ -n "$_bin" ] && [ -x "$_bin" ]; } || command -v "$_c" >/dev/null 2>&1; then
       if _client_runnable "$_c"; then
         ALL_SELECTED="${ALL_SELECTED:+$ALL_SELECTED }$_c"
