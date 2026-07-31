@@ -113,8 +113,15 @@ print_table_row "NAME" "PORT" "BLOCK" "PEERS" "SYNCING" "CHAINID" "STATUS"
 LOCAL_BLOCKS=()
 LOCAL_CHAINID=""
 
+# Honour the same port overrides run.sh accepts. These were hardcoded to 8544/8549
+# while the Modern Followers section below already read $BASE_RPC_PORT, so the two
+# halves of this file disagreed: a newcomer who moved ports -- exactly the person
+# BOOTNODE_PORT/BASE_RPC_PORT exist for -- saw all four sealers reported DOWN while
+# the followers underneath them showed RUNNING.
+BASE_RPC_PORT="${BASE_RPC_PORT:-8544}"
+
 for i in 1 2 3 4; do
-  port=$((8544 + i))
+  port=$((BASE_RPC_PORT + i))
   name="local-oldxdc-$i"
   resp=$(rpc_call "$port" "eth_blockNumber")
   block=$(echo "$resp" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(int(d.get("result","0x0"),16))' 2>/dev/null || echo "?")
@@ -135,8 +142,8 @@ for i in 1 2 3 4; do
   [ "$block" != "?" ] && LOCAL_BLOCKS+=("$block")
 done
 
-# Node 5 (optional modern geth / mixed)
-port=8549
+# Node 5 (optional modern geth / mixed) -- BASE_RPC_PORT+5, same as run.sh assigns.
+port=$((BASE_RPC_PORT + 5))
 name="local-node-5"
 resp=$(rpc_call "$port" "eth_blockNumber")
 block=$(echo "$resp" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(int(d.get("result","0x0"),16))' 2>/dev/null || echo "?")
