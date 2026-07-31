@@ -99,6 +99,12 @@ case "$CHAINID" in
 esac
 
 source ./lib.sh
+# Same pattern join.sh uses. Only SKYNET_BASE_URL is consumed here; the file's
+# other keys (DEFAULT_HOST/BOOTNODE_PORT/GENESIS/BOOTNODES) describe a REMOTE
+# network to join and are deliberately unreferenced by run.sh, which always
+# builds its own local topology. Checked: run.sh names none of them.
+# shellcheck disable=SC1091  # local, operator-editable config; nothing to lint here
+[ -f ./network.env ] && . ./network.env
 require_oldxdc
 
 touch .pwd
@@ -567,6 +573,15 @@ if [ "$ALL" = 1 ]; then
     idx=$((idx + 1))
   done
   echo "Follower logs: ./nodes/5-*.log ... (join.sh output per client)"
+fi
+
+# Last line before we block on `wait`, so it survives the wall of block logs that
+# follows and is what the operator actually sees when setup.sh hands over. The
+# chain id is interpolated rather than hardcoded: every network started from this
+# repo gets a link to ITSELF, not to whichever net the dashboard defaults to.
+if _skynet=$(skynet_url "$CHAINID"); then
+  echo ""
+  echo "Skynet stats: $_skynet"
 fi
 
 wait

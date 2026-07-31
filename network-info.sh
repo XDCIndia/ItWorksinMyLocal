@@ -7,6 +7,11 @@
 
 cd "$(dirname "$0")" || exit 1
 source ./lib.sh
+# Only SKYNET_BASE_URL is used from here (exported below for the python block);
+# same optional-config pattern join.sh and run.sh use.
+# shellcheck disable=SC1091  # local, operator-editable config; nothing to lint here
+[ -f ./network.env ] && . ./network.env
+export SKYNET_BASE_URL
 GENESIS="${1:-genesis/genesis.json}"
 XDC="$XDC_BIN"
 [ -f "$GENESIS" ] || { echo "genesis not found: $GENESIS" >&2; exit 1; }
@@ -74,6 +79,11 @@ print(" NETWORK SUMMARY  (read live from %s)"%os.environ['GENESIS'])
 print(line)
 print(" Network        : %s (private, local only)"%roles.get('NETWORK','local'))
 print(" Chain ID       : %s"%cfg['chainId'])
+# Keyed on the genesis's OWN chainId, so this summary can never advertise a
+# dashboard for a different network than the one it just described.
+print(" Skynet stats   : %s?net=%s"%(
+      os.environ.get('SKYNET_BASE_URL','https://skynet.xdcindia.com/stats'),
+      cfg['chainId']))
 print(" Coinbase       : %s"%g.get('coinbase','-'))
 print(" Block time     : %ss   Epoch: %s   Gap: %s   Block reward: %s XDC"%(
       xd['period'],xd['epoch'],xd['gap'],xd['reward']))
