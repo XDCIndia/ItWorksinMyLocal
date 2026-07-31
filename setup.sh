@@ -58,7 +58,7 @@ while [ $# -gt 0 ]; do
     # gen-genesis.sh's "localdpos" default no matter what it actually was.
     --network) NETWORK_NAME=$2; shift 2;;
     --build) export BIN_SOURCE=build; shift;;
-    -h|--help) sed -n '2,16p' "$0" | sed 's/^# \{0,1\}//'; exit 0;;
+    -h|--help) sed -n '2,34p' "$0" | sed 's/^# \{0,1\}//'; exit 0;;
     *) echo "usage: ./setup.sh [--new [N]] [--all] [--chainid N] [--client oldxdc|geth] [--name NAME] [--network NAME] [--build]" >&2; exit 1;;
   esac
 done
