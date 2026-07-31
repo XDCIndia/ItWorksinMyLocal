@@ -373,6 +373,19 @@ esac
 if [ -z "$GENESIS" ] && [ -n "$DEFAULT_GENESIS" ] && [ -f "$DEFAULT_GENESIS" ]; then
   GENESIS="$DEFAULT_GENESIS"
   echo "No --genesis given; using default genesis $GENESIS (from network.env)"
+  # If a LOCAL network exists in this checkout, silently joining the configured
+  # PUBLIC one is almost certainly not what was wanted. This is how a newcomer who
+  # ran ./setup.sh and then `./join.sh --client all` ended up syncing devnet 5151
+  # instead of their own chain -- it succeeds, so nothing looks wrong. Warn loudly
+  # rather than change the default, which other callers rely on.
+  if [ -f ./genesis/genesis.json ] && [ "$DEFAULT_GENESIS" != "./genesis/genesis.json" ]; then
+    echo "" >&2
+    echo "  WARNING: this checkout also has a LOCAL genesis at ./genesis/genesis.json," >&2
+    echo "  but you are about to join the network in network.env instead." >&2
+    echo "  If you meant to join the net you just created with ./setup.sh, pass it:" >&2
+    echo "      --genesis ./genesis/genesis.json --ip <IP>:<BOOTNODE_PORT> --chainid <N>" >&2
+    echo "" >&2
+  fi
 fi
 
 # Prefer explicit DEFAULT_BOOTNODES (real masternode enodes) over deriving one from
@@ -500,8 +513,15 @@ if [ "$LOCAL_BOOTNODE" = 1 ]; then
   # BASE_RPC_PORT (e.g. when 8545 was already taken), leaving _local_peers empty
   # and modern clients unable to find a real peer. Derive the scan from the same
   # env instead.
-  _brp="${BASE_RPC_PORT:-8545}"
-  for _lp in "$_brp" $((_brp + 1)) $((_brp + 2)) $((_brp + 3)); do
+  # run.sh assigns sealer i the RPC port BASE_RPC_PORT+i, i=1..4 -- so probe +1..+4,
+  # NOT +0..+3. The old form was correct only by accident when BASE_RPC_PORT was
+  # left unset: the inline fallback 8545 happens to equal sealer 1's port (8544+1).
+  # Export BASE_RPC_PORT -- exactly as run.sh --help's own example suggests -- and
+  # the probe shifted down one, wasting a scan on BASE_RPC_PORT itself (nothing
+  # listens there) and silently MISSING sealer 4. It then reported "Using 3 local
+  # sealer peer(s)" and looked fine.
+  _brp="${BASE_RPC_PORT:-8544}"
+  for _lp in $((_brp + 1)) $((_brp + 2)) $((_brp + 3)) $((_brp + 4)); do
     _lenode=$(curl -s -m3 "http://127.0.0.1:${_lp}" -X POST -H 'Content-Type: application/json' \
       --data '{"jsonrpc":"2.0","method":"admin_nodeInfo","params":[],"id":1}' 2>/dev/null \
       | python3 -c "
