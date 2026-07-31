@@ -127,14 +127,34 @@ BOOTNODE_BIN="$BIN_DIR/bootnode"     # only exists for the oldxdc client
 PUPPETH_BIN="$BIN_DIR/puppeth"       # only exists for the oldxdc client
 
 # Best-effort LAN IP on macOS or Linux (falls back to 127.0.0.1).
+#
+# Ask the ROUTING TABLE which interface actually carries traffic, rather than
+# guessing en0-then-en1. The guess is not merely imprecise, it silently breaks
+# the whole network: every node is started with `--nat extip:$(detect_ip)`, so
+# an address that is real-but-not-current makes all of them advertise an
+# unreachable endpoint. Measured on a Mac that had just moved between a hotspot
+# and wifi: en0 momentarily had no address, so the old `en0 || en1` fallback
+# returned en1's 192.168.1.107 while the live address was 172.20.10.3. All four
+# sealers then came up with net_peerCount=0, could not see each other, and the
+# chain deadlocked at block 5 in XDPoS V1 with "Signed recently, must wait for
+# others" (only 2 of 4 masternodes ever taking a slot). It reads as a consensus
+# bug and is really a one-line IP bug, so resolve it deterministically.
 detect_ip() {
-  local ip=""
-  if command -v ipconfig >/dev/null 2>&1; then
+  local ip="" _if=""
+  # macOS: `route get default` names the interface the default route uses;
+  # ask ipconfig for THAT interface instead of assuming en0/en1.
+  if command -v route >/dev/null 2>&1 && command -v ipconfig >/dev/null 2>&1; then
+    _if=$(route -n get default 2>/dev/null | awk '/interface:/{print $2; exit}')
+    [ -n "$_if" ] && ip=$(ipconfig getifaddr "$_if" 2>/dev/null)
+  fi
+  # Linux: the src address the kernel would pick to reach the outside world.
+  [ -z "$ip" ] && command -v ip >/dev/null 2>&1 && \
+    ip=$(ip -4 route get 1 2>/dev/null | awk '{for(i=1;i<=NF;i++) if($i=="src"){print $(i+1); exit}}')
+  # Fallbacks, in descending order of trustworthiness.
+  if [ -z "$ip" ] && command -v ipconfig >/dev/null 2>&1; then
     ip=$(ipconfig getifaddr en0 2>/dev/null || ipconfig getifaddr en1 2>/dev/null)
   fi
   [ -z "$ip" ] && ip=$(hostname -I 2>/dev/null | awk '{print $1}')
-  [ -z "$ip" ] && command -v ip >/dev/null 2>&1 && \
-    ip=$(ip -4 route get 1 2>/dev/null | awk '{for(i=1;i<=NF;i++) if($i=="src"){print $(i+1); exit}}')
   [ -z "$ip" ] && ip=127.0.0.1
   echo "$ip"
 }
@@ -669,6 +689,44 @@ ensure_bins() {
     fi
   done
   echo "$CLIENT binaries ready in $BIN_DIR"
+}
+
+# Guarantee a bootnode is LISTENING on this host, using the repo's static
+# ./bootnode.key, and print its enode.
+#
+# The key has always been static, so the enode is deterministic across restarts
+# -- but only run.sh ever actually STARTED a bootnode. join.sh merely *derived*
+# the enode from the same key (see its key-based derivation block) and handed it
+# to every client, so a join on a host where run.sh was not running pointed all
+# of them at an address nothing was bound to. Discovery then silently never
+# completed. Starting it here makes "connect to the bootnode first, then
+# discover" true for setup.sh, run.sh and join.sh alike.
+#
+#   $1 ip   $2 port (default 30301)
+# Prints the enode on stdout; logs to stderr. Non-fatal: prints nothing and
+# returns 1 if no bootnode binary or key is available, so a join degrades to
+# whatever static/trusted peers it already has rather than aborting.
+ensure_bootnode() {
+  local ip="${1:-$(detect_ip)}" port="${2:-30301}" bn pub
+  [ -f "$_LIB_DIR/bootnode.key" ] || { echo "  ensure_bootnode: no ./bootnode.key" >&2; return 1; }
+  bn="$BOOTNODE_BIN"
+  [ -x "$bn" ] || bn=$(ls "$_LIB_DIR"/bin/*/*/bootnode 2>/dev/null | head -1)
+  [ -x "$bn" ] || { echo "  ensure_bootnode: no bootnode binary (build the oldxdc client once)" >&2; return 1; }
+  pub=$("$bn" -nodekey "$_LIB_DIR/bootnode.key" -writeaddress 2>/dev/null)
+  [ -n "$pub" ] || { echo "  ensure_bootnode: could not read the pubkey from ./bootnode.key" >&2; return 1; }
+
+  # Already up? The bootnode is UDP-only (discv4), so check the UDP bind rather
+  # than a TCP listener -- lsof -iTCP would always miss it and we would spawn a
+  # second one on every join, each fighting for the same port.
+  if lsof -nP -iUDP:"$port" >/dev/null 2>&1; then
+    echo "  bootnode already listening on :$port (static key)" >&2
+  else
+    echo "  starting bootnode on ${ip}:${port} (static ./bootnode.key)" >&2
+    "$bn" -nodekey "$_LIB_DIR/bootnode.key" -addr "${ip}:${port}" >/dev/null 2>&1 &
+    # discv4 binds immediately; a short settle keeps the first dial from racing it.
+    sleep 1
+  fi
+  echo "enode://${pub}@${ip}:${port}"
 }
 
 # Harvest live peer enodes from a network by running a short-lived DISCOVERING
