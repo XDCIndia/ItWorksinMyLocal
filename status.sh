@@ -1,7 +1,11 @@
 #!/bin/bash
 # status.sh - Check health of local network nodes and join clients.
-# Works with ItWorksinMyLocal layout: run.sh (4 local oldxdc nodes + optional geth node 5)
-# and join.sh (sync clients in nodes/<client>-sync).
+# Works with ItWorksinMyLocal layout: run.sh (4 local oldxdc nodes + optional
+# geth node 5, or a --all follower per modern client) and join.sh (sync
+# clients in nodes/<client>-sync).
+#
+# Reports on the topology run.sh/setup.sh actually launched, whatever ports
+# or client set was used -- see the "Topology manifest" section below.
 #
 # Usage: ./status.sh
 
@@ -10,13 +14,8 @@ set -uo pipefail
 REPO_DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "$REPO_DIR"
 
-# Colors
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-BLUE='\033[0;34m'
-CYAN='\033[0;36m'
-NC='\033[0m'
+# shellcheck disable=SC1091
+source ./lib.sh
 
 rpc_call() {
   local port=$1
@@ -27,72 +26,37 @@ rpc_call() {
     --data "{\"jsonrpc\":\"2.0\",\"method\":\"${method}\",\"params\":${params},\"id\":1}" 2>/dev/null
 }
 
-parse_int() {
-  local val=$1
-  if [[ "$val" == "0x"* ]]; then
-    printf '%d' "$val" 2>/dev/null || echo "0"
-  else
-    echo "$val"
-  fi
-}
-
-check_rpc() {
-  local port=$1
-  local block="?" peers="?" syncing="?" chainId="?" status="DOWN"
-
+# Query one RPC endpoint's live stats. Sets RS_BLOCK/RS_PEERS/RS_SYNCING/
+# RS_CHAINID/RS_UP ("?" / 0 when unavailable). ONE definition -- this exact
+# four-call probe used to be pasted separately into the sealers loop, the
+# node-5 block, the followers loop and the join-clients loop; four copies
+# that only coincidentally agreed.
+query_node() {
+  local port="$1"
+  RS_BLOCK="?" RS_PEERS="?" RS_SYNCING="?" RS_CHAINID="?" RS_UP=0
   local resp
+
   resp=$(rpc_call "$port" "eth_blockNumber")
   if [ -n "$resp" ] && echo "$resp" | grep -q '"result"'; then
-    block=$(echo "$resp" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(int(d.get("result","0x0"),16))' 2>/dev/null || echo "?")
+    RS_BLOCK=$(echo "$resp" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(int(d.get("result","0x0"),16))' 2>/dev/null || echo "?")
+    RS_UP=1
   fi
 
   resp=$(rpc_call "$port" "net_peerCount")
   if [ -n "$resp" ] && echo "$resp" | grep -q '"result"'; then
-    peers=$(echo "$resp" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(int(d.get("result","0x0"),16))' 2>/dev/null || echo "?")
+    RS_PEERS=$(echo "$resp" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(int(d.get("result","0x0"),16))' 2>/dev/null || echo "?")
   fi
 
   resp=$(rpc_call "$port" "eth_syncing")
   if [ -n "$resp" ] && echo "$resp" | grep -q '"result"'; then
-    syncing=$(echo "$resp" | python3 -c 'import json,sys; d=json.load(sys.stdin); r=d.get("result",False); print("true" if r else "false")' 2>/dev/null || echo "?")
+    RS_SYNCING=$(echo "$resp" | python3 -c 'import json,sys; d=json.load(sys.stdin); r=d.get("result",False); print("true" if r else "false")' 2>/dev/null || echo "?")
   fi
 
   resp=$(rpc_call "$port" "eth_chainId")
   if [ -n "$resp" ] && echo "$resp" | grep -q '"result"'; then
-    chainId=$(echo "$resp" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(int(d.get("result","0x0"),16))' 2>/dev/null || echo "?")
+    RS_CHAINID=$(echo "$resp" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(int(d.get("result","0x0"),16))' 2>/dev/null || echo "?")
+    RS_UP=1
   fi
-
-  if [ "$chainId" != "?" ] || [ "$block" != "?" ]; then
-    status="UP"
-  fi
-
-  printf "  RPC (port %s): block=%s peers=%s syncing=%s chainId=%s status=%s\n" \
-    "$port" "$block" "$peers" "$syncing" "$chainId" "$status"
-}
-
-check_node() {
-  local name=$1
-  local port=$2
-  local datadir=$3
-
-  echo -e "${CYAN}=== $name ===${NC}"
-
-  # Process check
-  local pattern="$datadir"
-  local pids=$(pgrep -f -- "$pattern" 2>/dev/null | tr '\n' ' ')
-  if [ -n "$pids" ]; then
-    echo -e "  Process: ${GREEN}running${NC} (pids: $pids)"
-  else
-    echo -e "  Process: ${RED}not running${NC}"
-  fi
-
-  # Datadir check
-  if [ -d "$datadir" ]; then
-    echo "  Datadir: $datadir exists"
-  else
-    echo -e "  Datadir: ${YELLOW}$datadir not found${NC}"
-  fi
-
-  check_rpc "$port"
 }
 
 print_table_row() {
@@ -106,78 +70,113 @@ print_summary() {
   print_table_row "$name" "$port" "$block_str" "$peers" "$syncing" "$chainId" "$status"
 }
 
+# --- Topology manifest (ItWorksinMyLocal#181) -------------------------------
+# run.sh writes nodes/.topology after resolving the ports/client-set it
+# actually used (see write_topology_manifest in lib.sh). Sourcing it here is
+# what makes a bare ./status.sh -- with NO environment variables -- report
+# the right thing after a custom-port setup.sh/run.sh invocation: previously
+# nobody told the operator they had to re-pass the same BASE_RPC_PORT/
+# ALL_RPC_BASE/ALL_CLIENTS overrides to status.sh too, so it silently probed
+# today's hardcoded defaults and reported a fully healthy custom-port network
+# as entirely DOWN (network tip 0).
+#
+# Precedence: explicit environment variable (an operator inspecting a net
+# they did NOT start) > the manifest (the net THIS status.sh call is next to)
+# > today's hardcoded defaults (fresh checkout, no manifest yet -- #4 below).
+TOPOLOGY_FILE="${TOPOLOGY_FILE:-./nodes/.topology}"
+
+# Snapshot which manifest keys the operator's own environment already set,
+# BEFORE sourcing the manifest -- `.` below is a plain assignment and would
+# otherwise just clobber an explicit override with the file's value.
+for _tk in $TOPOLOGY_MANIFEST_KEYS; do
+  printf -v "_ENV_SET_${_tk}" '%s' "${!_tk:+x}"
+  printf -v "_ENV_VAL_${_tk}" '%s' "${!_tk:-}"
+done
+
+if [ -f "$TOPOLOGY_FILE" ]; then
+  # shellcheck disable=SC1090  # per-run local state written by run.sh; nothing to lint
+  . "$TOPOLOGY_FILE"
+  echo "(topology: $TOPOLOGY_FILE)"
+fi
+
+# Restore any key the operator's environment set explicitly -- it wins over
+# whatever the manifest just sourced.
+for _tk in $TOPOLOGY_MANIFEST_KEYS; do
+  _tk_set="_ENV_SET_${_tk}"
+  if [ -n "${!_tk_set}" ]; then
+    _tk_val="_ENV_VAL_${_tk}"
+    printf -v "$_tk" '%s' "${!_tk_val}"
+  fi
+done
+
+# Fall back to run.sh's own defaults (lib.sh's DEFAULT_* constants) for
+# anything still unset -- a fresh checkout with no manifest and no overrides.
+BASE_P2P_PORT="${BASE_P2P_PORT:-$DEFAULT_BASE_P2P_PORT}"
+BASE_RPC_PORT="${BASE_RPC_PORT:-$DEFAULT_BASE_RPC_PORT}"
+BASE_WS_PORT="${BASE_WS_PORT:-$DEFAULT_BASE_WS_PORT}"
+BOOTNODE_PORT="${BOOTNODE_PORT:-$DEFAULT_BOOTNODE_PORT}"
+ALL_RPC_BASE="${ALL_RPC_BASE:-$((BASE_RPC_PORT + 200))}"
+ALL_PORT_STRIDE="${ALL_PORT_STRIDE:-$DEFAULT_ALL_PORT_STRIDE}"
+ALL_P2P_STRIDE="${ALL_P2P_STRIDE:-$DEFAULT_ALL_P2P_STRIDE}"
+NUM_NODES="${NUM_NODES:-$DEFAULT_NUM_NODES}"
+MIXED="${MIXED:-0}"
+ALL="${ALL:-0}"
+CHAINID="${CHAINID:-}"
+ALL_SELECTED="${ALL_SELECTED:-}"
+MACHINE_LABEL="${MACHINE_LABEL:-}"
+
+echo "Reporting: BASE_RPC_PORT=$BASE_RPC_PORT ALL_RPC_BASE=$ALL_RPC_BASE ALL_PORT_STRIDE=$ALL_PORT_STRIDE NUM_NODES=$NUM_NODES${MACHINE_LABEL:+ machine=$MACHINE_LABEL}${CHAINID:+ chainId=$CHAINID}"
+
 # --- Local nodes ---
+echo ""
 echo "=== Local Network Nodes (run.sh / setup.sh) ==="
 print_table_row "NAME" "PORT" "BLOCK" "PEERS" "SYNCING" "CHAINID" "STATUS"
 
 LOCAL_BLOCKS=()
 LOCAL_CHAINID=""
 
-# Honour the same port overrides run.sh accepts. These were hardcoded to 8544/8549
-# while the Modern Followers section below already read $BASE_RPC_PORT, so the two
-# halves of this file disagreed: a newcomer who moved ports -- exactly the person
-# BOOTNODE_PORT/BASE_RPC_PORT exist for -- saw all four sealers reported DOWN while
-# the followers underneath them showed RUNNING.
-BASE_RPC_PORT="${BASE_RPC_PORT:-8544}"
-
-for i in 1 2 3 4; do
+i=1
+while [ "$i" -le "$NUM_NODES" ]; do
   port=$((BASE_RPC_PORT + i))
   name="local-oldxdc-$i"
-  resp=$(rpc_call "$port" "eth_blockNumber")
-  block=$(echo "$resp" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(int(d.get("result","0x0"),16))' 2>/dev/null || echo "?")
-  resp=$(rpc_call "$port" "net_peerCount")
-  peers=$(echo "$resp" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(int(d.get("result","0x0"),16))' 2>/dev/null || echo "?")
-  resp=$(rpc_call "$port" "eth_syncing")
-  syncing=$(echo "$resp" | python3 -c 'import json,sys; d=json.load(sys.stdin); r=d.get("result",False); print("true" if r else "false")' 2>/dev/null || echo "?")
-  resp=$(rpc_call "$port" "eth_chainId")
-  chainId=$(echo "$resp" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(int(d.get("result","0x0"),16))' 2>/dev/null || echo "?")
-
-  [ -n "$LOCAL_CHAINID" ] || LOCAL_CHAINID="$chainId"
-
+  query_node "$port"
+  [ -n "$LOCAL_CHAINID" ] || LOCAL_CHAINID="$RS_CHAINID"
   status="DOWN"
-  if [ "$chainId" != "?" ] || [ "$block" != "?" ]; then
-    status="RUNNING"
-  fi
-  print_summary "$name" "$port" "$block" "$peers" "$syncing" "$chainId" "$status"
-  [ "$block" != "?" ] && LOCAL_BLOCKS+=("$block")
+  [ "$RS_UP" = 1 ] && status="RUNNING"
+  print_summary "$name" "$port" "$RS_BLOCK" "$RS_PEERS" "$RS_SYNCING" "$RS_CHAINID" "$status"
+  [ "$RS_BLOCK" != "?" ] && LOCAL_BLOCKS+=("$RS_BLOCK")
+  i=$((i + 1))
 done
 
-# Node 5 (optional modern geth / mixed) -- BASE_RPC_PORT+5, same as run.sh assigns.
-port=$((BASE_RPC_PORT + 5))
-name="local-node-5"
-resp=$(rpc_call "$port" "eth_blockNumber")
-block=$(echo "$resp" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(int(d.get("result","0x0"),16))' 2>/dev/null || echo "?")
-if [ "$block" != "?" ]; then
-  resp=$(rpc_call "$port" "net_peerCount")
-  peers=$(echo "$resp" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(int(d.get("result","0x0"),16))' 2>/dev/null || echo "?")
-  resp=$(rpc_call "$port" "eth_syncing")
-  syncing=$(echo "$resp" | python3 -c 'import json,sys; d=json.load(sys.stdin); r=d.get("result",False); print("true" if r else "false")' 2>/dev/null || echo "?")
-  resp=$(rpc_call "$port" "eth_chainId")
-  chainId=$(echo "$resp" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(int(d.get("result","0x0"),16))' 2>/dev/null || echo "?")
-  status="RUNNING"
-  print_summary "$name" "$port" "$block" "$peers" "$syncing" "$chainId" "$status"
-  [ "$block" != "?" ] && LOCAL_BLOCKS+=("$block")
+# Node 5 (optional --mixed modern geth, or the first --all follower's
+# neighbour slot) -- BASE_RPC_PORT+(NUM_NODES+1), same as run.sh assigns.
+# Probed unconditionally: MIXED/ALL only record what was REQUESTED, and a
+# live probe of what's actually bound is the more trustworthy signal.
+port=$((BASE_RPC_PORT + NUM_NODES + 1))
+name="local-node-$((NUM_NODES + 1))"
+query_node "$port"
+if [ "$RS_UP" = 1 ]; then
+  print_summary "$name" "$port" "$RS_BLOCK" "$RS_PEERS" "$RS_SYNCING" "$RS_CHAINID" "RUNNING"
+  [ "$RS_BLOCK" != "?" ] && LOCAL_BLOCKS+=("$RS_BLOCK")
 else
   print_summary "$name" "$port" "?" "?" "?" "?" "DOWN"
 fi
 
-# --- run.sh --all followers ---
-# These were MISSING, which made status.sh report a healthy `--all` network as
-# half dead: it knew only the node-1..5 ports and join.sh's separate scheme, so
-# every follower `run.sh --all` starts appeared nowhere -- or as a DOWN
-# join-client on an unrelated port. A newcomer told to run ./status.sh to see
-# whether things are working got the opposite answer.
+# --- run.sh --all followers -------------------------------------------------
+# Port math (all_follower_rpc) lives in lib.sh -- the SAME function run.sh's
+# own pre-flight check and launch loop use, so this can never drift from it
+# the way two independently-computed copies did before.
 #
-# Port math must stay in step with run.sh's all_follower_rpc(): followers are
-# numbered from idx 5, one decade each, based at ALL_RPC_BASE.
-ALL_RPC_BASE="${ALL_RPC_BASE:-$((${BASE_RPC_PORT:-8544} + 200))}"
-ALL_PORT_STRIDE="${ALL_PORT_STRIDE:-10}"
-STATUS_ALL_CLIENTS="${ALL_CLIENTS:-geth geth4 erigon xone besu nethermind reth}"
+# Client list: an explicit ALL_CLIENTS env wins (operator says "check these");
+# else the manifest's ALL_SELECTED (what run.sh --all actually started this
+# run -- may be fewer than the requested set if a binary was missing); else
+# lib.sh's DEFAULT_ALL_CLIENTS (fresh checkout, no manifest).
+STATUS_ALL_CLIENTS="${ALL_CLIENTS:-${ALL_SELECTED:-$DEFAULT_ALL_CLIENTS}}"
 
 _any_all=0
 _idx=5
 for _c in $STATUS_ALL_CLIENTS; do
-  _p=$(( ALL_RPC_BASE + (_idx - 5) * ALL_PORT_STRIDE ))
+  _p=$(all_follower_rpc "$_idx")
   _r=$(rpc_call "$_p" "eth_blockNumber")
   echo "$_r" | grep -q result && _any_all=1
   _idx=$((_idx + 1))
@@ -189,75 +188,54 @@ if [ "$_any_all" = 1 ]; then
   print_table_row "NAME" "PORT" "BLOCK" "PEERS" "SYNCING" "CHAINID" "STATUS"
   _idx=5
   for _c in $STATUS_ALL_CLIENTS; do
-    port=$(( ALL_RPC_BASE + (_idx - 5) * ALL_PORT_STRIDE ))
+    port=$(all_follower_rpc "$_idx")
     name="all-$_c"
-    resp=$(rpc_call "$port" "eth_blockNumber")
-    block=$(echo "$resp" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(int(d.get("result","0x0"),16))' 2>/dev/null || echo "?")
-    if [ "$block" != "?" ]; then
-      resp=$(rpc_call "$port" "net_peerCount")
-      peers=$(echo "$resp" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(int(d.get("result","0x0"),16))' 2>/dev/null || echo "?")
-      resp=$(rpc_call "$port" "eth_syncing")
-      syncing=$(echo "$resp" | python3 -c 'import json,sys; d=json.load(sys.stdin); r=d.get("result",False); print("true" if r else "false")' 2>/dev/null || echo "?")
-      resp=$(rpc_call "$port" "eth_chainId")
-      chainId=$(echo "$resp" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(int(d.get("result","0x0"),16))' 2>/dev/null || echo "?")
-      print_summary "$name" "$port" "$block" "$peers" "$syncing" "$chainId" "RUNNING"
-      LOCAL_BLOCKS+=("$block")
+    query_node "$port"
+    if [ "$RS_UP" = 1 ]; then
+      print_summary "$name" "$port" "$RS_BLOCK" "$RS_PEERS" "$RS_SYNCING" "$RS_CHAINID" "RUNNING"
+      LOCAL_BLOCKS+=("$RS_BLOCK")
     else
       # Not started, or started and its RPC never bound. The latter is a real
-      # failure shape (process syncs internally while invisible), so show the row
-      # rather than hiding it.
+      # failure shape (process syncs internally while invisible), so show the
+      # row rather than hiding it.
       print_summary "$name" "$port" "?" "?" "?" "?" "DOWN"
     fi
     _idx=$((_idx + 1))
   done
 fi
 
-# --- Join clients ---
+# --- Join clients ------------------------------------------------------------
+# Client set + per-client RPC port come from lib.sh's JOIN_ALL_CLIENTS /
+# join_client_rpc_port -- the SAME source `join.sh --client all` fans out
+# from, so this table can never again miss a client join.sh actually starts
+# (it used to hardcode a 7-entry list with no geth4, so an 8-client
+# `join.sh --client all` run was reported as only 7).
 echo ""
 echo "=== Join Clients (join.sh) ==="
 print_table_row "NAME" "PORT" "BLOCK" "PEERS" "SYNCING" "CHAINID" "STATUS"
 
 JOIN_BLOCKS=()
+JOIN_CLIENTS_LIST="${JOIN_CLIENTS:-$JOIN_ALL_CLIENTS}"
 
-clients=(
-  "oldxdc:9645"
-  "geth:9745"
-  "erigon:9845"
-  "besu:9945"
-  "nethermind:10045"
-  "reth:10145"
-  "xone:10245"
-)
-
-for pair in "${clients[@]}"; do
-  client="${pair%%:*}"
-  port="${pair##*:}"
+for client in $JOIN_CLIENTS_LIST; do
+  port=$(join_client_rpc_port "$client")
   name="join-$client"
-  datadir="nodes/${client}-sync"
 
-  resp=$(rpc_call "$port" "eth_blockNumber")
-  block=$(echo "$resp" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(int(d.get("result","0x0"),16))' 2>/dev/null || echo "?")
-  resp=$(rpc_call "$port" "net_peerCount")
-  peers=$(echo "$resp" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(int(d.get("result","0x0"),16))' 2>/dev/null || echo "?")
-  resp=$(rpc_call "$port" "eth_syncing")
-  syncing=$(echo "$resp" | python3 -c 'import json,sys; d=json.load(sys.stdin); r=d.get("result",False); print("true" if r else "false")' 2>/dev/null || echo "?")
-  resp=$(rpc_call "$port" "eth_chainId")
-  chainId=$(echo "$resp" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(int(d.get("result","0x0"),16))' 2>/dev/null || echo "?")
-
+  query_node "$port"
   status="DOWN"
-  if [ "$chainId" != "?" ] || [ "$block" != "?" ]; then
-    if [ "$chainId" != "$LOCAL_CHAINID" ] && [ "$LOCAL_CHAINID" != "?" ] && [ "$chainId" != "?" ]; then
+  if [ "$RS_UP" = 1 ]; then
+    if [ "$RS_CHAINID" != "$LOCAL_CHAINID" ] && [ "$LOCAL_CHAINID" != "?" ] && [ -n "$LOCAL_CHAINID" ] && [ "$RS_CHAINID" != "?" ]; then
       status="WRONG_NET"
-    elif [ "$block" != "?" ] && [ "$block" -gt 0 ]; then
+    elif [ "$RS_BLOCK" != "?" ] && [ "$RS_BLOCK" -gt 0 ]; then
       status="RUNNING"
-    elif [ "$syncing" = "true" ]; then
+    elif [ "$RS_SYNCING" = "true" ]; then
       status="SYNCING"
     else
       status="STUCK"
     fi
   fi
-  print_summary "$name" "$port" "$block" "$peers" "$syncing" "$chainId" "$status"
-  [ "$block" != "?" ] && [ "$status" != "WRONG_NET" ] && JOIN_BLOCKS+=("$block")
+  print_summary "$name" "$port" "$RS_BLOCK" "$RS_PEERS" "$RS_SYNCING" "$RS_CHAINID" "$status"
+  [ "$RS_BLOCK" != "?" ] && [ "$status" != "WRONG_NET" ] && JOIN_BLOCKS+=("$RS_BLOCK")
 done
 
 # --- Summary ---
