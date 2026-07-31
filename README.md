@@ -297,17 +297,28 @@ Review what you built (validators, roles, balances):
 ### Run every client against it
 
 The network above is sealed by 4 `oldxdc` nodes. To attach the other clients as
-followers — **all seven in one command**:
+followers — all seven in one command. **Point them at your local net explicitly:**
 
 ```bash
-./join.sh --client all
+./join.sh --client all \
+  --genesis ./genesis/genesis.json \
+  --ip <YOUR_IP>:<BOOTNODE_PORT> \
+  --chainid <YOUR_CHAINID>
 ```
 
 Or one at a time:
 
 ```bash
-./join.sh --client geth          # oldxdc | geth | erigon | reth | besu | nethermind | xone
+./join.sh --client geth --genesis ./genesis/genesis.json --ip <YOUR_IP>:<BOOTNODE_PORT> --chainid <YOUR_CHAINID>
+#          oldxdc | geth | geth4 | erigon | reth | besu | nethermind | xone
 ```
+
+> **Do not omit those flags here.** With no `--genesis`/`--ip`, `join.sh` falls back
+> to `network.env`, which points at the **public devnet 5151** — so a bare
+> `./join.sh --client all` will happily sync the public devnet instead of the
+> network you just created, and it *succeeds*, so nothing looks wrong. join.sh now
+> warns when it spots a local `genesis/genesis.json` and you have not asked for it,
+> but the flags are the fix. `<BOOTNODE_PORT>` is `30301` unless you overrode it.
 
 Each client gets its own datadir (`nodes/<client>-<nodetype>`) and port set, all
 dialing the same genesis and bootnodes. `Ctrl-C` stops them together. A client
