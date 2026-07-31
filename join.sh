@@ -1047,7 +1047,23 @@ elif [ "$CLIENT" = besu ]; then
   [ -n "$BOOTNODES" ] || { echo "besu join needs peers: set DEFAULT_BOOTNODES in network.env or pass --bootnodes" >&2; exit 1; }
   mkdir -p "$DATADIR"
   python3 -c "import json,sys;print(json.dumps([e for e in sys.argv[1].split(',') if e]))" "$BOOTNODES" > "$DATADIR/static-nodes.json"
-  BESU_ES=""; [ -n "$full" ] && BESU_ES="--ethstats=$full"
+  # besu's --ethstats is <[ws://|wss://]nodename:secret@host:[port]> and the
+  # scheme is OPTIONAL -- omit it and besu dials plaintext ws://. The collector
+  # is TLS-only on :443, so it rejected every besu report with
+  #   ERROR EthStatsService | Failed to reach the ethstats server due to:
+  #   WebSocket upgrade failure: 400
+  # and besu stayed invisible on the dashboard while syncing perfectly at tip --
+  # a silent REPORTING failure, not a sync failure, which is why it looked like
+  # "besu is not syncing". Every other client either takes the scheme explicitly
+  # (reth passes @wss://<host>) or infers it (xone), so besu was the only one
+  # missing from the network's page. Only prepend when no scheme was supplied.
+  BESU_ES=""
+  if [ -n "$full" ]; then
+    case "$full" in
+      ws://*|wss://*) BESU_ES="--ethstats=$full" ;;
+      *)              BESU_ES="--ethstats=wss://$full" ;;
+    esac
+  fi
   MP_ARG=""; [ -n "$MAXPEERS" ] && MP_ARG="--max-peers=$MAXPEERS"
   # besu expects an upper-case sync mode (SNAP|FAST|FULL); map from $SYNCMODE.
   BESU_SYNC=$(printf '%s' "$SYNCMODE" | tr '[:lower:]' '[:upper:]')
