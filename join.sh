@@ -954,9 +954,18 @@ elif [ "$CLIENT" = besu ]; then
   MP_ARG=""; [ -n "$MAXPEERS" ] && MP_ARG="--max-peers=$MAXPEERS"
   # besu expects an upper-case sync mode (SNAP|FAST|FULL); map from $SYNCMODE.
   BESU_SYNC=$(printf '%s' "$SYNCMODE" | tr '[:lower:]' '[:upper:]')
+  # besu will not begin syncing until it has --sync-min-peers peers, and the
+  # default is 5. A private XDPoS net here runs FOUR sealers, so besu can never
+  # reach that threshold and waits forever, logging
+  #   "Unable to find sync target. Waiting for 5 peers minimum."
+  # while sitting at block 0 with a genesis hash that matches the sealers
+  # exactly. It looks like a consensus or peering fault and is neither -- it is
+  # a threshold that cannot be met on a small network. Default to 1 and let the
+  # operator raise it (BESU_SYNC_MIN_PEERS) on a net large enough to warrant it.
   "$CLIENT_BIN" \
     --genesis-file="$GENESIS" --data-path="$DATADIR" --network-id="$NETWORKID" \
     --sync-mode="$BESU_SYNC" --data-storage-format=BONSAI \
+    --sync-min-peers="${BESU_SYNC_MIN_PEERS:-1}" \
     --p2p-port="$PORT" --p2p-host="$IP" --nat-method=NONE \
     --bootnodes="$BOOTNODES" --static-nodes-file="$DATADIR/static-nodes.json" \
     --rpc-http-enabled=true --rpc-http-host=127.0.0.1 --rpc-http-port="$RPCPORT" \
