@@ -146,7 +146,50 @@ if xdpos is None:
 
 chain_id = cfg["chainId"]
 v2 = xdpos.get("v2", {})
-switch_block = v2.get("switchBlock", 0)
+
+# The V1->V2 switch is a FORK ACTIVATION POINT, so it must never be guessed.
+# Canonical XDPoS semantics (XDPoSChain params/config_forks.go isForked()) are
+# that a fork block absent from genesis means "never active", NOT "block 0" --
+# and Parity-style chainspec has no way to say "never" here, because
+# nethermind reads switchBlock/switchEpoch as plain non-nullable ints where 0
+# legitimately means "V2 from genesis". Silently defaulting an absent
+# config.XDPoS.v2 to 0 therefore asserts the exact opposite of what the
+# genesis said. On the mainnet/apothem genesis files in genesis/ (which have
+# config.XDPoS but no v2 section at all) that produced switchBlock=0 --
+# XDPoS V2 from block 0 on chainId 50 -- and cascaded into post_v2 = 0 + gap
+# = 450, activating the Berlin/London-equivalent gas schedule
+# (eip2929/eip3529/eip3198/Eip1559Transition) at block 450 instead of
+# mainnet's real ~76.3M/98.8M. Both are guaranteed state-root divergence.
+# Refuse to guess: require the switch to be stated explicitly. An explicit 0
+# is still honoured (that is a real, supported value -- V2 from genesis).
+if not isinstance(v2, dict) or "switchBlock" not in v2:
+    sys.stderr.write(
+        "nm-chainspec.sh: %s has config.XDPoS but no config.XDPoS.v2.switchBlock.\n"
+        "  The XDPoS V1->V2 switch block cannot be inferred -- this converter used to\n"
+        "  default it to 0, which silently runs XDPoS V2 from genesis and mis-dates the\n"
+        "  Berlin/London gas schedule to switchBlock+gap. Refusing to emit a chainspec\n"
+        "  that asserts a fork schedule the genesis never declared.\n"
+        "  Fix: add config.XDPoS.v2.switchBlock (and SwitchEpoch) to the genesis, or\n"
+        "  pass an explicit hand-authored chainspec via join.sh --nm-config.\n"
+        % genesis_path
+    )
+    sys.exit(1)
+
+switch_block = v2["switchBlock"]
+
+# Same rule for SwitchEpoch: present-and-0 is legitimate, absent is not a 0.
+if "SwitchEpoch" in v2:
+    switch_epoch = v2["SwitchEpoch"]
+elif "switchEpoch" in v2:
+    switch_epoch = v2["switchEpoch"]
+else:
+    sys.stderr.write(
+        "nm-chainspec.sh: %s declares config.XDPoS.v2.switchBlock but no SwitchEpoch.\n"
+        "  Refusing to default it to 0 -- state it explicitly in the genesis.\n"
+        % genesis_path
+    )
+    sys.exit(1)
+
 gap = xdpos.get("gap", 450)
 # eip1559Block is the real fork-activation block every other client (oldxdc,
 # geth-xdc, erigon, xone, besu) actually reads. gen-genesis.sh pins it
@@ -198,7 +241,7 @@ chainspec = {
                 "rewardCheckpoint": xdpos.get("rewardCheckpoint", xdpos.get("epoch", 900)),
                 "gap": gap,
                 "foundationWalletAddr": norm_addr(xdpos.get("foudationWalletAddr", xdpos.get("foundationWalletAddr", "0x0000000000000000000000000000000000000000"))),
-                "switchEpoch": v2.get("SwitchEpoch", v2.get("switchEpoch", 0)),
+                "switchEpoch": switch_epoch,
                 "switchBlock": switch_block,
                 "v2Configs": v2_configs,
             }
