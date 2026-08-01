@@ -661,7 +661,13 @@ if [ "$CLIENT" = all ]; then
     # and public-net ones were not.
     #
     # stdout still gets the launch line above, so the aggregate view is unchanged.
+    # The log lives beside the datadir, so its parent must exist BEFORE the
+    # redirect is set up. join.sh normally creates the datadir inside each child,
+    # which is too late: bash evaluates `> "$_all_log"` in the parent and the
+    # child dies instantly with "No such file or directory". run.sh does not hit
+    # this because nodes/ already exists by the time it forks its followers.
     _all_log="${dd}.log"
+    mkdir -p "$(dirname "$_all_log")" 2>/dev/null || true
     echo "=== [all] launching $c  (datadir $dd, log $_all_log) ==="
     bash "$SELF" "${args[@]}" > "$_all_log" 2>&1 &
     all_pids+=($!)
