@@ -651,8 +651,19 @@ if [ "$CLIENT" = all ]; then
     # nodetype and ip -- so appending "-$c" here would duplicate the client token
     # in every name (mylab-geth-geth-v1.17...).
     [ -n "$NAME" ] && args+=(--name "$NAME")
-    echo "=== [all] launching $c  (datadir $dd) ==="
-    bash "$SELF" "${args[@]}" &
+    # Each child gets its OWN log file, named to match its datadir
+    # (nodes/<client>-<nodetype> -> nodes/<client>-<nodetype>.log). Without this
+    # every client's output landed in the shared parent stream, so when one of
+    # eight misbehaved there was nothing to read for it -- "besu has 0 peers"
+    # could not be told apart from a fork-id mismatch, a bad chainspec, a failed
+    # handshake or a crash loop (#186). run.sh --all already does exactly this for
+    # its followers, which is why local-net failures were diagnosable this week
+    # and public-net ones were not.
+    #
+    # stdout still gets the launch line above, so the aggregate view is unchanged.
+    _all_log="${dd}.log"
+    echo "=== [all] launching $c  (datadir $dd, log $_all_log) ==="
+    bash "$SELF" "${args[@]}" > "$_all_log" 2>&1 &
     all_pids+=($!)
   done
   echo "[all] launched ${#all_pids[@]} client(s): $ALL_CLIENTS"
