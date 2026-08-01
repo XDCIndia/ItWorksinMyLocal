@@ -31,12 +31,13 @@ genesis/genesis-*-0x.json
 
 # gen-genesis.sh writes an archival genesis/genesis-<chainid>.json next to the
 # genesis.json it generates. Local/ad-hoc chain ids are throwaway, so ignore
-# them by default; the three vendored public-network genesis files below stay
+# them by default; the vendored public-network genesis files below stay
 # tracked (already-tracked paths are unaffected by these rules anyway).
 genesis/genesis-*.json
 !genesis/genesis-5151.json
 !genesis/genesis-mainnet.json
 !genesis/genesis-testnet.json
+!genesis/genesis-devnet5551.json
 
 # onboard-masternode.sh (ItWorksinMyLocal#62) -- brand-new owner/coinbase
 # private keys, chmod 600, NEVER committed. Default --keyfile already lands

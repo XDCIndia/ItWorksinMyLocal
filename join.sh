@@ -320,6 +320,27 @@ case "${NETWORK:-}" in
     NM_CONFIG_EXPLICIT=1   # a curated bundled chainspec, never auto-convert over it
     PUB_BOOTNODES_FILE="bootnodes/testnet.list"
     GAS_LIMIT_DEFAULT=420000000 ;;
+  devnet5551|5551)
+    # XDC public devnet, chainId 5551. Genesis and bootnodes are vendored
+    # verbatim from XinFinOrg/XinFin-Node@devnet (devnet/genesis.json and
+    # devnet/bootnodes.list) so this joins the REAL network rather than a
+    # locally generated look-alike.
+    #
+    # nethermind: no bundled chainspec ships for 5551, so NM_CONFIG_EXPLICIT is
+    # deliberately NOT set -- join.sh auto-converts one from the genesis, the
+    # same path it uses for any custom chain.
+    #
+    # GAS_LIMIT_DEFAULT matches the 420,000,000 plateau the other two PUBLIC
+    # networks use. UNVERIFIED for 5551: not measured from a synced header,
+    # since that requires joining first. It only affects a --mine producer (a
+    # sync-only follower never uses it), but per #94 a producer given the wrong
+    # plateau can lock the validator set out permanently -- so confirm it
+    # against a synced 5551 header before ever sealing here.
+    [ -z "$GENESIS" ]   && GENESIS="genesis/genesis-devnet5551.json"
+    [ -z "$NETWORKID" ] && NETWORKID=5551
+    NM_CONFIG="${NM_CONFIG/xdc-devnet5151/xdc-devnet5551}"
+    PUB_BOOTNODES_FILE="bootnodes/devnet5551.list"
+    GAS_LIMIT_DEFAULT=420000000 ;;
   ""|devnet5151|5151|devnet|5050|net5050|5152|net5152)
     # net5151/net5050/net5152 all measured live at a 42,000,000 plateau
     # (see header comment); net5050/net5152 aren't otherwise wired up as
@@ -327,7 +348,7 @@ case "${NETWORK:-}" in
     # pass --genesis/--bootnodes explicitly), but they still need the
     # correct gas-limit default when a caller does target them that way.
     GAS_LIMIT_DEFAULT=42000000 ;;
-  *) echo "unknown --network '$NETWORK' (expected: mainnet | testnet | devnet5151 | 5050 | 5152)" >&2; exit 1 ;;
+  *) echo "unknown --network '$NETWORK' (expected: mainnet | testnet | devnet5551 | devnet5151 | 5050 | 5152)" >&2; exit 1 ;;
 esac
 # Resolve GAS_LIMIT now that --network is known and validated: an explicit
 # --gas-limit/GAS_LIMIT always wins (GAS_LIMIT is already non-empty in that
