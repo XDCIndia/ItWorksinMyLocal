@@ -28,7 +28,7 @@
       }
     },
     "geth": {
-      "_comment": "geth. linux-amd64 and linux-arm64 are 1.17.8-xdc.12 (release v1.17.8-xdc.12, bd108b16af2b, published 2026-10-13: v1.17.8 upstream security merge, 0x0a precompile parity #1403; linux-arm64 cross-built with aarch64-linux-gnu-gcc, same GLIBC_2.38 requirement as before); darwin slices are still 1.17.5-xdc.8. darwin-amd64/darwin-arm64 are the SAME universal (lipo fat) binary -- identical sha256 under both filenames, runs natively on either Mac architecture. linux-amd64 REBUILT 2026-07-31 at f39bb0769d0c so it carries a Git Commit stamp (ItWorksinMyLocal#156): the previous artifact reported none, which made it impossible to tell from --version whether a node ran a current or a stale build. Now agrees with the darwin slices on both version and commit.",
+      "_comment": "geth. linux-amd64 and linux-arm64 are 1.17.8-xdc.13 (release v1.17.8-xdc.13, 9cc06cf85d81, published 2026-10-14: special-tx fee credit fix #1460 on top of xdc.12 (v1.17.8 upstream security merge, 0x0a precompile parity #1403); linux-arm64 cross-built with aarch64-linux-gnu-gcc, same GLIBC_2.38 requirement as before); darwin slices are still 1.17.5-xdc.8. darwin-amd64/darwin-arm64 are the SAME universal (lipo fat) binary -- identical sha256 under both filenames, runs natively on either Mac architecture. linux-amd64 REBUILT 2026-07-31 at f39bb0769d0c so it carries a Git Commit stamp (ItWorksinMyLocal#156): the previous artifact reported none, which made it impossible to tell from --version whether a node ran a current or a stale build. Now agrees with the darwin slices on both version and commit.",
       "file": "geth-{os}-{arch}",
       "archive": "none",
       "produces": {
@@ -43,8 +43,8 @@
       "sha256": {
         "darwin-amd64": "a68048665b8e4c42e019cfedc6c5a3e3e47e4991b8a3c4d87e675896ecb6ff4c",
         "darwin-arm64": "a68048665b8e4c42e019cfedc6c5a3e3e47e4991b8a3c4d87e675896ecb6ff4c",
-        "linux-amd64": "cf3a2e057a00cf3aa1a104a49d53c76d5ead94a8b629dac1223937f62ac3b7ea",
-        "linux-arm64": "a8622f28278c60ced7bd6c6024d72123204c84a0950a6bf6d19726c92718a23d"
+        "linux-amd64": "927f02f03dc51006429a2e1190d8f00f772878534180c47bd3863f7a1094f6b8",
+        "linux-arm64": "31c4028c18a39e9c0549720f7fdb87c3e3e0e199bb518955800f447e2125a6b7"
       }
     },
     "geth4": {
