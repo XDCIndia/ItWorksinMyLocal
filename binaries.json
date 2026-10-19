@@ -28,7 +28,7 @@
       }
     },
     "geth": {
-      "_comment": "geth. linux-amd64 and linux-arm64 are 1.17.8-xdc.14 (release branch release/v1.17.8-xdc.14, 8cd939bfffa0, published 2026-10-17: Hacken audit remediation, consensus parity with XDPoSChain v2.9.3-testnet, block-gated Prague/Osaka, Apothem dynamicGasLimitBlock at 83,600,000; xdc.13 kept on the link as *.prev-1.17.8-xdc.13); linux-arm64 cross-built with aarch64-linux-gnu-gcc, same GLIBC_2.38 requirement as before); darwin slices are still 1.17.5-xdc.8. darwin-amd64/darwin-arm64 are the SAME universal (lipo fat) binary -- identical sha256 under both filenames, runs natively on either Mac architecture. linux-amd64 REBUILT 2026-07-31 at f39bb0769d0c so it carries a Git Commit stamp (ItWorksinMyLocal#156): the previous artifact reported none, which made it impossible to tell from --version whether a node ran a current or a stale build. Now agrees with the darwin slices on both version and commit.",
+      "_comment": "geth. linux-amd64 and linux-arm64 are 1.17.8-xdc.15 (release v1.17.8-xdc.15, 7062907733d7, published 2026-10-19: Apothem Prague at 87,633,000 with EIP-2028 calldata pricing (XDPoSChain v3.0.0-testnet), V2 in-batch epoch-switch verification fix, real TD for legacy peers, full-verify sync speed fix, restart sync-stall fix; xdc.14 kept on the link as *.prev-1.17.8-xdc.14); linux-arm64 cross-built with aarch64-linux-gnu-gcc, same GLIBC_2.38 requirement as before); darwin slices are still 1.17.5-xdc.8. darwin-amd64/darwin-arm64 are the SAME universal (lipo fat) binary -- identical sha256 under both filenames, runs natively on either Mac architecture. linux-amd64 REBUILT 2026-07-31 at f39bb0769d0c so it carries a Git Commit stamp (ItWorksinMyLocal#156): the previous artifact reported none, which made it impossible to tell from --version whether a node ran a current or a stale build. Now agrees with the darwin slices on both version and commit.",
       "file": "geth-{os}-{arch}",
       "archive": "none",
       "produces": {
@@ -43,8 +43,8 @@
       "sha256": {
         "darwin-amd64": "a68048665b8e4c42e019cfedc6c5a3e3e47e4991b8a3c4d87e675896ecb6ff4c",
         "darwin-arm64": "a68048665b8e4c42e019cfedc6c5a3e3e47e4991b8a3c4d87e675896ecb6ff4c",
-        "linux-amd64": "53f4a38e96638a1a3d4a5f90778224d708fea72ba7e9f2c3b0555c7c7a7821f5",
-        "linux-arm64": "7df5d452407391ee33e5ffa2f3450dad3f995511461d3d8041d94351d23e6975"
+        "linux-amd64": "66e7de94ddb5f089ca2edbb0ec4e547ccdef495728ed8d4c5102cb4e2f196e03",
+        "linux-arm64": "8f8a8b99756588cac652d00b07f2ed2b36bc7e339e56520474c54fa8fae71a89"
       }
     },
     "geth4": {
