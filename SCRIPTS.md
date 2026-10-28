@@ -11,6 +11,7 @@ A quick, plain-English cheat-sheet. All are run from this folder, e.g. `./setup.
 | `network-info.sh` | Prints a plain summary of the current network. | To review who owns what and the balances. |
 | `join.sh` | Connects & syncs an **existing** network (given its genesis). | To add a syncing peer, or join a network on another machine. |
 | `reset.sh` | Deletes all node data. | Before starting over with a new genesis or keys. |
+| `sync-measure.sh` | Measures how long a node takes to sync and how much disk it uses. | To compare sync modes or clients (`join.sh --measure` runs it for you). |
 
 ---
 
@@ -72,6 +73,24 @@ defaults to one built from `bootnode.key`.
 - Joins as read-only/sync by default; add `--mine ADDR` only if that address is
   a validator in the genesis and its key is in `.env`.
 - The genesis must exactly match the target network's.
+
+### `sync-measure.sh` — time and disk of a sync
+Polls a node's RPC and the size of its datadir, writes a CSV row each poll, and
+prints a summary when the node reaches the tip: time to tip, average blocks/s,
+datadir and ancient size. With the node log it also times the geth-xdc history
+backfill that runs after a snap/fast sync (`--until history`).
+- `./join.sh --network mainnet --client geth --syncmode snap --measure` — join
+  and measure in one go; results in `<datadir>/sync-measure.csv` and
+  `<datadir>/sync-measure.summary`
+- `./join.sh --network apothem --client all --measure` — one measurement per client
+- `./sync-measure.sh --rpc http://127.0.0.1:9645 --datadir nodes/geth-sync` —
+  attach to a node that is already running (`--since <unix time>` if it started earlier)
+- CSV columns: `utc, elapsed_s, head, current, highest, syncing, datadir_mb,
+  ancient_mb, phase` (phase: `state` while snap/fast download state, `blocks`,
+  `tip`, `history`, `done`)
+
+Note: `join.sh --syncmode snap` with geth now sets `XDC_EXPERIMENTAL_SNAPSYNC=1`.
+Before, geth ignored snap there and imported every block from genesis.
 
 ### `reset.sh` — start clean
 Erases each node's chain data so the next `run.sh`/`setup.sh` starts from block

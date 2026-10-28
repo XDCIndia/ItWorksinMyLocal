@@ -1,7 +1,7 @@
 {
   "_comment": "Prebuilt-binary manifest for lib.sh:download_bins() / join.sh. baseUrl + file (with {os}/{arch} substituted) form the download URL; archive says how to unpack it; produces maps a logical binary name to its path *inside* the download (\"\" = the download IS the binary, \".\" = the whole extracted directory is the product, e.g. a dist dir). platforms uses {os}-{arch} keys (darwin|linux, amd64|arm64); \"*\" = platform-independent. sha256 keys mirror platforms (or \"*\"), fetched from the upstream <file>.sha256 siblings on xdc.network. Re-run the fetch and bump 'updated' if xdc.network publishes new binaries. A client entry may set its own \"baseUrl\" to override this global one (e.g. to pull an urgent fix from a GitHub release before it's mirrored to xdc.network) -- see lib.sh:_binjson_query.",
   "baseUrl": "https://xdc.network/snapshots/bin/",
-  "updated": "2026-08-01",
+  "updated": "2026-10-28",
   "clients": {
     "oldxdc": {
       "_comment": "XDPoSChain (XDCIndia/OLDXDC), the legacy sealer client run.sh/setup.sh use by default. Previously ALWAYS built from source (lib.sh hardcoded this regardless of BIN_SOURCE) since no prebuilt existed anywhere -- every `run.sh --chainid N` / `setup.sh --new` clone+built from scratch even for a plain resume, adding minutes before any node came up. Published this tarball (XDC + bootnode + puppeth, linux-amd64) from XDCIndia/OLDXDC's pinned commit 0648a96a22affcc0b4dd2201614a118b084fe7bf (the 'XDPoSChain codebase snapshot with puppeth wizard genesis fix' XDPOS_REPO already points at) so lib.sh:download_bins() has something to fetch. Now respects BIN_SOURCE/BIN_SOURCE_oldxdc like every other client: download by default, `--build` (run.sh/setup.sh) or BIN_SOURCE_oldxdc=build forces a from-source clone+build instead. darwin-amd64/darwin-arm64 are the SAME tar.gz, published 2026-08-01: XDC + bootnode + puppeth, each a universal (lipo fat) x86_64+arm64 Mach-O built from XDPOS_REPO 0648a96a (2.7.1-stable), amd64 slices cross-compiled via build/ci.go install -arch amd64. This removes the from-source fallback that every macOS clone hit -- previously the only darwin artifact on the mirror was a bare `oldxdc-darwin-arm64` (no .tar.gz, XDC only, 2.7.0-beta 2ab28ce9), which the manifest neither found nor could use since it needs all three binaries. Gated before publish: genesis hash identical to the live sealers and synced to tip as a follower.",
@@ -28,7 +28,7 @@
       }
     },
     "geth": {
-      "_comment": "geth. linux-amd64 and linux-arm64 are 1.17.8-xdc.15 (release v1.17.8-xdc.15, 7062907733d7, published 2026-10-19: Apothem Prague at 87,633,000 with EIP-2028 calldata pricing (XDPoSChain v3.0.0-testnet), V2 in-batch epoch-switch verification fix, real TD for legacy peers, full-verify sync speed fix, restart sync-stall fix; xdc.14 kept on the link as *.prev-1.17.8-xdc.14); linux-arm64 cross-built with aarch64-linux-gnu-gcc, same GLIBC_2.38 requirement as before); darwin slices are still 1.17.5-xdc.8. darwin-amd64/darwin-arm64 are the SAME universal (lipo fat) binary -- identical sha256 under both filenames, runs natively on either Mac architecture. linux-amd64 REBUILT 2026-07-31 at f39bb0769d0c so it carries a Git Commit stamp (ItWorksinMyLocal#156): the previous artifact reported none, which made it impossible to tell from --version whether a node ran a current or a stale build. Now agrees with the darwin slices on both version and commit.",
+      "_comment": "geth. linux-amd64 and linux-arm64 are 1.17.10-xdc.20 (release v1.17.10-xdc.20, 08d25cafd425, published 2026-10-28: upstream go-ethereum v1.17.10, Apothem TIPProportionalReward at 84,733,000 (XDPoSChain v3.0.0-testnet-2), full block history after fast/snap sync with --history.chain cutoffs, snap-sync penalty and restart fixes, xdpos2 v101; built with build/ci.go -git-commit so --version carries the commit; genesis hash checked on mainnet 0x4a9d74.. and Apothem 0xbdea51..; xdc.15 kept on the link as *.prev-1.17.8-xdc.15); linux-arm64 cross-built with aarch64-linux-gnu-gcc, same GLIBC_2.38 requirement as before; darwin slices are still 1.17.5-xdc.8. darwin-amd64/darwin-arm64 are the SAME universal (lipo fat) binary -- identical sha256 under both filenames, runs natively on either Mac architecture.",
       "file": "geth-{os}-{arch}",
       "archive": "none",
       "produces": {
@@ -43,8 +43,8 @@
       "sha256": {
         "darwin-amd64": "a68048665b8e4c42e019cfedc6c5a3e3e47e4991b8a3c4d87e675896ecb6ff4c",
         "darwin-arm64": "a68048665b8e4c42e019cfedc6c5a3e3e47e4991b8a3c4d87e675896ecb6ff4c",
-        "linux-amd64": "66e7de94ddb5f089ca2edbb0ec4e547ccdef495728ed8d4c5102cb4e2f196e03",
-        "linux-arm64": "8f8a8b99756588cac652d00b07f2ed2b36bc7e339e56520474c54fa8fae71a89"
+        "linux-amd64": "3c11afd4391032e76e7f70ec7f10913d71ed4a667da72f0ea50fac47c17bcaa5",
+        "linux-arm64": "b0182dd8691f201f6273dca3090a86ba6ac92e59db3f9590ff1d4973831c83c2"
       }
     },
     "geth4": {
