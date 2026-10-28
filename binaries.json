@@ -28,7 +28,7 @@
       }
     },
     "geth": {
-      "_comment": "geth. linux-amd64 and linux-arm64 are 1.17.10-xdc.20 (release v1.17.10-xdc.20, 08d25cafd425, published 2026-10-28: upstream go-ethereum v1.17.10, Apothem TIPProportionalReward at 84,733,000 (XDPoSChain v3.0.0-testnet-2), full block history after fast/snap sync with --history.chain cutoffs, snap-sync penalty and restart fixes, xdpos2 v101; built with build/ci.go -git-commit so --version carries the commit; genesis hash checked on mainnet 0x4a9d74.. and Apothem 0xbdea51..; xdc.15 kept on the link as *.prev-1.17.8-xdc.15); linux-arm64 cross-built with aarch64-linux-gnu-gcc, same GLIBC_2.38 requirement as before; darwin slices are still 1.17.5-xdc.8. darwin-amd64/darwin-arm64 are the SAME universal (lipo fat) binary -- identical sha256 under both filenames, runs natively on either Mac architecture.",
+      "_comment": "geth. All slices are 1.17.10-xdc.20 (release v1.17.10-xdc.20, 08d25cafd425). linux-amd64 is a STATIC build (build/ci.go install -static, 2026-10-28) so it runs on any glibc, including Ubuntu 20.04/22.04 (the dynamic build needed GLIBC_2.38); linux-arm64 is still the dynamic build (GLIBC_2.38, aarch64-linux-gnu-gcc). darwin-arm64 and darwin-amd64 are separate native Mach-O builds (CGO_ENABLED=0, pure-Go secp256k1; no longer one universal lipo binary) replacing 1.17.5-xdc.8. Previous files kept on the mirror as *.prev-xdc20-dynamic (linux-amd64) and *.prev-1.17.5-xdc.8 (darwin).",
       "file": "geth-{os}-{arch}",
       "archive": "none",
       "produces": {
@@ -41,9 +41,9 @@
         "linux-arm64"
       ],
       "sha256": {
-        "darwin-amd64": "a68048665b8e4c42e019cfedc6c5a3e3e47e4991b8a3c4d87e675896ecb6ff4c",
-        "darwin-arm64": "a68048665b8e4c42e019cfedc6c5a3e3e47e4991b8a3c4d87e675896ecb6ff4c",
-        "linux-amd64": "3c11afd4391032e76e7f70ec7f10913d71ed4a667da72f0ea50fac47c17bcaa5",
+        "darwin-amd64": "1bcff4f978ccffdf65f810a5775c50e1bd75a56704ce8d78143f7121c9ba73c9",
+        "darwin-arm64": "1939343b69a200d27c389be27f171fc77c44baa2f5572710e1bbef886b406bbf",
+        "linux-amd64": "bc9c1c277cc74a4adbadcee299927141984f04d3fcd117ebe4413a969378e578",
         "linux-arm64": "b0182dd8691f201f6273dca3090a86ba6ac92e59db3f9590ff1d4973831c83c2"
       }
     },
