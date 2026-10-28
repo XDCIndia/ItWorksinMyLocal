@@ -161,6 +161,13 @@
 #                        is SECRET@HOST:PORT (node name prepended) or a full
 #                        NAME:SECRET@HOST:PORT used verbatim.
 #   --no-ethstats        disable ethstats reporting
+#   --measure            measure sync time and disk use: runs sync-measure.sh
+#                        beside the node (CSV + summary in the datadir, as
+#                        sync-measure.csv / sync-measure.summary). Stops at the
+#                        tip, or after the geth-xdc history backfill when the
+#                        node log is known (--client all writes it next to the
+#                        datadir). Works with --client all (one per client).
+#   --measure-interval S poll interval for --measure, seconds (default 60)
 #
 # This joins as a read/sync node by default (no mining). It does NOT touch your
 # local 4-node network in ./nodes.
@@ -177,6 +184,7 @@ SELF="$PWD/$(basename "$0")"
 # DATADIR empty here means "use the default convention" (nodes/<client>-<type>),
 # computed once the client is known; an explicit --datadir always wins.
 GENESIS=""; BOOTNODES=""; NETWORKID=""; DATADIR=""; NAME=""; HOST_IP=""; CHAIN=""
+MEASURE=""; MEASURE_INTERVAL=60
 MINEADDR=""; STATICPEERS=""; NETWORK=""; SYNCMODE=""
 # STATICPEERS_EXPLICIT: set when the caller passes --staticpeers directly, so
 # the local-sealer harvest below (LOCAL_BOOTNODE=1) knows to never clobber an
@@ -259,6 +267,8 @@ while [ $# -gt 0 ]; do
     --staticpeers) STATICPEERS=$2; STATICPEERS_EXPLICIT=1; shift 2;;
     --ethstats)    ETHSTATS=$2; shift 2;;
     --no-ethstats) ETHSTATS=""; shift;;
+    --measure)     MEASURE=1; shift;;
+    --measure-interval) MEASURE_INTERVAL=$2; shift 2;;
     -h|--help)     sed -n '2,135p' "$0" | sed 's/^# \{0,1\}//'; exit 0;;
     *) echo "unknown flag: $1" >&2; exit 1;;
   esac
@@ -637,6 +647,7 @@ if [ "$CLIENT" = all ]; then
   # invocation -- the same reasoning --etherbase/--maxpeers already document.
   shared+=(--gas-limit "$GAS_LIMIT")
   if [ -n "$ETHSTATS" ]; then shared+=(--ethstats "$ETHSTATS"); else shared+=(--no-ethstats); fi
+  [ -n "$MEASURE" ] && shared+=(--measure --measure-interval "$MEASURE_INTERVAL")
   # Base directory for the per-client chaindata: a custom --datadir wins, else the
   # shared ./nodes tree (clear of run.sh's numbered nodes/1..N local net).
   base="${DATADIR:-nodes}"
@@ -1068,6 +1079,9 @@ elif [ "$CLIENT" = geth ] || [ "$CLIENT" = geth4 ]; then
   # operator diffing invocations for #94/#96 compliance should see the
   # same --gas-limit-derived flag on every client, even a client that
   # happens to disregard it).
+  # geth-xdc only runs its XDPoS snap sync when XDC_EXPERIMENTAL_SNAPSYNC=1;
+  # without it --syncmode snap silently imports every block from genesis.
+  [ "$SYNCMODE" = snap ] && export XDC_EXPERIMENTAL_SNAPSYNC=1
   "$XDC" --datadir "$DATADIR" --networkid "$NETWORKID" --syncmode "$SYNCMODE" \
     --bootnodes "$BOOTNODES" --port "$PORT" --nat "extip:${IP}" --identity "$NAME" --maxpeers "${MAXPEERS:-25}" \
     --miner.gaslimit "$GAS_LIMIT" \
@@ -1241,4 +1255,14 @@ else
     $MINE_FLAGS $ETHSTATS_ARG &
 fi
 child_proc=$!
+# --measure: time-to-tip and disk use, logged beside the datadir. The node log is
+# only known when --client all redirected this child to <datadir>.log; with it,
+# geth-xdc snap/fast runs are measured until the history backfill completes.
+if [ -n "$MEASURE" ]; then
+  _m_args=(--rpc "http://127.0.0.1:${RPCPORT}" --datadir "$DATADIR" --pid "$child_proc"
+           --interval "$MEASURE_INTERVAL" --label "${CLIENT:-oldxdc} ${NETWORK:-} ${SYNCMODE:-}")
+  if [ -f "${DATADIR}.log" ]; then _m_args+=(--log "${DATADIR}.log" --until history); fi
+  bash "$(dirname "$SELF")/sync-measure.sh" "${_m_args[@]}" &
+  echo "measuring sync: $DATADIR/sync-measure.csv (summary in $DATADIR/sync-measure.summary)"
+fi
 wait
