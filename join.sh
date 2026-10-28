@@ -376,6 +376,21 @@ fi
 if [ -n "$PUB_BOOTNODES_FILE" ] && [ -z "$BOOTNODES" ] && [ -f "$PUB_BOOTNODES_FILE" ]; then
   BOOTNODES=$(grep -v '^[[:space:]]*#' "$PUB_BOOTNODES_FILE" | grep enode | paste -sd, -)
   echo "No --bootnodes given; using $(echo "$BOOTNODES" | tr ',' '\n' | grep -c enode) public $NETWORK bootnode(s)"
+  # The public bootnodes reach canonical XDPoSChain peers, which serve no
+  # fast/snap state; without a modern peer a fast/snap node waits for peers and
+  # crawls. Add the modern seed nodes one.sh uses (SEEDS_URL= disables).
+  case "$PUB_BOOTNODES_FILE" in *mainnet*) _seednet=mainnet ;; *testnet*) _seednet=apothem ;; *) _seednet="" ;; esac
+  _seedurl=${SEEDS_URL-https://xdc.network/snapshots/seeds/$_seednet.enodes}
+  if [ -n "$_seednet" ] && [ -n "$_seedurl" ]; then
+    _seeds=$(curl -fsS --max-time 15 "$_seedurl" 2>/dev/null | grep -E '^enode://[0-9a-f]{128}@[0-9.]+:[0-9]+$' | paste -sd, -)
+    if [ -n "$_seeds" ]; then
+      BOOTNODES="$_seeds,$BOOTNODES"
+      [ "$STATICPEERS_EXPLICIT" = 1 ] || STATICPEERS="$_seeds"
+      echo "Added $(echo "$_seeds" | tr ',' '\n' | grep -c enode) modern seed peer(s) from $_seedurl"
+    else
+      echo "note: no seed peers from $_seedurl; fast/snap may be slow to find state-serving peers" >&2
+    fi
+  fi
 fi
 # The vendored public genesis uses XDC's "xdc"-prefixed address display format in
 # its coinbase / foudationWalletAddr / alloc keys. geth-xdc (chainId in code) and
