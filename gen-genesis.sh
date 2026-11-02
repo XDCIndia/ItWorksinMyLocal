@@ -87,6 +87,15 @@
 #                             (e.g. --timestamp 0x0) for a reproducible,
 #                             assertable-hash genesis -- netlab/fleet.sh
 #                             does this for every topology it generates.
+#   --forks FILE              overlay a fork ladder (e.g. genesis/net2040-forks.json:
+#                             {"config":{...*Block...},"alloc":{...},"gasLimit":..})
+#                             onto the generated genesis, replacing the pinned
+#                             post-Byzantium schedule, so the chain runs the same
+#                             ladder as a live net (V2 -> London -> ... -> Amsterdam)
+#                             with THIS run's validators. Applied after the pin below.
+#   --forks-div N             divide every ladder block height > 4 by N (default 1),
+#                             compressing the ladder so a test reaches the late forks
+#                             sooner. Keep --v2block consistent with the ladder.
 #   --out FILE                output path (default genesis/genesis.json)
 
 NETWORK=localdpos
@@ -105,6 +114,7 @@ PREFUND=29E07C0905FECcD3b4a35A0C3Ea86c48cbEa893E
 SKIP_V1_VALIDATION=""
 PERIOD=""
 TIMESTAMP=""
+FORKS=""; FORKS_DIV=1
 OUT=genesis/genesis.json
 
 while [ $# -gt 0 ]; do
@@ -125,6 +135,8 @@ while [ $# -gt 0 ]; do
     --skip-v1-validation) SKIP_V1_VALIDATION=$2; shift 2;;
     --period) PERIOD=$2; shift 2;;
     --timestamp) TIMESTAMP=$2; shift 2;;
+    --forks) FORKS=$2; shift 2;;
+    --forks-div) FORKS_DIV=$2; shift 2;;
     --out) OUT=$2; shift 2;;
     -h|--help) sed -n '2,70p' "$0" | sed 's/^# \{0,1\}//'; exit 0;;
     *) echo "unknown flag: $1" >&2; exit 1;;
@@ -331,6 +343,23 @@ json.dump(d, open(path, 'w'))
 print('pinned post-Byzantium fork schedule (constantinople/petersburg/istanbul/berlin=0; london=%d, eip1559Block=%d, cancunBlock=%d = XDC mainnet values, unreachable on a private net) in %s' % (cfg['londonBlock'], cfg['eip1559Block'], cfg['cancunBlock'], path))
 " "$OUT"
 
+  if [ -n "$FORKS" ]; then
+    python3 -c "
+import json, sys
+path, forks, div = sys.argv[1], sys.argv[2], int(sys.argv[3])
+d = json.load(open(path)); ov = json.load(open(forks))
+for k, v in ov.get('config', {}).items():
+    if k.endswith('Block') and isinstance(v, int) and 4 < v < 999999999:
+        v = v // div
+    d['config'][k] = v
+for k, v in ov.get('alloc', {}).items():
+    d['alloc'][k] = v
+if 'gasLimit' in ov:
+    d['gasLimit'] = ov['gasLimit']
+json.dump(d, open(path, 'w'))
+print('applied fork ladder %s (div %d) to %s' % (forks, div, path))
+" "$OUT" "$FORKS" "$FORKS_DIV" || exit 1
+  fi
   if [ -n "$SKIP_V1_VALIDATION" ]; then
     python3 -c "
 import json, sys

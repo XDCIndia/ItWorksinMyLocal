@@ -44,7 +44,7 @@ else:
 | need | why | what you see without it |
 |---|---|---|
 | **~12 GB free disk** | nethermind's HealthChecks plugin enforces a free-space floor | nethermind initialises, prints its banner, then shuts down *gracefully with no error line*. The reason is one line earlier: `Not enough free disk space in '/' to safely run a node - please provide at least 11.51 GB`. Budget more than the floor: the clients themselves need ~2.5 GB of binaries plus chain data |
-| **Java 21+ on `PATH`** (or `JAVA_HOME`) | besu's archive bundles a **linux/amd64** JRE, unusable on macOS; the launcher falls back to host Java | `besu -> besu --version failed (its bundled JRE is broken, or set BESU_BIN)` and besu is skipped. With a JDK 21 present it joins normally |
+| **Java 21+ on `PATH`** (or `JAVA_HOME`) | besu v26.11-xdc.1 no longer bundles a JRE: host Java 21 is **required** on every platform | `besu -> besu --version failed (its bundled JRE is broken, or set BESU_BIN)` and besu is skipped. With a JDK 21 present it joins normally |
 
 Everything else downloads and runs with no further setup.
 
@@ -257,12 +257,39 @@ toolchains) are download-only unless you point `join.sh` at your own binary via
 | Client | Source repo | Binary source | Status (devnet 5151) |
 |--------|-------------|---------------|--------|
 | `oldxdc` (default) | [`XDCIndia/OLDXDC`](https://github.com/XDCIndia/OLDXDC) (XDPoSChain) | download (GitHub release) or build | local run + genesis + seal ✅; **5151 join: 0 peers observed — under investigation ([#13](../../issues/13))** |
-| `geth` | [`XDCIndia/go-ethereum`](https://github.com/XDCIndia/go-ethereum) (GP5) | download or build | **join/sync ✅ verified** (~400 blk/s); seal TODO; full-sync past the mid-history epoch switch needs the xdcSyncer fix |
+| `geth` | [`XDCIndia/go-ethereum`](https://github.com/XDCIndia/go-ethereum) (GP5) | download or build | **join/sync ✅ verified** (~400 blk/s); **seals** (`--mine ADDR`, bootstrap seat in the net2040-like net); full-sync past the mid-history epoch switch needs the xdcSyncer fix |
 | `erigon` | [`XDCIndia/erigon-xdc`](https://github.com/XDCIndia/erigon-xdc) | download (linux-amd64 + darwin universal) or build | syncs a built-in `--chain xdc\|xdc-apothem` **or a custom genesis file** — v3.5.0+ loads `--chain <path>` directly, so [#9](../../issues/9) no longer applies |
-| `besu` | [`XDCIndia/besu-xdc`](https://github.com/XDCIndia/besu-xdc) | download or `BESU_BIN`/PATH | reads geth genesis natively; large prebuilt (**slow download**) and needs host **Java 21+** (the bundled JRE is linux/amd64) |
+| `besu` | [`XDCIndia/besu-xdc`](https://github.com/XDCIndia/besu-xdc) | download or `BESU_BIN`/PATH | reads geth genesis natively; large prebuilt (**slow download**) and needs host **Java 21+** (the v26.11-xdc.1 archive bundles no JRE). erigon and reth are linux-only; nethermind ships linux-amd64/arm64 + darwin-arm64 |
 | `nethermind` | `XDCIndia/xdc-nethermind-private` (private — no public repo) | download or `NETHERMIND_DIST`/PATH | **custom `NETHERMIND_DIST` required for 5151** — the prebuilt archive doesn't ship `chainspec/xdc-devnet5151.json` |
 | `reth` | [`XDCIndia/reth`](https://github.com/XDCIndia/reth) | download or `RETH_BIN`/PATH | reads geth genesis natively. Follows a private XDPoS net to tip with state-root parity **only from the build carrying the epoch-reward fix** — see the warning below |
 | `xone` | [`XDCIndia/xOneGo`](https://github.com/XDCIndia/xOneGo) | download (mirror, GitHub-release fallback) | Go XDPoS reference client. Follows a private net to tip, and seals in exact fair share when seated as a validator |
+
+### Every client, every sync type, minting: `e2e.sh` (net2040-like)
+
+`./e2e.sh --topology net2040-like` stands up a multi-client network on the **net2040
+fork ladder** (V1 -> V2 -> London -> ... -> Amsterdam, the live chainId-2040 net's
+ladder compressed 4x; `genesis/genesis-2040.json` is the live genesis, vendored
+verbatim, hash `0x8d8ff2e9...`), seats **every client as a minting validator**, adds
+late-joining followers for each client x sync type, and asserts: genesis-hash
+equality, hash parity at each fork height, tip lag, every seat is a
+producer of canonical blocks (from its own log, matched by number+hash against the chain -- XDPoS headers carry a zero coinbase), ~period cadence, no BAD BLOCK / invalid merkle root / invalid difficulty in
+any log. Output is a PASS/FAIL/SKIP matrix per client x syncmode; exit is non-zero on
+FAIL. Combinations with a known client bug (`e2e-known-bugs.tsv`) are SKIP with the
+reason. Use `net2040-like-5` for a small bring-up; `--clients`, `--syncmodes`,
+`--until <block|fork>`, `--mint`, `--keep` narrow or extend it. Run it on a fleet host,
+not a laptop/orchestrator.
+
+Every client now has a real `--mine ADDR` arm in `join.sh` (geth/xone/oldxdc unlock a
+keystore, besu/nethermind read the keystore dir, erigon/reth read a 0600 raw-key file
+-- never the key on a command line). `--syncmode full|fast|snap|archive` is validated
+up front; `lib.sh:client_syncmodes` is the per-client capability table. A node can be
+held back with `startAt` (topology) until the chain reaches a height -- snap/fast need
+a pivot, and seats join the BFT after the V2 switch (`netlab/fleet.sh late`).
+`BIN_BASE_URL=https://host/path/` points the binary download at another mirror
+(sha256 is still enforced); `binaries.json` carries a `version`+`commit` per client,
+recorded to `bin/.version-<client>` on download.
+
+> Go-live note: when the mirror moves to `/download/`, flip `baseUrl` in `binaries.json` (and add an nginx `/download/` -> `/mnt/data/snapshots/bin` alias). Until then `BIN_BASE_URL` overrides it.
 
 ### Binary acquisition — verified 2026-07-29, linux/amd64
 
@@ -314,7 +341,7 @@ local net was also tested (macOS/arm64):
 | `erigon` | ✅ | full parity incl. the switch |
 | `reth` | ✅ | since the EIP-1559-from-genesis fix (XDCIndia/reth#278) |
 | `nethermind` | ✅ | chainspec is auto-converted from `--genesis` for any chainId. **Needs the free-disk floor below** — under it, it initialises, prints its banner and shuts down *cleanly with no error* |
-| `besu` | ✅ | **needs host Java 21+**; the archive's bundled JRE is linux/amd64 and is moved aside on other platforms |
+| `besu` | ✅ | **needs host Java 21+** (no bundled JRE in v26.11-xdc.1) |
 | `xone` | ✅ | since the genesis-config detection fix (XDCIndia/xOneGo#715) |
 
 So on a stock macOS/arm64 host **all seven client types sync a local network** —

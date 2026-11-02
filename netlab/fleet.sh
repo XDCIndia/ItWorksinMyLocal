@@ -77,6 +77,7 @@ source "$REPO_ROOT/lib-rpc.sh"
 usage() {
   cat >&2 <<EOF
 usage: $(basename "$0") up     <topology.json> [--wipe] [--force]
+       $(basename "$0") late   <topology.json>     # start the startAt>0 nodes once the chain reaches their height
        $(basename "$0") down   <topology.json> [--force]
        $(basename "$0") status <topology.json>
        $(basename "$0") wipe   <topology.json> [--force]
@@ -88,7 +89,7 @@ EOF
 [ $# -ge 2 ] || usage
 CMD="$1"; TOPO_FILE="$2"; shift 2
 case "$CMD" in
-  up|down|status|wipe|logs) ;;
+  up|late|down|status|wipe|logs) ;;
   *) usage ;;
 esac
 [ -f "$TOPO_FILE" ] || { echo "fleet.sh: no such topology file: $TOPO_FILE" >&2; exit 1; }
@@ -120,12 +121,12 @@ done
 # constraints; topo.sh already did both.
 # ---------------------------------------------------------------------------
 declare -a NODE_IDS
-declare -A ROLE_OF RPC_OF CLIENT_OF DATADIR_OF
+declare -A ROLE_OF RPC_OF CLIENT_OF DATADIR_OF START_OF
 
 _fleet_resolve() {
   local out
   out="$("$TOPO_SH" print "$TOPO_FILE")" || return 1
-  NODE_IDS=(); ROLE_OF=(); RPC_OF=(); CLIENT_OF=(); DATADIR_OF=()
+  NODE_IDS=(); ROLE_OF=(); RPC_OF=(); CLIENT_OF=(); DATADIR_OF=(); START_OF=()
 
   local assigns
   assigns="$(printf '%s\n' "$out" | python3 -c "
@@ -157,6 +158,7 @@ for r in rows:
     print('RPC_OF[%s]=%s' % (shq(r['id']), shq(r['rpc'])))
     print('CLIENT_OF[%s]=%s' % (shq(r['id']), shq(r['client'])))
     print('DATADIR_OF[%s]=%s' % (shq(r['id']), shq(r['datadir'])))
+    print('START_OF[%s]=%s' % (shq(r['id']), shq(r.get('startAt') or '0')))
 ")" || return 1
   eval "$assigns"
 
@@ -329,6 +331,7 @@ cmd_up() {
         --reward "$TOPO_REWARD" --v2block "$TOPO_V2BLOCK" --epoch "$TOPO_EPOCH" \
         --gap "$TOPO_GAP" --period "$TOPO_PERIOD" --skip-v1-validation "$skip_v1_arg" \
         --timestamp 0x0 \
+        ${TOPO_FORKS:+--forks "$REPO_ROOT/$TOPO_FORKS" --forks-div "${TOPO_FORKSDIV:-1}"} \
         --out "$GENESIS_FILE" )
     local gg_rc=$?
     # gen-genesis.sh's underlying puppeth wizard always drops its own
@@ -367,6 +370,7 @@ cmd_up() {
   # -- sealers --
   for id in "${NODE_IDS[@]}"; do
     [ "${ROLE_OF[$id]}" = sealer ] || continue
+    [ "${START_OF[$id]:-0}" -gt 0 ] && continue   # late: started by `late`
     # {FLEET_LOCK_FD}>&- (see the bootnode comment above): node.sh's own
     # start backgrounds the actual client process, which would otherwise
     # inherit our lock fd across node.sh's exec and hold it open forever.
@@ -374,13 +378,15 @@ cmd_up() {
   done
   for id in "${NODE_IDS[@]}"; do
     [ "${ROLE_OF[$id]}" = sealer ] || continue
-    "$HEALTH_SH" wait-rpc "http://127.0.0.1:${RPC_OF[$id]}" 60 || { echo "fleet.sh: sealer $id never came up" >&2; _fleet_up_abort; return 1; }
+    [ "${START_OF[$id]:-0}" -gt 0 ] && continue
+    "$HEALTH_SH" wait-rpc "http://127.0.0.1:${RPC_OF[$id]}" "${FLEET_SEALER_RPC_WAIT:-240}" || { echo "fleet.sh: sealer $id never came up" >&2; _fleet_up_abort; return 1; }
   done
 
   # -- gather sealer enodes for the followers --
   local sealer_enodes="" e
   for id in "${NODE_IDS[@]}"; do
     [ "${ROLE_OF[$id]}" = sealer ] || continue
+    [ "${START_OF[$id]:-0}" -gt 0 ] && continue
     e=$(_fleet_node_enode "http://127.0.0.1:${RPC_OF[$id]}") || { echo "fleet.sh: could not read enode for $id" >&2; _fleet_up_abort; return 1; }
     [ -n "$e" ] || { echo "fleet.sh: empty enode for $id" >&2; _fleet_up_abort; return 1; }
     [ -n "$sealer_enodes" ] && sealer_enodes="$sealer_enodes,"
@@ -409,12 +415,13 @@ cmd_up() {
   local follower_enodes=""
   for id in "${NODE_IDS[@]}"; do
     [ "${ROLE_OF[$id]}" = sealer ] && continue
+    [ "${START_OF[$id]:-0}" -gt 0 ] && continue
     local bootnodes_for_id="$sealer_enodes"
     if [ "$TOPO_PEERING" = mesh ] && [ -n "$follower_enodes" ]; then
       bootnodes_for_id="${bootnodes_for_id},${follower_enodes}"
     fi
     nice -n 10 "$NODE_SH" start "$TOPO_FILE" "$id" --genesis "$GENESIS_FILE" --bootnodes "$bootnodes_for_id" {FLEET_LOCK_FD}>&- || { _fleet_up_abort; return 1; }
-    "$HEALTH_SH" wait-rpc "http://127.0.0.1:${RPC_OF[$id]}" 90 || { echo "fleet.sh: follower $id never came up" >&2; _fleet_up_abort; return 1; }
+    "$HEALTH_SH" wait-rpc "http://127.0.0.1:${RPC_OF[$id]}" "${FLEET_FOLLOWER_RPC_WAIT:-240}" || { echo "fleet.sh: follower $id never came up" >&2; _fleet_up_abort; return 1; }
     "$HEALTH_SH" wait-peers "http://127.0.0.1:${RPC_OF[$id]}" 1 60 || echo "fleet.sh: WARNING: follower $id still has 0 peers -- continuing anyway" >&2
     if [ "$TOPO_PEERING" = mesh ]; then
       local this_enode; this_enode=$(_fleet_node_enode "http://127.0.0.1:${RPC_OF[$id]}" 2>/dev/null)
@@ -429,7 +436,50 @@ cmd_up() {
   done
 
   echo "fleet.sh: '$TOPO_NAME' is up ($TOPO_NODE_COUNT nodes)" >&2
+  local late_ids=""
+  for id in "${NODE_IDS[@]}"; do [ "${START_OF[$id]:-0}" -gt 0 ] && late_ids="$late_ids $id@${START_OF[$id]}"; done
+  [ -n "$late_ids" ] && echo "fleet.sh: late nodes not started yet:$late_ids -- run 'fleet.sh late $TOPO_FILE' to start each when the chain reaches its height" >&2
   cmd_status
+}
+
+# ---------------------------------------------------------------------------
+# cmd_late: start every startAt>0 node, in height order, once the chain has
+# reached that height. Snap/fast followers need a pivot, and a seat can only join
+# the BFT after the V2 switch has produced QCs, so these cannot start at genesis.
+# Each late node dials every node currently running (their enodes, via
+# admin_nodeInfo), not just the bootnode. Blocks until all are started; the head
+# is read from the first initially-started sealer.
+# ---------------------------------------------------------------------------
+cmd_late() {
+  _fleet_resolve || return 1
+  local id head_id=""
+  for id in "${NODE_IDS[@]}"; do
+    [ "${ROLE_OF[$id]}" = sealer ] && [ "${START_OF[$id]:-0}" -eq 0 ] && { head_id="$id"; break; }
+  done
+  [ -n "$head_id" ] || { echo "fleet.sh: no initially-started sealer to read the head from" >&2; return 1; }
+  local late_fail=0
+  local order; order=$(for id in "${NODE_IDS[@]}"; do [ "${START_OF[$id]:-0}" -gt 0 ] && echo "${START_OF[$id]} $id"; done | sort -n | awk '{print $2}')
+  for id in $order; do
+    local want="${START_OF[$id]}" head
+    echo "fleet.sh: $id waits for block $want..." >&2
+    while :; do
+      head=$(LAB_RPC_TIMEOUT=3 lab_block_number "http://127.0.0.1:${RPC_OF[$head_id]}" 2>/dev/null) || head=0
+      [ "${head:-0}" -ge "$want" ] && break
+      sleep 10
+    done
+    local enodes="" e other
+    for other in "${NODE_IDS[@]}"; do
+      [ "$other" = "$id" ] && continue
+      e=$(_fleet_node_enode "http://127.0.0.1:${RPC_OF[$other]}" 2>/dev/null) || continue
+      [ -n "$e" ] && enodes="${enodes:+$enodes,}$e"
+    done
+    echo "fleet.sh: head=$head >= $want: starting $id (${CLIENT_OF[$id]}, ${ROLE_OF[$id]})" >&2
+    local nicearg=(); [ "${ROLE_OF[$id]}" = sealer ] || nicearg=(nice -n 10)
+    "${nicearg[@]}" "$NODE_SH" start "$TOPO_FILE" "$id" --genesis "$GENESIS_FILE" --bootnodes "$enodes" || { late_fail=1; continue; }
+    "$HEALTH_SH" wait-rpc "http://127.0.0.1:${RPC_OF[$id]}" "${FLEET_FOLLOWER_RPC_WAIT:-240}" || { echo "fleet.sh: late node $id never came up" >&2; late_fail=1; }
+  done
+  [ "$late_fail" = 1 ] && { echo "fleet.sh: some late nodes failed to start (the rest were started)" >&2; return 1; }
+  echo "fleet.sh: all late nodes started" >&2
 }
 
 # ---------------------------------------------------------------------------
@@ -582,6 +632,7 @@ esac
 
 case "$CMD" in
   up)     cmd_up ;;
+  late)   cmd_late ;;
   down)   cmd_down ;;
   status) cmd_status ;;
   wipe)   cmd_wipe ;;

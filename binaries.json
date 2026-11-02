@@ -5,6 +5,8 @@
   "clients": {
     "oldxdc": {
       "_comment": "XDPoSChain (XDCIndia/OLDXDC), the legacy sealer client run.sh/setup.sh use by default. Previously ALWAYS built from source (lib.sh hardcoded this regardless of BIN_SOURCE) since no prebuilt existed anywhere -- every `run.sh --chainid N` / `setup.sh --new` clone+built from scratch even for a plain resume, adding minutes before any node came up. Published this tarball (XDC + bootnode + puppeth, linux-amd64) from XDCIndia/OLDXDC's pinned commit 0648a96a22affcc0b4dd2201614a118b084fe7bf (the 'XDPoSChain codebase snapshot with puppeth wizard genesis fix' XDPOS_REPO already points at) so lib.sh:download_bins() has something to fetch. Now respects BIN_SOURCE/BIN_SOURCE_oldxdc like every other client: download by default, `--build` (run.sh/setup.sh) or BIN_SOURCE_oldxdc=build forces a from-source clone+build instead. darwin-amd64/darwin-arm64 are the SAME tar.gz, published 2026-08-01: XDC + bootnode + puppeth, each a universal (lipo fat) x86_64+arm64 Mach-O built from XDPOS_REPO 0648a96a (2.7.1-stable), amd64 slices cross-compiled via build/ci.go install -arch amd64. This removes the from-source fallback that every macOS clone hit -- previously the only darwin artifact on the mirror was a bare `oldxdc-darwin-arm64` (no .tar.gz, XDC only, 2.7.0-beta 2ab28ce9), which the manifest neither found nor could use since it needs all three binaries. Gated before publish: genesis hash identical to the live sealers and synced to tip as a follower.",
+      "version": "2.7.1-stable",
+      "commit": "0648a96a22af",
       "ghRelease": {
         "repo": "XDCIndia/OLDXDC",
         "tag": "v2.7.1-stable-linux-amd64"
@@ -28,7 +30,9 @@
       }
     },
     "geth": {
-      "_comment": "geth. All slices are 1.17.10-xdc.20 (release v1.17.10-xdc.20, 08d25cafd425). linux-amd64 is a STATIC build (build/ci.go install -static, 2026-10-28) so it runs on any glibc, including Ubuntu 20.04/22.04 (the dynamic build needed GLIBC_2.38); linux-arm64 is still the dynamic build (GLIBC_2.38, aarch64-linux-gnu-gcc). darwin-arm64 and darwin-amd64 are separate native Mach-O builds (CGO_ENABLED=0, pure-Go secp256k1; no longer one universal lipo binary) replacing 1.17.5-xdc.8. Previous files kept on the mirror as *.prev-xdc20-dynamic (linux-amd64) and *.prev-1.17.5-xdc.8 (darwin).",
+      "_comment": "REFRESHED to v1.17.10-xdc.21 (58b2b042b) for linux-amd64/linux-arm64/darwin-arm64; darwin-amd64 (Intel) is unchanged from the earlier build. Older notes below describe xdc.20. geth. All slices are 1.17.10-xdc.20 (release v1.17.10-xdc.20, 08d25cafd425). linux-amd64 is a STATIC build (build/ci.go install -static, 2026-10-28) so it runs on any glibc, including Ubuntu 20.04/22.04 (the dynamic build needed GLIBC_2.38); linux-arm64 is still the dynamic build (GLIBC_2.38, aarch64-linux-gnu-gcc). darwin-arm64 and darwin-amd64 are separate native Mach-O builds (CGO_ENABLED=0, pure-Go secp256k1; no longer one universal lipo binary) replacing 1.17.5-xdc.8. Previous files kept on the mirror as *.prev-xdc20-dynamic (linux-amd64) and *.prev-1.17.5-xdc.8 (darwin).",
+      "version": "1.17.10-xdc.21",
+      "commit": "58b2b042b",
       "file": "geth-{os}-{arch}",
       "archive": "none",
       "produces": {
@@ -42,13 +46,15 @@
       ],
       "sha256": {
         "darwin-amd64": "1bcff4f978ccffdf65f810a5775c50e1bd75a56704ce8d78143f7121c9ba73c9",
-        "darwin-arm64": "1939343b69a200d27c389be27f171fc77c44baa2f5572710e1bbef886b406bbf",
-        "linux-amd64": "bc9c1c277cc74a4adbadcee299927141984f04d3fcd117ebe4413a969378e578",
-        "linux-arm64": "b0182dd8691f201f6273dca3090a86ba6ac92e59db3f9590ff1d4973831c83c2"
+        "darwin-arm64": "964f9caeed4c2f42ccbe51e7f48a90223c21681c0229d37e5dbcf735d4390132",
+        "linux-amd64": "487398c15229866664baa7b3745838c86f6addbdc9537c0e460c505c2ae13fdc",
+        "linux-arm64": "93a05abec825767f961f7ccdb662df4ef73239a43e761c264ef40116d3ed2813"
       }
     },
     "geth4": {
       "_comment": "geth 1.17.4-xdc.7, PINNED. `geth` tracks the base branch (1.17.5-xdc.8); this entry exists to stay on or bisect against 1.17.4. These are the exact bytes that were published as `geth` before the 1.17.5 promotion -- sha256 unchanged, so the trust story is untouched. Was the `geth1175` slot, which is retired now that geth IS 1.17.5.",
+      "version": "1.17.4-xdc.7",
+      "commit": "",
       "file": "geth4-{os}-{arch}",
       "archive": "none",
       "produces": {
@@ -62,7 +68,9 @@
       }
     },
     "erigon": {
-      "_comment": "linux-amd64 REBUILT 2026-10-28 from XDCIndia/erigon-xdc main @ 1ccfe435847bcedcec5d651f4514fb7ec3429c94 (main head; self-reports 'erigon version 3.5.2-1ccfe435'), the same commit as the previous linux-amd64 build, but now built in an ubuntu:20.04 container with gcc-10 so it runs on glibc 2.31 (needs GLIBC_2.29 / GLIBCXX_3.4.28 at most; the previous build needed GLIBC_2.38 and did not start on Ubuntu 20.04/22.04). Gated before publish on a local 4-sealer oldxdc net from ItWorksinMyLocal (setup.sh --new 4, chainId 21460, followers via join.sh): block-hash parity with the sealers at 16/35/2250/2251/2260/2266/2290/2700/2720 -- past the 2251 boundary, 0x89 sign() txs (blocks 16, 2251, 2266), user value transfers (blocks 35, 2260) and the V2 switch (2700); and a public Apothem (chainId 51) sync via join.sh --network testnet --chain xdc-apothem to block 69,210 with hashes equal to the public Apothem RPC at 1/2251/10000/30000/50000/69210. Previous linux-amd64 file kept off-mirror as erigon-linux-amd64.prev-1ccfe435-glibc238. darwin-amd64/darwin-arm64 UNCHANGED: the SAME lipo fat binary, built 2026-07-31 on a macOS host from main at 1ccfe435 (already the main head), self-reporting 'erigon version 3.5.2-1ccfe435'; it carries PR XDCIndia/erigon-xdc#369 (genesis baseFee gated on IsEIP1559, not IsLondon). Only its arm64 slice was exercised at runtime. See ItWorksinMyLocal #146 and #159.",
+      "_comment": "REFRESHED to v3.8.1-xdc.1; now LINUX-ONLY (macOS cannot be cross-built; darwin entries removed). Older notes below describe 3.5.2. linux-amd64 REBUILT 2026-10-28 from XDCIndia/erigon-xdc main @ 1ccfe435847bcedcec5d651f4514fb7ec3429c94 (main head; self-reports 'erigon version 3.5.2-1ccfe435'), the same commit as the previous linux-amd64 build, but now built in an ubuntu:20.04 container with gcc-10 so it runs on glibc 2.31 (needs GLIBC_2.29 / GLIBCXX_3.4.28 at most; the previous build needed GLIBC_2.38 and did not start on Ubuntu 20.04/22.04). Gated before publish on a local 4-sealer oldxdc net from ItWorksinMyLocal (setup.sh --new 4, chainId 21460, followers via join.sh): block-hash parity with the sealers at 16/35/2250/2251/2260/2266/2290/2700/2720 -- past the 2251 boundary, 0x89 sign() txs (blocks 16, 2251, 2266), user value transfers (blocks 35, 2260) and the V2 switch (2700); and a public Apothem (chainId 51) sync via join.sh --network testnet --chain xdc-apothem to block 69,210 with hashes equal to the public Apothem RPC at 1/2251/10000/30000/50000/69210. Previous linux-amd64 file kept off-mirror as erigon-linux-amd64.prev-1ccfe435-glibc238. darwin-amd64/darwin-arm64 UNCHANGED: the SAME lipo fat binary, built 2026-07-31 on a macOS host from main at 1ccfe435 (already the main head), self-reporting 'erigon version 3.5.2-1ccfe435'; it carries PR XDCIndia/erigon-xdc#369 (genesis baseFee gated on IsEIP1559, not IsLondon). Only its arm64 slice was exercised at runtime. See ItWorksinMyLocal #146 and #159.",
+      "version": "3.8.1-xdc.1",
+      "commit": "",
       "file": "erigon-{os}-{arch}",
       "archive": "none",
       "produces": {
@@ -70,37 +78,35 @@
       },
       "platforms": [
         "linux-amd64",
-        "darwin-amd64",
-        "darwin-arm64"
+        "linux-arm64"
       ],
       "sha256": {
-        "linux-amd64": "4523da530b24ce5e56b036743c44947941773fdb15eae930dab5d17b039ed29d",
-        "darwin-amd64": "091e5be358bac195966b34387f0279e9b6e89bdd4853db5d38b47f7cff105dec",
-        "darwin-arm64": "091e5be358bac195966b34387f0279e9b6e89bdd4853db5d38b47f7cff105dec"
+        "linux-amd64": "c37cf68089c91425c3cf33f5bbef9c06842ecc1419f3eed1a49a91b2818dfc01",
+        "linux-arm64": "06c624044e1f0166dfdf09bfd35a3e1fa60a92fdc3d27555328c3e41208371b0"
       }
     },
     "reth": {
-      "_comment": "All slices are XDCIndia/reth main @ 180f037fe0224b308649b25dcc57d04921ee1918 (main head; merge of PR XDCIndia/reth#278 'read EIP-1559 activation from genesis in the shared executed-spec helper', with #276 and the #12/#253 chain-recognition fix behind it), self-reporting 'Reth Version: 2.2.0 / Commit SHA: 180f037f...'. linux-amd64 and linux-arm64 REBUILT 2026-10-28 in an ubuntu:20.04 container (Rust 1.93.0, gcc-10; arm64 cross-compiled with aarch64-linux-gnu-gcc-10 and JEMALLOC_SYS_WITH_LG_PAGE=16), `cargo build --profile release --bin xdc-reth -p xdc-reth`, default features. Both now run on glibc 2.31 (max GLIBC_2.30 / GLIBCXX_3.4.26; the previous builds needed GLIBC_2.39). linux-arm64 was a 2026-07-03 build with no stamped commit -- it predated #276 and #278, so it rejected 0x89 sign() blocks and wedged past block 2250. Gated before publish on a local 4-sealer oldxdc net from ItWorksinMyLocal (setup.sh --new 4, chainId 21460, followers via join.sh): both slices (arm64 run under qemu-aarch64 on an Ubuntu 20.04 arm64 rootfs) hash-equal with the sealers at 16/35/2250/2251/2260/2266/2290/2700/2720 -- past the 2251 boundary, 0x89 sign() txs, user value transfers (35, 2260) and the V2 switch (2700). Public Apothem: with the built-in `--chain xdc-apothem` spec, blocks 1..385 matched the public RPC (incl. the block-16 sign() txs) before public peers dropped; with join.sh --network testnet (which feeds genesis/genesis-testnet-0x.json, a file that declares no fork past Byzantium) reth rejects block 16 'Gas used mismatch: computed 115134, expected 107558' -- a harness/genesis-file issue tracked in #146, not a change in this build. Previous linux files kept off-mirror as reth-linux-amd64.prev-180f037f-glibc239 and reth-linux-arm64.prev-20260703. darwin-amd64/darwin-arm64 UNCHANGED: the SAME universal (lipo fat) binary, built 2026-07-31 on a macOS host from main at 180f037f (already the main head); only its arm64 slice was exercised at runtime. See ItWorksinMyLocal #146 and #159.",
+      "_comment": "REFRESHED to v2.9.0-xdc.1; now LINUX-ONLY (darwin entries removed). Older notes below describe 2.2.0. All slices are XDCIndia/reth main @ 180f037fe0224b308649b25dcc57d04921ee1918 (main head; merge of PR XDCIndia/reth#278 'read EIP-1559 activation from genesis in the shared executed-spec helper', with #276 and the #12/#253 chain-recognition fix behind it), self-reporting 'Reth Version: 2.2.0 / Commit SHA: 180f037f...'. linux-amd64 and linux-arm64 REBUILT 2026-10-28 in an ubuntu:20.04 container (Rust 1.93.0, gcc-10; arm64 cross-compiled with aarch64-linux-gnu-gcc-10 and JEMALLOC_SYS_WITH_LG_PAGE=16), `cargo build --profile release --bin xdc-reth -p xdc-reth`, default features. Both now run on glibc 2.31 (max GLIBC_2.30 / GLIBCXX_3.4.26; the previous builds needed GLIBC_2.39). linux-arm64 was a 2026-07-03 build with no stamped commit -- it predated #276 and #278, so it rejected 0x89 sign() blocks and wedged past block 2250. Gated before publish on a local 4-sealer oldxdc net from ItWorksinMyLocal (setup.sh --new 4, chainId 21460, followers via join.sh): both slices (arm64 run under qemu-aarch64 on an Ubuntu 20.04 arm64 rootfs) hash-equal with the sealers at 16/35/2250/2251/2260/2266/2290/2700/2720 -- past the 2251 boundary, 0x89 sign() txs, user value transfers (35, 2260) and the V2 switch (2700). Public Apothem: with the built-in `--chain xdc-apothem` spec, blocks 1..385 matched the public RPC (incl. the block-16 sign() txs) before public peers dropped; with join.sh --network testnet (which feeds genesis/genesis-testnet-0x.json, a file that declares no fork past Byzantium) reth rejects block 16 'Gas used mismatch: computed 115134, expected 107558' -- a harness/genesis-file issue tracked in #146, not a change in this build. Previous linux files kept off-mirror as reth-linux-amd64.prev-180f037f-glibc239 and reth-linux-arm64.prev-20260703. darwin-amd64/darwin-arm64 UNCHANGED: the SAME universal (lipo fat) binary, built 2026-07-31 on a macOS host from main at 180f037f (already the main head); only its arm64 slice was exercised at runtime. See ItWorksinMyLocal #146 and #159.",
+      "version": "2.9.0-xdc.1",
+      "commit": "",
       "file": "reth-{os}-{arch}",
       "archive": "none",
       "produces": {
         "xdc-reth": ""
       },
       "platforms": [
-        "darwin-amd64",
-        "darwin-arm64",
         "linux-amd64",
         "linux-arm64"
       ],
       "sha256": {
-        "darwin-amd64": "36e7e0763a0ea63a3998bc39a06042fe71c1289539e938f84e110d6772c55157",
-        "darwin-arm64": "36e7e0763a0ea63a3998bc39a06042fe71c1289539e938f84e110d6772c55157",
-        "linux-amd64": "7722f2da930066b3cf2c69d4846ed7bf6825a7412d459631258f575ffc70d859",
-        "linux-arm64": "17f6a6daedbc92da97d2183b9359fc26bceb96607290d4c0f6872b4026252c2a"
+        "linux-amd64": "b736242b52960813a27346c3f4a2f7c29ecc6e861c0fc70bc5c686800e03611a",
+        "linux-arm64": "e7d484f84e1e354e11ad798bd9d8f29fcf2c28840ca34066175298fc046b5e9a"
       }
     },
     "besu": {
-      "_comment": "besu-latest.tar.gz is built from XDCIndia/besu branch xdc/besu-v2-mint-fix @ ddcf7446 (branch head; merge of PR #59, also carries #51 and #54) -- its jars are named besu-*-26.7-develop-ddcf744. (An earlier version of this comment said it was built on a '7ade4f2f v00.0-develop' base; that commit is not in XDCIndia/besu and the jars say ddcf744.) The archive bundles a Temurin JRE 21 under jre/ and bin/besu is patched to use $APP_HOME/jre, so no host Java is needed -- but that JRE is a linux-x86_64 build, so despite the '*' platform key the archive only runs on linux-amd64 as shipped. Archive contains bin/besu (launcher) + jre/ + lib/*.jar. Re-verified 2026-10-28 (not rebuilt) on a local 4-sealer oldxdc net (chainId 21460): hash-equal with the sealers at 16/35/2250/2251/2260/2266/2290/2700/2720. Public mainnet/apothem still need the client-side fork-id fix (issue #69) to peer.",
+      "_comment": "REFRESHED to v26.11-xdc.1. The new tarball does NOT bundle a JRE: it needs a HOST Java 21 (JAVA_HOME or java on PATH). Older notes below (bundled Temurin JRE, linux-x86_64-only) no longer apply. besu-latest.tar.gz is built from XDCIndia/besu branch xdc/besu-v2-mint-fix @ ddcf7446 (branch head; merge of PR #59, also carries #51 and #54) -- its jars are named besu-*-26.7-develop-ddcf744. (An earlier version of this comment said it was built on a '7ade4f2f v00.0-develop' base; that commit is not in XDCIndia/besu and the jars say ddcf744.) The archive bundles a Temurin JRE 21 under jre/ and bin/besu is patched to use $APP_HOME/jre, so no host Java is needed -- but that JRE is a linux-x86_64 build, so despite the '*' platform key the archive only runs on linux-amd64 as shipped. Archive contains bin/besu (launcher) + jre/ + lib/*.jar. Re-verified 2026-10-28 (not rebuilt) on a local 4-sealer oldxdc net (chainId 21460): hash-equal with the sealers at 16/35/2250/2251/2260/2266/2290/2700/2720. Public mainnet/apothem still need the client-side fork-id fix (issue #69) to peer.",
+      "version": "26.11-xdc.1",
+      "commit": "",
       "file": "besu-latest.tar.gz",
       "archive": "tar.gz",
       "produces": {
@@ -110,29 +116,33 @@
         "*"
       ],
       "sha256": {
-        "*": "594f4ef60d8ce5be4f9914e36857c4d74c745cb1eb0c4f8dbc55875c38926712"
+        "*": "57a95ce1d385237c34d7c3591d45bafee1d338f951a68304b59bd7051f020196"
       }
     },
     "nethermind": {
-      "_comment": "Archive is a flat .NET publish dir (./nethermind launcher + ./chainspec/*.json + ./configs/*.json at the archive root, no version-prefixed top dir), so produces path is '.' (the whole extracted dir is NETHERMIND_DIST). All three archives are XDCIndia/xdc-nethermind-private main @ 151fe96b1e7e9fbc5177714dc81d2e4c03a060ba (main head; merge of PR #253, TIPSigning default never-active), self-reporting '1.36.0-unstable+151fe96b'. No linux-arm64 build. The archives ship chainspec/xdc.json and xdc-testnet.json only -- no xdc-devnet5151.json (an earlier version of this comment said linux-amd64 had it); for a local net join.sh generates an xdc-custom-<chainId> chainspec from --genesis. KNOWN BROKEN on a fresh local net (measured 2026-10-28, chainId 21460, ItWorksinMyLocal #194): it follows the oldxdc sealers through the 0x89 sign() blocks (16, 31) and then rejects the first plain user value transfer (block 35) with InvalidStateRoot (expected 0x98c68e85..., got 0xc1b5b2ac...). No newer commit exists to republish; this needs a client fix. See ItWorksinMyLocal #146.",
+      "_comment": "REFRESHED to v1.36.0-xdc.1: linux-amd64/arm64 + darwin-arm64 (no darwin-amd64). Older notes below describe 1.36.0-unstable. Archive is a flat .NET publish dir (./nethermind launcher + ./chainspec/*.json + ./configs/*.json at the archive root, no version-prefixed top dir), so produces path is '.' (the whole extracted dir is NETHERMIND_DIST). All three archives are XDCIndia/xdc-nethermind-private main @ 151fe96b1e7e9fbc5177714dc81d2e4c03a060ba (main head; merge of PR #253, TIPSigning default never-active), self-reporting '1.36.0-unstable+151fe96b'. No linux-arm64 build. The archives ship chainspec/xdc.json and xdc-testnet.json only -- no xdc-devnet5151.json (an earlier version of this comment said linux-amd64 had it); for a local net join.sh generates an xdc-custom-<chainId> chainspec from --genesis. KNOWN BROKEN on a fresh local net (measured 2026-10-28, chainId 21460, ItWorksinMyLocal #194): it follows the oldxdc sealers through the 0x89 sign() blocks (16, 31) and then rejects the first plain user value transfer (block 35) with InvalidStateRoot (expected 0x98c68e85..., got 0xc1b5b2ac...). No newer commit exists to republish; this needs a client fix. See ItWorksinMyLocal #146.",
+      "version": "1.36.0-xdc.1",
+      "commit": "",
       "file": "nethermind-{os}-{arch}.tar.gz",
       "archive": "tar.gz",
       "produces": {
         "nethermind": "."
       },
       "platforms": [
-        "darwin-amd64",
-        "darwin-arm64",
-        "linux-amd64"
+        "linux-amd64",
+        "linux-arm64",
+        "darwin-arm64"
       ],
       "sha256": {
-        "darwin-amd64": "73605504463a957d9f89991bdc3c8c9bcab66fa6c3f6e78e219cdb642db1aa42",
-        "darwin-arm64": "b72cb2a7e7fcbd1151121d586e84bfb209b4b977bb7854893d84f0abb09f1292",
-        "linux-amd64": "050679e0e70078f0bcb96513eb460fb64e2df609ef1b7a686c49891c70f6e736"
+        "darwin-arm64": "2c3c512fb429ed25c11c2a4382945461c8e874a1371d4a8f06e2ab5e296f56d5",
+        "linux-amd64": "06a9de30580a612b0ceff4a831c3d127f772f01df30f30fdccc23f0842536d01",
+        "linux-arm64": "55759ba6453fc352cd7f45d528e04d7ad0b12b3012862d3453f9790c1166f869"
       }
     },
     "xone": {
       "_comment": "xone-native (XDCIndia/xOneGo), the go-ethereum-derived XDPoS reference client (built from pkg/cmd/xone-native; the `xone` binary is only a launcher). NOTE: use `xone --version` (not the `version` subcommand, which boots a node). darwin-amd64/darwin-arm64 are the SAME universal (lipo fat) binary, built 2026-08-01 from master at 8a054c05 (merge of XDCIndia/xOneGo#715). RESTORED to platforms after #715: the previous darwin artifact was dropped because it computed a DIFFERENT genesis hash than every other client (ItWorksinMyLocal#114). Root cause was xOneGo's hasBuiltinXDCProfile() chain-id allowlist {50,51,5551,5050,5151,34093}: outside it, Genesis.ToBlock() skipped attaching the empty XDCHeaderExtra, so the three 0x80 strings (Validators/Validator/Penalties) dropped out of the header RLP. #715 makes detection config-driven (ChainConfig.XDPoS presence) and splits the native-RLPx transport behind node.Config.NativeRLPx so detection no longer implies a networking change. Gated before publish on a live 9-node mixed-client net (chainId 5252: 4 oldxdc sealers + geth/geth4/erigon/reth/besu/nethermind): genesis 0x74c9de86... identical to the network, 4 peers, synced to tip 944. linux-amd64 remains the pinned release asset fetched via gh release download.",
+      "version": "",
+      "commit": "8a054c05",
       "ghRelease": {
         "repo": "XDCIndia/xOneGo",
         "tag": "v-xdc-xone-mint-20260725"

@@ -417,7 +417,7 @@ sha256_file() {
 _binjson_query() {
   local client="$1" slug="$2"
   python3 - "$BINARIES_JSON" "$client" "$slug" <<'PY'
-import json, sys
+import json, os, sys
 path, client, slug = sys.argv[1], sys.argv[2], sys.argv[3]
 try:
     m = json.load(open(path))
@@ -437,7 +437,9 @@ sha = (c.get("sha256") or {}).get(slug) or (c.get("sha256") or {}).get("*") or "
 # single global xdc.network baseUrl; a client entry may set its own "baseUrl"
 # to pull from a different (public) mirror instead. Absent that, fall back to
 # the global one.
-base = (c.get("baseUrl") or m.get("baseUrl") or "").rstrip("/")
+# BIN_BASE_URL (env) overrides BOTH, so a tester can point at a new mirror
+# (e.g. a /download/ path) without editing this JSON; sha256 is still enforced.
+base = (os.environ.get("BIN_BASE_URL") or c.get("baseUrl") or m.get("baseUrl") or "").rstrip("/")
 # ghRelease (ItWorksinMyLocal#114): an urgent fix can land as a release asset
 # on a client's own (often PRIVATE) GitHub repo before it's mirrored to
 # xdc.network -- e.g. xone's genesis-hash-parity build. {"repo":"owner/name",
@@ -453,6 +455,8 @@ def q(s):
 print("_BJ_OK=1")
 print("_BJ_URL=" + q(base + "/" + file if base else ""))
 print("_BJ_FILE=" + q(file))
+print("_BJ_VERSION=" + q(c.get("version", "")))
+print("_BJ_COMMIT=" + q(c.get("commit", "")))
 print("_BJ_GH_REPO=" + q(gh.get("repo", "")))
 print("_BJ_GH_TAG=" + q(gh.get("tag", "")))
 # noMirror: this client is published ONLY as a private GitHub release asset, so
@@ -481,7 +485,28 @@ PY
 # On success, sets DOWNLOADED_DIST to the extraction directory for archive
 # clients whose "produces" path is "." (a whole-directory product, e.g.
 # nethermind's dist, as opposed to a single extracted binary).
+# download_bins is serialised per client with a mkdir lock: netlab starts several
+# nodes of one client back to back (e.g. four geth seats), and each join.sh calls
+# this at once -- concurrent curl -C - into the same temp file corrupted it
+# ("sha256 mismatch from mirror"). The second caller waits, then finds the verified
+# cached file and just re-places it.
 download_bins() {
+  local _lk="${BIN_DIR:-bin}/.dl-lock-${CLIENT:-x}" _n=0 _rc
+  mkdir -p "${BIN_DIR:-bin}" 2>/dev/null
+  until mkdir "$_lk" 2>/dev/null; do
+    _n=$((_n + 1))
+    # a lock whose owner died (killed mid-download) is stale: drop it
+    if [ -f "$_lk/pid" ] && ! kill -0 "$(cat "$_lk/pid" 2>/dev/null)" 2>/dev/null; then rm -rf "$_lk"; continue; fi
+    [ "$_n" -gt 1800 ] && { rm -rf "$_lk"; _n=0; }
+    sleep 1
+  done
+  echo $$ > "$_lk/pid"
+  _download_bins_unlocked; _rc=$?
+  rm -rf "$_lk"
+  return $_rc
+}
+
+_download_bins_unlocked() {
   # shellcheck disable=SC2034  # DOWNLOADED_DIST is used by scripts that `source ./lib.sh` (e.g. join.sh)
   DOWNLOADED_DIST=""
   [ -f "$BINARIES_JSON" ] || { echo "binaries.json not found at $BINARIES_JSON" >&2; return 1; }
@@ -489,7 +514,7 @@ download_bins() {
   command -v curl >/dev/null 2>&1 || { echo "curl is required to download prebuilt binaries" >&2; return 1; }
 
   local slug; slug=$(platform_slug)
-  local _BJ_OK="" _BJ_URL="" _BJ_FILE="" _BJ_ARCHIVE="" _BJ_SHA256="" _BJ_GH_REPO="" _BJ_GH_TAG=""
+  local _BJ_OK="" _BJ_VERSION="" _BJ_COMMIT="" _BJ_URL="" _BJ_FILE="" _BJ_ARCHIVE="" _BJ_SHA256="" _BJ_GH_REPO="" _BJ_GH_TAG=""
   local _BJ_PRODUCE_NAMES=() _BJ_PRODUCE_PATHS=()
   _bj_produce() { _BJ_PRODUCE_NAMES+=("$1"); _BJ_PRODUCE_PATHS+=("$2"); }
   eval "$(_binjson_query "$CLIENT" "$slug")"
@@ -653,6 +678,10 @@ download_bins() {
   done
 
   echo "$CLIENT: prebuilt binary ready in $BIN_DIR (downloaded for $slug)"
+  # Record what was fetched, so a tester can tell which build they are running.
+  echo "$CLIENT: version=${_BJ_VERSION:-unknown} commit=${_BJ_COMMIT:-unknown} url=${_BJ_URL:-gh-release}"
+  printf 'client=%s\nplatform=%s\nversion=%s\ncommit=%s\nsha256=%s\nurl=%s\n' \
+    "$CLIENT" "$slug" "$_BJ_VERSION" "$_BJ_COMMIT" "$_BJ_SHA256" "$_BJ_URL" > "$BIN_DIR/.version-$CLIENT"
   return 0
 }
 
@@ -1003,6 +1032,57 @@ client_exe_names() {
 # 7-entry copy with no geth4, so a `join.sh --client all` run (which starts 8
 # clients) was reported as only 7 (ItWorksinMyLocal#181 investigation).
 JOIN_ALL_CLIENTS="oldxdc geth erigon besu nethermind reth xone geth4"
+
+# client_syncmodes <client>: the sync types this client can run in, i.e. the
+# values join.sh --syncmode accepts for it. "archive" = keep all history.
+# This is a CAPABILITY table (what the client has a flag for), not a health
+# table; combinations known to be broken are in e2e-known-bugs.tsv and are
+# reported by client_syncmode_status below.
+#   geth/geth4  full fast snap archive   (--syncmode / --gcmode archive)
+#   oldxdc      full archive             (legacy: always --syncmode full; gcmode)
+#   erigon      full snap archive        (staged sync; --prune.mode)
+#   besu        full fast snap archive   (--sync-mode; archive = FOREST storage)
+#   nethermind  full fast snap archive   (Sync.* / Pruning.Mode)
+#   reth        full archive             (staged sync; --full prunes, default keeps all)
+#   xone        full fast snap archive   (fast is accepted by the flag table but see known bugs)
+client_syncmodes() {
+  case "$1" in
+    oldxdc|xdc|XDC) echo "full archive" ;;
+    geth|geth4|besu|nethermind|xone) echo "full fast snap archive" ;;
+    erigon)         echo "full snap archive" ;;
+    reth)           echo "full archive" ;;
+    *)              echo "" ;;
+  esac
+}
+
+# client_syncmode_status <client> <mode> [topology]: prints one of
+#   ok                      supported and not known broken
+#   SKIP <ref> <reason>     supported by the flag table but a known client bug
+#                           (e2e-known-bugs.tsv row: client, syncmode, platform,
+#                           ref, reason; client/syncmode may be "*", platform
+#                           may be "!linux-amd64" meaning "everywhere else")
+#   n/a                     the client has no such sync type
+client_syncmode_status() {
+  local c="$1" m="$2" tsv="$_LIB_DIR/e2e-known-bugs.tsv" mode_ok=0 x
+  for x in $(client_syncmodes "$c"); do [ "$x" = "$m" ] && mode_ok=1; done
+  if [ "$mode_ok" = 0 ]; then echo "n/a"; return 0; fi
+  if [ -f "$tsv" ]; then
+    local slug; slug=$(platform_slug 2>/dev/null)
+    local kc km kp kr kx
+    while IFS=$'\t' read -r kc km kp kr kx; do
+      case "$kc" in ''|'#'*|client) continue ;; esac
+      [ "$kc" = "*" ] || [ "$kc" = "$c" ] || continue
+      [ "$km" = "*" ] || [ "$km" = "$m" ] || continue
+      case "$kp" in
+        ''|'-'|'*') ;;
+        '!'*) [ "${kp#!}" = "$slug" ] && continue ;;
+        *)    [ "$kp" = "$slug" ] || continue ;;
+      esac
+      echo "SKIP $kr $kx"; return 0
+    done < "$tsv"
+  fi
+  echo "ok"
+}
 
 # join_client_port_offset <client>: the "O" in join.sh's per-client port
 # block (case "$CLIENT" in geth) O=100;; ...). RPC port = 9645 + offset (see

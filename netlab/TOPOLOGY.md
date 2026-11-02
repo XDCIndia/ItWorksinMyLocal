@@ -61,7 +61,8 @@ one-off follower), but the parser supports it for topologies that need it.
 - `role=proposer` is rejected outright (reserved, not yet implemented).
 - at least one `role=sealer` node must exist (a topology with no sealer has no chain to generate/join).
 - `role=sealer` requires `keyRef`; `keyRef` must name a variable that is actually set in the environment at resolve time (checked by `topo.sh print`, which is what `fleet.sh up` runs against -- so a missing `.env` key fails fast, before any process starts).
-- `client=nethermind` is rejected whenever `chainId != 5151` -- nethermind loads only its own bundled net5151 Parity-style chainspec, not an arbitrary genesis file (ItWorksinMyLocal#46 open question #2). None of the three shipped presets use nethermind for this reason.
+- `role=sealer` is allowed for every client with a mint arm in `join.sh --mine` (all of them); a sealer may not use `syncmode` fast/snap. nethermind on a custom chainId gets a chainspec converted from the genesis (`nm-chainspec.sh`).
+- Optional fields: top-level `forks` (a fork-ladder overlay, e.g. `genesis/net2040-forks.json`, applied via `gen-genesis.sh --forks`) and `forksDiv` (divide every ladder height); per node `syncmode` (`full|fast|snap|archive`, validated against the client) and `startAt` (don't start this node until the chain reaches that block; `fleet.sh late` starts them).
 
 ## Port math
 

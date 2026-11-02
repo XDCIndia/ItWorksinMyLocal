@@ -148,6 +148,19 @@ To restart with the **same** keys you already have (not new ones), just run:
 
 ---
 
+## Testing every client end to end (advanced, optional)
+
+On a spare server (not a laptop), one command brings up a mixed-client network on the
+net2040 fork ladder where every client mints and every sync type is exercised:
+
+```
+./e2e.sh --topology net2040-like-5      # small: 5 seats + 5 followers
+./e2e.sh --topology net2040-like        # full: 11 seats + 13 followers
+```
+
+It prints a PASS / FAIL / SKIP table per client and sync type, then stops everything
+(`--keep` leaves it running). Known client bugs show as SKIP with the reason.
+
 ## Connecting a second computer (optional)
 
 Want another machine on your network to join? On the computer that's already
