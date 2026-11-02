@@ -1,0 +1,49 @@
+{
+  "name": "mint-nethermind",
+  "description": "Mint proof for nethermind: 4 geth bootstrap seats plus one nethermind seat joining at block 10, no followers. Run: ./e2e.sh --topology mint-nethermind --mint --until 550 --include-known-bugs",
+  "chainId": 2040,
+  "epoch": 450,
+  "v2block": 450,
+  "period": 1,
+  "reward": 5000,
+  "gap": 225,
+  "gasLimit": 420000000,
+  "portBase": 34800,
+  "staggerSeconds": 5,
+  "forks": "genesis/net2040-forks.json",
+  "forksDiv": 24,
+  "nodes": [
+    {
+      "id": "seat1-geth",
+      "client": "geth",
+      "role": "sealer",
+      "keyRef": "PRIVATE_KEY_1"
+    },
+    {
+      "id": "seat2-geth",
+      "client": "geth",
+      "role": "sealer",
+      "keyRef": "PRIVATE_KEY_2"
+    },
+    {
+      "id": "seat3-geth",
+      "client": "geth",
+      "role": "sealer",
+      "keyRef": "PRIVATE_KEY_3"
+    },
+    {
+      "id": "seat4-geth",
+      "client": "geth",
+      "role": "sealer",
+      "keyRef": "PRIVATE_KEY_4"
+    },
+    {
+      "id": "seat5-nethermind",
+      "client": "nethermind",
+      "role": "sealer",
+      "keyRef": "PRIVATE_KEY_5",
+      "startAt": 10
+    }
+  ],
+  "modernOnly": true
+}
