@@ -217,13 +217,21 @@ _ensure_sealer_account() {
   fi
 
   mkdir -p "$NODE_DIR" || return 1
-  touch "$REPO_ROOT/.pwd"
+  # Per-node key material, one set for EVERY client (each join.sh mint arm picks
+  # what it needs): a keystore (geth/xone/besu/nethermind/oldxdc), a raw-hex key
+  # FILE (erigon/reth) and a password file. All 0600; the raw key is never put on
+  # a command line. The password is IWML_KEYPASS (empty by default -- the legacy
+  # oldxdc behaviour); some clients want a non-empty one, e2e.sh sets it.
+  NODE_PWFILE="$NODE_DIR/.pwd"; NODE_KEYFILE="$NODE_DIR/signer.key"
+  ( umask 077
+    [ -f "$NODE_PWFILE" ] || printf '%s' "${IWML_KEYPASS:-}" > "$NODE_PWFILE"
+    printf '%s' "${key#0x}" > "$NODE_KEYFILE" )
 
   local addr
   if [ -d "$NODE_DIR/keystore" ] && [ -n "$(ls -A "$NODE_DIR/keystore" 2>/dev/null)" ]; then
     addr=$("$xdc" account list --datadir "$NODE_DIR" 2>/dev/null | head -n 1 | grep -oE '\{[0-9a-fA-Fxdc]+\}' | tr -d '{}')
   else
-    addr=$("$xdc" account import --password "$REPO_ROOT/.pwd" --datadir "$NODE_DIR" <(echo "$key") 2>/dev/null \
+    addr=$("$xdc" account import --password "$NODE_PWFILE" --datadir "$NODE_DIR" "$NODE_KEYFILE" 2>/dev/null \
       | grep -oE '\{[0-9a-fA-Fxdc]+\}' | tr -d '{}')
   fi
   [ -n "$addr" ] || { echo "node.sh: ${NODE_ID}: could not determine a wallet address (check keyRef '$NODE_KEYREF')" >&2; return 1; }
@@ -286,6 +294,7 @@ cmd_start() {
     --authrpc-port "$NODE_AUTHRPC" --torrent-port "$NODE_TORRENT" --mcp-port "$NODE_MCP" --privapi "$NODE_PRIVAPI"
     --bootnodes "$bootnodes" --name "${TOPO_NAME}-${NODE_ID}" --no-ethstats)
   [ -n "$NODE_MAXPEERS" ] && args+=(--maxpeers "$NODE_MAXPEERS")
+  [ -n "$NODE_SYNCMODE" ] && args+=(--syncmode "$NODE_SYNCMODE")
   # --gas-limit: NODE_GASLIMIT comes straight out of topo.sh print's resolved
   # "gasLimit" column (picked up generically by _node_resolve's NODE_* eval
   # above -- no per-column code needed here), always non-empty (topo.sh
@@ -298,7 +307,11 @@ cmd_start() {
   # now gets the SAME explicit target (ItWorksinMyLocal#96).
   args+=(--gas-limit "$NODE_GASLIMIT")
   if [ "$NODE_ROLE" = sealer ]; then
-    args+=(--mine "$seal_addr" --etherbase "$seal_addr")
+    # Every sealer, whatever its client, is launched with a real --mine plus the
+    # key material _ensure_sealer_account laid down. join.sh hard-fails a --mine
+    # it cannot honour, so a seat can never silently degrade to a follower.
+    args+=(--mine "$seal_addr" --etherbase "$seal_addr"
+           --keyfile "$NODE_DIR/signer.key" --keystore "$NODE_DIR/keystore" --password-file "$NODE_DIR/.pwd")
   fi
 
   echo "node.sh: starting ${NODE_ID} (${NODE_CLIENT}, ${NODE_ROLE}) rpc=http://127.0.0.1:${NODE_RPC} p2p=${NODE_P2P}" >&2

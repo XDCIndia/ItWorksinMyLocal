@@ -38,6 +38,7 @@ genesis/genesis-*.json
 !genesis/genesis-mainnet.json
 !genesis/genesis-testnet.json
 !genesis/genesis-devnet5551.json
+!genesis/genesis-2040.json
 
 # onboard-masternode.sh (ItWorksinMyLocal#62) -- brand-new owner/coinbase
 # private keys, chmod 600, NEVER committed. Default --keyfile already lands

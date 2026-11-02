@@ -151,6 +151,19 @@ port_base = require_int("portBase")
 stagger_seconds = require_int("staggerSeconds", required=False, default=5)
 skip_v1_validation = bool(topo.get("skipV1Validation", False))
 
+# forks / forksDiv: an optional fork-ladder overlay (a JSON file such as
+# genesis/net2040-forks.json) that fleet.sh applies to the generated genesis via
+# gen-genesis.sh --forks, so the chain runs the same fork ladder as a live net
+# (net2040: V2 -> London -> ... -> Amsterdam) instead of stopping at Berlin.
+# forksDiv divides every ladder block height (compressing the ladder so a test
+# reaches the late forks quickly); it must keep the V2 switch on an epoch.
+forks = topo.get("forks", "")
+if forks != "" and (not isinstance(forks, str) or not os.path.isfile(os.path.join(repo_root, forks))):
+    err("field 'forks' must name an existing file relative to the repo root (got %r)" % (forks,))
+forks_div = require_int("forksDiv", required=False, default=1)
+if forks_div is not None and forks_div < 1:
+    err("forksDiv must be >= 1 (got %r)" % forks_div)
+
 # peering (ItWorksinMyLocal#46 T3.2): "hub" (default) keeps D5's original
 # model -- followers dial ONLY the sealers, never each other. "mesh" lets
 # fleet.sh also hand each follower every EARLIER-started follower's own
@@ -206,6 +219,15 @@ RANGE_RE = re.compile(r'^(?P<prefix>.*?)\{(?P<a>\d+)\.\.(?P<b>\d+)\}(?P<suffix>.
 
 KNOWN_CLIENTS = ("oldxdc", "geth", "erigon", "besu", "nethermind", "reth", "xone")
 KNOWN_ROLES = ("sealer", "follower", "proposer")
+# Clients with a real mint arm in join.sh (--mine ADDR + keystore/keyfile).
+MINT_CAPABLE = ("oldxdc", "geth", "erigon", "besu", "nethermind", "reth", "xone")
+# Sync types per client; mirrors lib.sh:client_syncmodes (keep in step).
+SYNCMODES = {
+    "oldxdc": ("full", "archive"), "geth": ("full", "fast", "snap", "archive"),
+    "erigon": ("full", "snap", "archive"), "besu": ("full", "fast", "snap", "archive"),
+    "nethermind": ("full", "fast", "snap", "archive"), "reth": ("full", "archive"),
+    "xone": ("full", "fast", "snap", "archive"),
+}
 
 
 def expand_node(entry, entry_idx):
@@ -254,9 +276,20 @@ for idx, entry in enumerate(nodes_raw):
             err("node '%s': role 'proposer' is reserved and not yet supported "
                 "(runtime-rejected pending go-ethereum#1341) -- remove this node "
                 "or change its role" % node_id)
-        if role == "sealer" and client != "oldxdc":
-            err("node '%s': role 'sealer' requires client 'oldxdc' (only oldxdc "
-                "can seal via join.sh --mine; got client '%s')" % (node_id, client))
+        if role == "sealer" and client not in MINT_CAPABLE:
+            err("node '%s': client '%s' has no mint arm in join.sh --mine (capable: %s)"
+                % (node_id, client, ", ".join(MINT_CAPABLE)))
+        syncmode = entry.get("syncmode", "")
+        if syncmode != "" and client in SYNCMODES and syncmode not in SYNCMODES[client]:
+            err("node '%s': client '%s' does not support syncmode '%s' (supported: %s)"
+                % (node_id, client, syncmode, ", ".join(SYNCMODES[client])))
+        start_at = entry.get("startAt", 0)
+        if not isinstance(start_at, int) or isinstance(start_at, bool) or start_at < 0:
+            err("node '%s': startAt must be a non-negative integer block height (got %r)" % (node_id, start_at))
+            start_at = 0
+        if role == "sealer" and syncmode in ("fast", "snap"):
+            err("node '%s': a sealer cannot use syncmode '%s' (it must execute every block to mint); "
+                "use full or archive" % (node_id, syncmode))
         if role == "sealer":
             if not keyref:
                 err("node '%s': role 'sealer' requires keyRef (name of an env "
@@ -264,11 +297,6 @@ for idx, entry in enumerate(nodes_raw):
             elif mode == "print" and not os.environ.get(keyref):
                 err("node '%s': keyRef '%s' is not set in the environment "
                     "(check .env)" % (node_id, keyref))
-        if client == "nethermind" and chain_id is not None and chain_id != 5151:
-            err("node '%s': client 'nethermind' only loads its own bundled "
-                "net5151 chainspec, not an arbitrary genesis file -- it cannot "
-                "join a custom chainId (%r) topology (ItWorksinMyLocal#46 open "
-                "question #2)" % (node_id, chain_id))
         if maxpeers != "" and (not isinstance(maxpeers, int) or isinstance(maxpeers, bool)):
             err("node '%s': maxpeers must be an integer (got %r)" % (node_id, maxpeers))
 
@@ -278,6 +306,8 @@ for idx, entry in enumerate(nodes_raw):
             "role": role or "",
             "keyref": keyref,
             "maxpeers": maxpeers,
+            "syncmode": syncmode,
+            "startAt": start_at,
             # Every node in a topology shares the SAME mint/plateau target --
             # there is no per-node override (unlike maxpeers) -- precisely so
             # health.sh's preflight can assert "every resolved node agrees"
@@ -361,6 +391,8 @@ meta = [
     ("gap", gap),
     ("gasLimit", gas_limit),
     ("skipV1Validation", "true" if skip_v1_validation else "false"),
+    ("forks", forks),
+    ("forksDiv", forks_div),
     ("peering", peering),
     ("portBase", port_base),
     ("staggerSeconds", stagger_seconds),
@@ -371,7 +403,7 @@ meta = [
 for k, v in meta:
     print("# %s=%s" % (k, v))
 
-cols = ["id", "client", "role", "keyref", "maxpeers", "gasLimit", "p2p", "rpc", "ws", "authrpc", "torrent", "mcp", "privapi", "datadir"]
+cols = ["id", "client", "role", "keyref", "maxpeers", "syncmode", "startAt", "gasLimit", "p2p", "rpc", "ws", "authrpc", "torrent", "mcp", "privapi", "datadir"]
 print("\t".join(cols))
 for n in resolved:
     print("\t".join(str(n[c]) for c in cols))

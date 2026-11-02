@@ -11,6 +11,7 @@ A quick, plain-English cheat-sheet. All are run from this folder, e.g. `./setup.
 | `network-info.sh` | Prints a plain summary of the current network. | To review who owns what and the balances. |
 | `join.sh` | Connects & syncs an **existing** network (given its genesis). | To add a syncing peer, or join a network on another machine. |
 | `reset.sh` | Deletes all node data. | Before starting over with a new genesis or keys. |
+| `e2e.sh` | One-command net2040-like multi-client network: every client x sync type, every seat minting, PASS/FAIL/SKIP matrix. | To validate clients end to end on a fleet host (`./e2e.sh --topology net2040-like-5`). |
 | `sync-measure.sh` | Measures how long a node takes to sync and how much disk it uses. | To compare sync modes or clients (`join.sh --measure` runs it for you). |
 
 ---
@@ -79,6 +80,8 @@ Polls a node's RPC and the size of its datadir, writes a CSV row each poll, and
 prints a summary when the node reaches the tip: time to tip, average blocks/s,
 datadir and ancient size. With the node log it also times the geth-xdc history
 backfill that runs after a snap/fast sync (`--until history`).
+- `./join.sh --client geth --syncmode archive --mine 0xADDR --keystore DIR --password-file F ...` — `--syncmode full|fast|snap|archive`; `--mine` seats a real minting validator on **any** client (`--keyfile FILE` for erigon/reth)
+- `./join.sh --network net2040 --client erigon --syncmode snap` — follow the live net2040 test net
 - `./join.sh --network mainnet --client geth --syncmode snap --measure` — join
   and measure in one go; results in `<datadir>/sync-measure.csv` and
   `<datadir>/sync-measure.summary`

@@ -1,0 +1,8 @@
+# client	syncmode	platform	ref	reason
+# Known client bugs. e2e.sh and lib.sh:client_syncmode_status report these as SKIP (with the
+# reason), never FAIL. client/syncmode may be *; platform may be - or *, a platform slug,
+# or !<slug> meaning every platform except that one. Remove a row when the client is fixed.
+besu	snap	-	besu-snap	besu SNAP sync does not complete on XDPoS chains
+xone	fast	-	xone-fast	xone fast sync is not working
+xone	snap	-	xone-snap	xone snap sync is not working
+nethermind	*	-	nethermind#194	nethermind rejects block 35 with InvalidStateRoot on the net2040 fork ladder
