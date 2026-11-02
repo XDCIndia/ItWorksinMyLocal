@@ -5,4 +5,6 @@
 besu	snap	-	besu-snap	besu SNAP sync does not complete on XDPoS chains
 xone	fast	-	xone-fast	xone fast sync is not working
 xone	snap	-	xone-snap	xone snap sync is not working
+xone	*	-	xone-net2040-ladder	xone 8a054c05 rejects canonical block 61 (BAD BLOCK invalid merkle root) on the net2040-like fork ladder, so it cannot follow or mint; retest with the refreshed xone build
 nethermind	*	-	nethermind#194	nethermind rejects block 35 with InvalidStateRoot on the net2040 fork ladder
+# besu mint is NOT listed: besu has no V1 producer, so on a genesis-seated chain it is dropped from the V2 masternode set (QC 3/4); minting needs a post-V2 0x88 candidate registration the harness does not do yet (see README).

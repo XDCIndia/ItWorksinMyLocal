@@ -193,7 +193,11 @@ if skip_v1_validation:
         "let any real V1 divergence surface as a scenario result instead "
         "of being masked out of the genesis")
 
-if epoch is not None and epoch != 900:
+# modernOnly: no oldxdc node in the topology, so the legacy EpocBlockRandomize=900
+# constant does not apply and a shorter epoch is allowed (the mint-proof topologies
+# use 450 to reach the V2 switch quickly).
+modern_only = bool(topo.get("modernOnly", False))
+if epoch is not None and epoch != 900 and not modern_only:
     err("epoch must be 900 (legacy oldxdc hardcodes EpocBlockRandomize=900 "
         "independent of this genesis field; any other value freezes the "
         "chain at the first checkpoint) -- got %r" % epoch)
@@ -314,6 +318,9 @@ for idx, entry in enumerate(nodes_raw):
             # trivially by construction, not by hoping nothing diverges.
             "gasLimit": gas_limit,
         })
+
+if modern_only and any(n["client"] == "oldxdc" for n in resolved):
+    err("modernOnly: true is not allowed with an oldxdc node (it needs epoch 900)")
 
 sealer_count = sum(1 for n in resolved if n["role"] == "sealer")
 if nodes_raw and sealer_count == 0:
