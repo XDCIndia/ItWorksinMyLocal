@@ -181,15 +181,31 @@ for r in rows:
     nodes.append(dict(id=r["id"], client=r["client"], role=r["role"], sm=r["syncmode"] or "full",
                       start=int(r["startAt"] or 0), port=r["rpc"], datadir=r["datadir"], addr=addr))
 sealers = [n for n in nodes if n["role"] == "sealer"]
-ref = next(n for n in sealers if n["start"] == 0)
+boots = [n for n in sealers if n["start"] == 0]
+for n in boots: n["head"] = head(n["port"]) or 0
+ref = max(boots, key=lambda n: n["head"])   # a bootstrap seat can be stuck on a fork; judge against the longest
 
 # ---- wait for the target height (and for late nodes to have been started).
 # Late nodes are started by `fleet.sh late` at their startAt, so the target is at
 # least the last startAt + a little (otherwise we would stop before they exist).
 until = max([until] + [n["start"] + 50 for n in nodes])
-t0 = time.time(); last = None
+t0 = time.time(); last = None; zero_since = time.time(); bounces = 0
+topo_file = os.path.join(os.path.dirname(run), ".e2e", os.path.basename(run) + ".json")
 while True:
     h = head(ref["port"])
+    # A fresh modern chain sometimes never releases its first block (the xdcSyncer
+    # genesis gate, a client bug that clears on restart). If nothing has been
+    # produced for 8 minutes, bounce the bootstrap seats (at most twice).
+    if h:
+        zero_since = time.time()
+    elif time.time() - zero_since > 480 and bounces < 2:
+        bounces += 1; zero_since = time.time()
+        print("e2e.sh: chain still at block 0 after 8 min -- restarting the bootstrap seats (attempt %d)" % bounces, flush=True)
+        import subprocess
+        for n in boots:
+            subprocess.call(["netlab/node.sh", "stop", topo_file, n["id"]])
+        for n in boots:
+            subprocess.call(["netlab/node.sh", "start", topo_file, n["id"], "--genesis", gen])
     if h is not None and h >= until:
         late_done = True
         if late_pid:
@@ -248,7 +264,7 @@ gaps = sorted(b - a for a, b in zip(tss, tss[1:]))
 avg = float(gaps[len(gaps) // 2]) if gaps else 0
 MINT_RE = re.compile(r"minted block|Successfully sealed|self-mined|produced block|block produced|sealed block|proposed block", re.I)
 def canonical_mints(logf):
-    got = set()
+    got = {}
     if not os.path.exists(logf): return got
     with open(logf, errors="replace") as fh:
         for l in fh:
@@ -259,7 +275,7 @@ def canonical_mints(logf):
             if not c: continue
             h = mh.group(1).lower()
             if (".." in h and c[2:2 + len(h.split("..")[0])] == h.split("..")[0] and c.endswith(h.split("..")[1])) or c[2:] == h:
-                got.add(num)
+                got[num] = c
     return got
 
 for n in nodes:
@@ -276,12 +292,13 @@ for n in nodes:
     if n["role"] == "sealer":
         logm = canonical_mints(os.path.join(os.path.dirname(run), os.path.relpath(n["datadir"], "nodes"), "node.log"))
         got = len(logm) + miners.get(n["addr"], 0)
-        add(n, "minted(last %d)" % (rh - lo + 1), got > 0, "%d canonical block(s) by %s" % (got, n["addr"][:10]))
+        ev = ", ".join("#%d %s" % (k, logm[k][:12]) for k in sorted(logm)[:3])
+        add(n, "minted(last %d)" % (rh - lo + 1), got > 0, "%d canonical block(s) by %s e.g. %s" % (got, n["addr"][:10], ev))
     # logs
     logf = os.path.join(os.path.dirname(run), os.path.relpath(n["datadir"], "nodes"), "node.log")
     bad = 0
     if os.path.exists(logf):
-        pat = re.compile(r"BAD BLOCK|Bad block|invalid merkle root|invalid difficulty|InvalidStateRoot|HeaderGasUsedMismatch", re.I)
+        pat = re.compile(r"BAD BLOCK|\bBad block\b(?!s)|(?i:invalid merkle root|invalid difficulty|InvalidStateRoot|HeaderGasUsedMismatch)")   # case-sensitive: "...c47bad blocks=1" is a hash + a count
         with open(logf, errors="replace") as fh: bad = sum(1 for l in fh if pat.search(l))
     add(n, "no-bad-block-logs", bad == 0, "%d hit(s)" % bad)
 
@@ -297,7 +314,7 @@ for n in nodes:
     bad = [c for c in checks if c[1] == "FAIL"]
     skip = [c for c in checks if c[1] == "SKIP" and c[0] == "running"]
     status = "FAIL" if bad else "SKIP" if skip else "PASS"
-    detail = "; ".join("%s: %s" % (c[0], c[2]) for c in (bad or skip)) or "%d checks" % len(checks)
+    detail = "; ".join("%s: %s" % (c[0], c[2]) for c in (bad or skip)) or "%d checks; %s" % (len(checks), "; ".join(c[2] for c in checks if c[0].startswith("minted")))
     fail += status == "FAIL"
     print("%-20s %-11s %-9s %-7s %s" % (n["id"], n["client"], n["sm"], status, detail))
 for s in json.load(open(skipped_f)):

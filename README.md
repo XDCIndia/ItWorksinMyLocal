@@ -279,6 +279,8 @@ reason. Use `net2040-like-5` for a small bring-up; `--clients`, `--syncmodes`,
 `--until <block|fork>`, `--mint`, `--keep` narrow or extend it. Run it on a fleet host,
 not a laptop/orchestrator.
 
+Mint validation status (65.21.71.4, `topologies/mint-<client>.json` = 4 geth seats + one client seat): erigon seals canonical blocks; xone and nethermind are known-bug SKIPs (see `e2e-known-bugs.tsv`); besu follows but is not in the V2 masternode set when seated from genesis (it has no V1 producer), so besu minting needs a post-V2 candidate registration that is not automated yet. besu on a host with musl installed needs the musl libs hidden (rocksdbjni picks a musl .so that is not in the jar).
+
 Every client now has a real `--mine ADDR` arm in `join.sh` (geth/xone/oldxdc unlock a
 keystore, besu/nethermind read the keystore dir, erigon/reth read a 0600 raw-key file
 -- never the key on a command line). `--syncmode full|fast|snap|archive` is validated
