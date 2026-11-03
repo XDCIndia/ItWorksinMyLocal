@@ -463,7 +463,13 @@ cmd_late() {
     local want="${START_OF[$id]}" head
     echo "fleet.sh: $id waits for block $want..." >&2
     while :; do
-      head=$(LAB_RPC_TIMEOUT=3 lab_block_number "http://127.0.0.1:${RPC_OF[$head_id]}" 2>/dev/null) || head=0
+      # highest head among the initially-started sealers (one of them can be stuck on a fork)
+      head=0; local hs h
+      for hs in "${NODE_IDS[@]}"; do
+        [ "${ROLE_OF[$hs]}" = sealer ] && [ "${START_OF[$hs]:-0}" -eq 0 ] || continue
+        h=$(LAB_RPC_TIMEOUT=3 lab_block_number "http://127.0.0.1:${RPC_OF[$hs]}" 2>/dev/null) || h=0
+        [ "${h:-0}" -gt "$head" ] && head=$h
+      done
       [ "${head:-0}" -ge "$want" ] && break
       sleep 10
     done
