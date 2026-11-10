@@ -1451,10 +1451,10 @@ PY
     _nm_pw="$(cd "$(dirname "$PWFILE")" && pwd)/$(basename "$PWFILE")"
     # nethermind finds a key by the address in the file NAME (lower-case hex, no prefix); oldxdc names files
     # UTC--..--xdc<MixedCase>, so stage a renamed copy.
-    NM_KS="$NM_DATADIR/keystore-nm"; mkdir -p "$NM_KS"
+    NM_KS="$NM_DATADIR/keystore-nm"; mkdir -p "$NM_KS"; chmod 700 "$NM_KS"
     # (file names carry the address in mixed case, so match case-insensitively)
     for _kf in $(ls "$KEYSTORE" | grep -i "$MINE_HEX"); do _ka=$(printf '%s' "${_kf##*--}" | sed -E 's/^(0x|xdc)//I' | tr 'A-F' 'a-f'); cp -f "$KEYSTORE/$_kf" "$NM_KS/${_kf%--*}--$_ka"; done
-    NM_SYNC="$NM_SYNC --Mining.Enabled true --KeyStore.KeyStoreDirectory $NM_KS --KeyStore.BlockAuthorAccount $MINE_ADDR --KeyStore.PasswordFiles $_nm_pw --KeyStore.UnlockAccounts $MINE_ADDR"
+    NM_SYNC="$NM_SYNC --Mining.Enabled true --KeyStore.KeyStoreDirectory $NM_KS --KeyStore.BlockAuthorAccount $MINE_ADDR --KeyStore.PasswordFiles $_nm_pw --KeyStore.UnlockAccounts $MINE_ADDR --Sync.NonValidatorNode false"
   fi
   # net5151: disable nethermind peer persistence. With it ON, the DB-loaded copies
   # of the validator node IDs register in the peer pool BEFORE the static-config

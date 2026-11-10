@@ -39,3 +39,8 @@ erigon/reth take `--keyfile FILE` (raw hex key, mode 0600) instead of a keystore
 ## Single-signer rule
 
 One key, one running producer, ever. The same validator key must never produce on two nodes at once (double-sign). Before starting a producer for an address, fully stop any existing producer for it, on every host. join.sh refuses `--mine` on testnet/mainnet without `--i-understand-single-signer` for this reason.
+
+## Producer notes per client
+
+- nethermind: start it as a follower first and let it reach the tip, then restart with `--mine` on the same `--datadir` (a validator-mode node does not follow the chain from behind). join.sh sets `Sync.NonValidatorNode=false` for `--mine`. A pivot-synced datadir has no candidate snapshots for the gap blocks near its pivot, so export `XDC_GAP_SNAPSHOT_SEED=<file>` (JSON `[{number, hash, candidates:[{address, cap}]}]`, one entry per gap block, `number` = 450 mod 900, read from the 0x88 contract at that block on an archive node, zero-cap candidates dropped); without it the node logs "No masternodes in epoch" and stalls. A candidate that is not yet in the masternode set logs "Skipped voting (not in masternode set)" until its epoch switch.
+- besu: the validator key is passed as `-Dxdpos.validator.*` JAVA_OPTS (join.sh does this for `--mine`); the node also emits gasless sign txs for its address.
