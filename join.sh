@@ -843,7 +843,17 @@ NODETYPE=sync
 # Default datadir: nodes/<client>-<nodetype>, so every client's chaindata lives
 # under ./nodes (clear of run.sh's numbered nodes/1..N local net) and different
 # clients never share a datadir. An explicit --datadir always wins.
-[ -z "$DATADIR" ] && DATADIR="nodes/${CLIENT}-${NODETYPE}"
+# One datadir per client: the role (sync/seal) is a flag, not a path. If this role's
+# default dir does not exist but the other role's does, reuse it, so a synced
+# follower can become a producer (or back) without a fresh empty sync from block 0.
+if [ -z "$DATADIR" ]; then
+  DATADIR="nodes/${CLIENT}-${NODETYPE}"
+  _other=sync; [ "$NODETYPE" = sync ] && _other=seal
+  if [ ! -d "$DATADIR" ] && [ -d "nodes/${CLIENT}-${_other}" ]; then
+    DATADIR="nodes/${CLIENT}-${_other}"
+    echo "reusing existing datadir $DATADIR (role is a flag, not a path)"
+  fi
+fi
 
 # Per-client default ports: a 100-wide block per client so all seven join clients
 # run side by side with no cross-client clash, in a high band kept clear of
