@@ -178,6 +178,8 @@
 #                        instead of genesis -- xone's fast anchored-snap start.
 #   --anchor-seedrpc URL xone only, with --anchor: archive node HTTP RPC xone
 #                        reads gap-block candidate pools from (xone -anchor.seedrpc).
+#   (sync default)       public networks (testnet/mainnet) default to the smallest-footprint
+#                        sync per client; pass --syncmode archive for full history.
 #   --mine ADDR          also mint with this validator address. Every client has a
 #                        real mint arm: oldxdc/geth/xone unlock a keystore account,
 #                        besu/nethermind read the keystore dir, erigon/reth read a
@@ -307,7 +309,7 @@ while [ $# -gt 0 ]; do
     --no-ethstats) ETHSTATS=""; shift;;
     --measure)     MEASURE=1; shift;;
     --measure-interval) MEASURE_INTERVAL=$2; shift 2;;
-    -h|--help)     sed -n '2,201p' "$0" | sed 's/^# \{0,1\}//'; exit 0;;
+    -h|--help)     sed -n '2,203p' "$0" | sed 's/^# \{0,1\}//'; exit 0;;
     *) echo "unknown flag: $1" >&2; exit 1;;
   esac
 done
@@ -1208,7 +1210,9 @@ if [ "$CLIENT" = erigon ]; then
     echo "  erigon: no --p2p.allowed-ports in this build; it will choose ports upward from $PORT"
   fi
   # prune mode: archive keeps everything, otherwise the client default (full).
+  # Public networks default to the smallest footprint: --prune.mode minimal.
   PM_ARG=""; [ "$ARCHIVE" = 1 ] && PM_ARG="--prune.mode archive"
+  [ "$ARCHIVE" != 1 ] && [ -n "$_public" ] && PM_ARG="--prune.mode minimal"
   # Mint (proven on the net2040 fleet): --xdc.v2.produce --xdc.v2.vote with the
   # raw hex key FILE (never the key on the command line). --xdc.v1.produce is
   # added when this build has it, so a seat can also sign before the V2 switch.
@@ -1254,6 +1258,13 @@ elif [ "$CLIENT" = geth ] || [ "$CLIENT" = geth4 ]; then
   # seat runs --state.scheme=hash); other types keep the client's default scheme.
   GETH_STATE=""; GC_ARG=""
   [ "$ARCHIVE" = 1 ] && { GETH_STATE="--state.scheme=hash"; GC_ARG="--gcmode archive"; }
+  # Public networks default to the smallest footprint: gcmode full and bounded tx
+  # lookup/history (--history.transactions; --txlookuplimit before geth 1.17.4-xdc.7).
+  if [ -n "$_public" ] && [ "$ARCHIVE" != 1 ]; then
+    GC_ARG="--gcmode full"
+    if "$XDC" --help 2>&1 | grep -q 'history\.transactions'; then GC_ARG="$GC_ARG --history.transactions 2350000"
+    else GC_ARG="$GC_ARG --txlookuplimit 2350000"; fi
+  fi
   # Mint (the fleet's geth producer flags): keystore account unlocked from a
   # password FILE, --mine, etherbase = the seat. Account unlock is refused with
   # a non-loopback http/ws bind, so a mint seat binds RPC to 127.0.0.1 (as the
@@ -1323,6 +1334,8 @@ PY
   # archive: besu keeps full history only with FOREST storage (BONSAI prunes
   # trie logs); FOREST + FULL sync is the archive combination.
   BESU_STORE=BONSAI; [ "$ARCHIVE" = 1 ] && BESU_STORE=FOREST
+  # BONSAI with trie-log pruning on (smallest footprint) except for archive.
+  BESU_PRUNE=""; [ "$ARCHIVE" != 1 ] && [ -n "$_public" ] && BESU_PRUNE="--bonsai-limit-trie-logs-enabled"
   # Mint (the fleet's run-producer.sh): the xdpos.validator.* system properties
   # carry the keystore dir, password FILE and seat address (startup fails closed
   # if the key does not derive to the address).
@@ -1346,7 +1359,7 @@ PY
     --rpc-http-enabled=true --rpc-http-host=127.0.0.1 --rpc-http-port="$RPCPORT" \
     --rpc-http-apis=ETH,NET,WEB3,ADMIN,DEBUG,TXPOOL \
     --engine-rpc-enabled=false --min-gas-price=0 --auto-log-bloom-caching-enabled=false \
-    $MP_ARG $BESU_ES &
+    $BESU_PRUNE $MP_ARG $BESU_ES &
 elif [ "$CLIENT" = reth ]; then
   # reth-xdc (sync-only). Reads the geth-format genesis natively via --chain <file>.
   # Peers via trusted-only (its discv4/v5 doesn't traverse an XDPoS bootnode), and
@@ -1364,6 +1377,11 @@ elif [ "$CLIENT" = reth ]; then
   # sync type: reth is staged-sync only. Default keeps all history (= archive);
   # --full prunes, applied only when "full" was asked for explicitly.
   RETH_PRUNE=""; [ -n "$SYNCMODE_EXPLICIT" ] && [ "$SYNCMODE" = full ] && RETH_PRUNE="--full"
+  # Public networks default to the smallest pruned mode this build has (--minimal,
+  # else --full); only an explicit --syncmode archive keeps all history.
+  if [ -n "$_public" ] && [ "$ARCHIVE" != 1 ]; then
+    if "$CLIENT_BIN" node --help 2>&1 | grep -q -- '--minimal'; then RETH_PRUNE="--minimal"; else RETH_PRUNE="--full"; fi
+  fi
   # Mint (the fleet's reth producer): env, not flags -- XDC_PRODUCE=1 plus a raw
   # hex key FILE and the seat address.
   if [ -n "$MINE_ADDR" ]; then
@@ -1400,6 +1418,10 @@ elif [ "$CLIENT" = nethermind ]; then
   NM_SYNC=""
   case "$SYNCMODE" in
     snap) NM_SYNC="--Sync.SnapSync true --Sync.FastSync true"
+      # Smallest footprint on public nets (nm#275: Apothem 111 GB -> 20 GB): Hybrid
+      # pruning, modest memory hint, and bodies on so the old-headers backfill stops
+      # at the AncientBodiesBarrier instead of running to genesis.
+      if [ -n "$_public" ]; then NM_SYNC="$NM_SYNC --Pruning.Mode Hybrid --Init.MemoryHint 3072000000 --Sync.DownloadBodiesInFastSync true"; fi
       # Apothem: nethermind has no pivot of its own on XDPoS and otherwise downloads
       # headers forward from genesis (~30 blk/s, weeks). Pin a pivot ~3000 blocks
       # behind the tip from a trusted RPC (NM_PIVOT_RPC; a trust root, not a peer).
