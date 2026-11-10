@@ -20,6 +20,7 @@ build a genesis, run 4 mining nodes + a bootnode, and let other machines join.
 - [Network details](#network-details)
 - [Troubleshooting](#troubleshooting)
 - [The puppeth fix](#the-puppeth-fix)
+- [Apothem validator addresses](docs/apothem-validators.md)
 
 ---
 

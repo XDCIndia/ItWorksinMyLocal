@@ -48,8 +48,10 @@
 #                        boots every client at once, each in its own datadir
 #                        (nodes/<client>-<type>) with a distinct 100-wide port
 #                        block, all joining the same network -- a one-command
-#                        cross-client bring-up. Only oldxdc can seal
-#                        (--mine); all others join sync-only. All clients default
+#                        cross-client bring-up. With --client all, --mine seats
+#                        ONLY the oldxdc child (one key, one process); every
+#                        client has its own mint arm when run alone (see --mine).
+#                        All clients default
 #                        to a
 #                        prebuilt-binary download (binaries.json) for this
 #                        platform, falling back to a source build for
@@ -163,6 +165,18 @@
 #                        a confirmed-safe equivalent CLI flag to guess at.
 #   --etherbase ADDR     oldxdc --mine only: block-reward address (also env
 #                        ETHERBASE). Omitted (client default) unless given.
+#   --i-understand-single-signer
+#                        REQUIRED with --mine on --network testnet|mainnet. The
+#                        same validator key must NEVER produce on two nodes at
+#                        once (double-sign); any existing producer for that key
+#                        must be fully stopped first. Also, a non-oldxdc/geth
+#                        producer on these networks defaults --maxpeers to 50
+#                        (it needs ~27+ canonical peers to collect votes).
+#   --anchor NUM:0xHASH  xone only: start the snap header chain from this trusted
+#                        anchor (pin from a trusted oracle, never a live peer)
+#                        instead of genesis -- xone's fast anchored-snap start.
+#   --anchor-seedrpc URL xone only, with --anchor: archive node HTTP RPC xone
+#                        reads gap-block candidate pools from (xone -anchor.seedrpc).
 #   --mine ADDR          also mint with this validator address. Every client has a
 #                        real mint arm: oldxdc/geth/xone unlock a keystore account,
 #                        besu/nethermind read the keystore dir, erigon/reth read a
@@ -202,6 +216,7 @@ SELF="$PWD/$(basename "$0")"
 GENESIS=""; BOOTNODES=""; NETWORKID=""; DATADIR=""; NAME=""; HOST_IP=""; CHAIN=""
 MEASURE=""; MEASURE_INTERVAL=60
 MINEADDR=""; STATICPEERS=""; NETWORK=""; SYNCMODE=""; KEYFILE=""; KEYSTORE=""; PWFILE=""
+SINGLE_SIGNER_OK=0; XONE_ANCHOR=""; XONE_ANCHOR_RPC=
 # STATICPEERS_EXPLICIT: set when the caller passes --staticpeers directly, so
 # the local-sealer harvest below (LOCAL_BOOTNODE=1) knows to never clobber an
 # explicit choice -- it only overrides STATICPEERS it (or peers.list) derived.
@@ -283,12 +298,15 @@ while [ $# -gt 0 ]; do
     --gas-limit)   GAS_LIMIT=$2; shift 2;;
     --etherbase)   ETHERBASE=$2; shift 2;;
     --mine)        MINEADDR=$2; shift 2;;
+    --i-understand-single-signer) SINGLE_SIGNER_OK=1; shift;;
+    --anchor)      XONE_ANCHOR=$2; shift 2;;
+    --anchor-seedrpc) XONE_ANCHOR_RPC=$2; shift 2;;
     --staticpeers) STATICPEERS=$2; STATICPEERS_EXPLICIT=1; shift 2;;
     --ethstats)    ETHSTATS=$2; shift 2;;
     --no-ethstats) ETHSTATS=""; shift;;
     --measure)     MEASURE=1; shift;;
     --measure-interval) MEASURE_INTERVAL=$2; shift 2;;
-    -h|--help)     sed -n '2,135p' "$0" | sed 's/^# \{0,1\}//'; exit 0;;
+    -h|--help)     sed -n '2,201p' "$0" | sed 's/^# \{0,1\}//'; exit 0;;
     *) echo "unknown flag: $1" >&2; exit 1;;
   esac
 done
@@ -353,7 +371,12 @@ case "${NETWORK:-}" in
   testnet|apothem)
     [ -z "$GENESIS" ]   && GENESIS="genesis/genesis-testnet.json"
     [ -z "$NETWORKID" ] && NETWORKID=51
-    NM_CONFIG="${NM_CONFIG/xdc-devnet5151/xdc-testnet}"
+    # nethermind v1.36.0-xdc.3: xdc-apothem is the maintained Apothem chainspec
+    # (xdc-testnet is not on the current fork schedule, nethermind#277).
+    NM_CONFIG="${NM_CONFIG/xdc-devnet5151/xdc-apothem}"
+    # besu/xone need the full Apothem fork schedule (xone: else 'invalid base fee' past Gas2500x) (cancun/prague/gas2500x/...); the
+    # vendored genesis-testnet.json stops at byzantium. Same genesis hash 0xbdea512b.
+    case "${CLIENT:-}" in besu|xone) [ "$GENESIS" = "genesis/genesis-testnet.json" ] && GENESIS="genesis/genesis-testnet-besu.json" ;; esac
     NM_CONFIG_EXPLICIT=1   # a curated bundled chainspec, never auto-convert over it
     PUB_BOOTNODES_FILE="bootnodes/testnet.list"
     GAS_LIMIT_DEFAULT=420000000 ;;
@@ -410,6 +433,29 @@ if [ -z "$GAS_LIMIT" ]; then
   echo "error: no gas-limit plateau mapped for --network '${NETWORK:-devnet5151}' (see the GAS_LIMIT_DEFAULT cases above, ItWorksinMyLocal#94/#96/#98); refusing to silently default -- pass an explicit --gas-limit N (or GAS_LIMIT env var) instead. This matters most before --mine: a mismatched or missing plateau on a sealing/proposing join is exactly how #94's netv12 wedge happened." >&2
   exit 1
 fi
+# DOUBLE-SIGN GUARD: a validator key producing on two nodes at once is slashable /
+# forks the seat. Refuse --mine on a PUBLIC network unless the operator explicitly
+# acknowledges it is the single signer.
+case "${NETWORK:-}" in mainnet|xinfin|xdc|testnet|apothem) _public=1 ;; *) _public="" ;; esac
+if [ -n "$MINEADDR" ] && [ -n "$_public" ] && [ "$SINGLE_SIGNER_OK" != 1 ]; then
+  echo "join.sh: refusing --mine on --network $NETWORK without --i-understand-single-signer." >&2
+  echo "  The same validator key must NEVER produce on two nodes at once (double-sign)." >&2
+  echo "  Any existing producer for $MINEADDR must be FULLY STOPPED first (check every host)." >&2
+  exit 1
+fi
+# Non-oldxdc/geth producers need ~27+ canonical peers to collect votes: raise the
+# peer cap (an explicit --maxpeers/MAXPEERS still wins).
+if [ -n "$MINEADDR" ] && [ -n "$_public" ] && [ -z "$MAXPEERS" ]; then
+  case "${CLIENT:-oldxdc}" in oldxdc|geth|geth4) ;; *) MAXPEERS=50; echo "producer on $NETWORK: --maxpeers 50 (needs ~27+ canonical peers for votes)" ;; esac
+fi
+# erigon/reth have no Apothem-mint-proven release yet (e2e-known-bugs.tsv).
+case "${NETWORK:-}:${CLIENT:-}" in testnet:erigon|testnet:reth|apothem:erigon|apothem:reth)
+  echo "warning: $CLIENT is not yet Apothem-mint-proven (e2e-known-bugs.tsv); follower use only." >&2 ;;
+esac
+if [ -n "$XONE_ANCHOR" ] || [ -n "$XONE_ANCHOR_RPC" ]; then
+  [ "${CLIENT:-}" = xone ] || { echo "join.sh: --anchor/--anchor-seedrpc are xone only" >&2; exit 1; }
+  printf '%s' "$XONE_ANCHOR" | grep -Eq '^[0-9]+:0x[0-9a-fA-F]{64}$' || { echo "join.sh: --anchor needs NUM:0xHASH" >&2; exit 1; }
+fi
 if [ -n "$PUB_BOOTNODES_FILE" ] && [ -z "$BOOTNODES" ] && [ -f "$PUB_BOOTNODES_FILE" ]; then
   BOOTNODES=$(grep -v '^[[:space:]]*#' "$PUB_BOOTNODES_FILE" | grep enode | paste -sd, -)
   echo "No --bootnodes given; using $(echo "$BOOTNODES" | tr ',' '\n' | grep -c enode) public $NETWORK bootnode(s)"
@@ -427,6 +473,15 @@ if [ -n "$PUB_BOOTNODES_FILE" ] && [ -z "$BOOTNODES" ] && [ -f "$PUB_BOOTNODES_F
     else
       echo "note: no seed peers from $_seedurl; fast/snap may be slow to find state-serving peers" >&2
     fi
+  fi
+  # Vendored static peers (bootnodes/<net>-static.list): our snap/modern-capable
+  # Apothem nodes. The public bootnodes above are legacy XDC and serve no snap.
+  _sl="${PUB_BOOTNODES_FILE%.list}-static.list"
+  if [ -f "$_sl" ]; then
+    _st=$(grep -v '^[[:space:]]*#' "$_sl" | grep enode | paste -sd, -)
+    BOOTNODES="$_st,$BOOTNODES"
+    if [ "$STATICPEERS_EXPLICIT" != 1 ]; then STATICPEERS="$_st${STATICPEERS:+,$STATICPEERS}"; fi
+    echo "Added $(echo "$_st" | tr ',' '\n' | grep -c enode) vendored static peer(s) from $_sl"
   fi
 fi
 # The vendored public genesis uses XDC's "xdc"-prefixed address display format in
@@ -693,6 +748,7 @@ if [ "$CLIENT" = all ]; then
   # --mine in a fan-out seats ONLY the oldxdc child (one address cannot be shared
   # by several clients); use netlab/ topologies to seat several clients.
   [ -n "$MINEADDR" ]    && shared+=(--mine "$MINEADDR")
+  [ "$SINGLE_SIGNER_OK" = 1 ] && shared+=(--i-understand-single-signer)
   [ -n "$MAXPEERS" ]    && shared+=(--maxpeers "$MAXPEERS")
   [ -n "$ETHERBASE" ]   && shared+=(--etherbase "$ETHERBASE")   # only the oldxdc --mine child uses it
   # --gas-limit is ALWAYS forwarded (unlike the optional flags above): GAS_LIMIT
@@ -1321,7 +1377,26 @@ elif [ "$CLIENT" = nethermind ]; then
   # (its default, which is what devnet5151 has always used -> unchanged there).
   NM_SYNC=""
   case "$SYNCMODE" in
-    snap) NM_SYNC="--Sync.SnapSync true --Sync.FastSync true" ;;
+    snap) NM_SYNC="--Sync.SnapSync true --Sync.FastSync true"
+      # Apothem: nethermind has no pivot of its own on XDPoS and otherwise downloads
+      # headers forward from genesis (~30 blk/s, weeks). Pin a pivot ~3000 blocks
+      # behind the tip from a trusted RPC (NM_PIVOT_RPC; a trust root, not a peer).
+      if [ "$NETWORK" = testnet ] || [ "$NETWORK" = apothem ]; then
+        _pv=$(python3 - "${NM_PIVOT_RPC:-https://erpc.apothem.network}" <<'PY'
+import json,sys,urllib.request
+def rpc(m,p):
+    r=urllib.request.Request(sys.argv[1],json.dumps({"jsonrpc":"2.0","id":1,"method":m,"params":p}).encode(),{"content-type":"application/json","user-agent":"iwml-join/1"})
+    return json.load(urllib.request.urlopen(r,timeout=20))["result"]
+n=int(rpc("eth_blockNumber",[]),16)-3000
+b=rpc("eth_getBlockByNumber",[hex(n),False])
+print(n,b["hash"],int(b["totalDifficulty"],16))
+PY
+) || _pv=""
+        if [ -n "$_pv" ]; then set -- $_pv
+          NM_SYNC="$NM_SYNC --Sync.PivotNumber $1 --Sync.PivotHash $2 --Sync.PivotTotalDifficulty $3 --Sync.AncientBodiesBarrier $(( $1 - 2800 ))"
+          echo "  nethermind: pivot $1 $2 from ${NM_PIVOT_RPC:-https://erpc.apothem.network}"
+        else echo "  warning: could not fetch a nethermind pivot; it will sync headers from genesis (very slow)" >&2; fi
+      fi ;;
     fast) NM_SYNC="--Sync.FastSync true" ;;
     archive) NM_SYNC="--Sync.FastSync false --Sync.SnapSync false --Pruning.Mode None" ;;
   esac
@@ -1380,8 +1455,10 @@ elif [ "$CLIENT" = xone ]; then
   fi
   XONE_ES=""; [ -n "$full" ] && XONE_ES="-ethstats $full"
   MP_ARG=""; [ -n "$MAXPEERS" ] && MP_ARG="-maxpeers $MAXPEERS"
+  XONE_ANCH=""; [ -n "$XONE_ANCHOR" ] && XONE_ANCH="-anchor $XONE_ANCHOR"
+  [ -n "$XONE_ANCHOR_RPC" ] && XONE_ANCH="$XONE_ANCH -anchor.seedrpc $XONE_ANCHOR_RPC"
   # shellcheck disable=SC2086
-  "$XDC" -override.genesis "$GENESIS" -networkid "$NETWORKID" -syncmode "$SYNC_FLAG" $XONE_GC $XONE_MINE \
+  "$XDC" -override.genesis "$GENESIS" -networkid "$NETWORKID" -syncmode "$SYNC_FLAG" $XONE_GC $XONE_MINE $XONE_ANCH \
     -datadir "$DATADIR" -port "$PORT" -discovery.port "$PORT" -nat "extip:${IP}" \
     -bootnodes "$BOOTNODES" $MP_ARG -miner.gaslimit "$GAS_LIMIT" \
     -http -http.addr 0.0.0.0 -http.port "$RPCPORT" -http.vhosts "*" \
