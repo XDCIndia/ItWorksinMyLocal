@@ -13,6 +13,7 @@ build a genesis, run 4 mining nodes + a bootnode, and let other machines join.
 - [Choosing a client](#choosing-a-client)
 - [Quick start](#quick-start)
   - [Run every client against it](#run-every-client-against-it)
+- [Default sync footprint on public networks](#default-sync-footprint-on-public-networks)
 - [Everyday commands](#everyday-commands)
 - [Generating a genesis](#generating-a-genesis)
 - [Joining from another machine](#joining-from-another-machine)
@@ -453,6 +454,19 @@ done
 > a missing field must not be mistaken for agreement.
 
 ---
+
+## Default sync footprint on public networks
+
+`join.sh --network testnet|mainnet` defaults to the smallest-footprint sync per client; pass `--syncmode archive` for full history.
+
+| Client | Default flags | Disk at tip, Apothem (measured) |
+|---|---|---|
+| geth | `--syncmode snap --gcmode full --history.transactions 2350000` (`XDC_EXPERIMENTAL_SNAPSYNC=1` is set for snap) | 35 GB at tip, 45 GB ~1 h later (history backfill) |
+| erigon | `--prune.mode minimal` | not measured (no Apothem-proven release) |
+| reth | `--minimal` if the build has it, else `--full` | not measured (no Apothem-proven release) |
+| besu | `SNAP` + `BONSAI` + `--bonsai-limit-trie-logs-enabled`, and on testnet a genesis checkpoint ~3000 blocks behind the tip from a trusted RPC (`BESU_CHECKPOINT_RPC`); needs host Java 21 | 27 GB, tip after ~50 min |
+| nethermind | SnapSync, `Pruning.Mode Hybrid`, `Init.MemoryHint 3072000000`, bodies on with a pivot from a trusted RPC (`NM_PIVOT_RPC`) so the old-headers backfill stops at `AncientBodiesBarrier` (nm#275) | 20 GB, tip after ~12 min. The same node on the previous defaults (bodies off) grew to 94 GB |
+| xone | `-syncmode snap`; falls back to full until the anchored start works (known issue, fix pending) | n/a |
 
 ## Everyday commands
 
