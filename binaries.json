@@ -104,7 +104,7 @@
       }
     },
     "besu": {
-      "_comment": "v26.11-xdc.3 (f52e685, XDCIndia/besu): Apothem (chainId 51) snap follower + validated minting. Release has NO attached binary: this tarball (bin/ lib/, no bundled JRE -- needs host Java 21) was built from the tag with `./gradlew installDist` and must be uploaded as the release asset named in 'file' (noMirror: not on xdc.network). Use with join.sh --network testnet, which feeds genesis/genesis-testnet-besu.json (full Apothem fork schedule, same genesis hash 0xbdea512b...). For real-time following keep the vendored bootnodes/testnet-static.list peers.",
+      "_comment": "v26.11-xdc.3 (f52e685, XDCIndia/besu): Apothem (chainId 51) snap follower + validated minting. The release had no attached binary: this tarball (bin/ lib/, no bundled JRE -- needs host Java 21) was built from the tag with `./gradlew installDist` and uploaded as the release asset named in 'file' with a .sha256 and a BUILD-INFO.txt recording commit f52e685ffb67c4afb045352f3cdc57d958c06f70 (noMirror: not on xdc.network). Use with join.sh --network testnet, which feeds genesis/genesis-testnet-besu.json (full Apothem fork schedule, same genesis hash 0xbdea512b...). For real-time following keep the vendored bootnodes/testnet-static.list peers.",
       "version": "26.11-xdc.3",
       "commit": "f52e685ffb67",
       "file": "besu-v26.11-xdc.3-linux-amd64.tar.gz",
@@ -125,7 +125,7 @@
       "noMirror": true
     },
     "nethermind": {
-      "_comment": "v1.36.0-xdc.3 (d9ca4e4, XDCIndia/xdc-nethermind-private): Apothem follower + validated minting; includes the EIP-170 code-size fix (#276) REQUIRED past Apothem block 85,177,157. linux-amd64 ONLY (the other slices were not rebuilt). Release has NO attached binary: this tarball (flat self-contained `dotnet publish -c release -r linux-x64 --self-contained true` dir, no host .NET needed; ./nethermind + chainspec/ + configs/) was built from the tag and must be uploaded as the release asset named in 'file' (noMirror). Use --network testnet (join.sh maps to chainspec xdc-apothem; xdc.json/xdc-testnet.json are not on the current fork schedule, nethermind#277). Not for mainnet from this release.",
+      "_comment": "v1.36.0-xdc.3 (d9ca4e4, XDCIndia/xdc-nethermind-private): Apothem follower + validated minting; includes the EIP-170 code-size fix (#276) REQUIRED past Apothem block 85,177,157. linux-amd64 ONLY (the other slices were not rebuilt). The release had no attached binary: this tarball (flat self-contained `dotnet publish -c release -r linux-x64 --self-contained true` dir, no host .NET needed; ./nethermind + chainspec/ + configs/) was built from the tag uploaded as the release asset named in 'file' with a .sha256 and a BUILD-INFO.txt recording commit d9ca4e4acd7b53e5ad0645c3d12e3c6e40175447 (noMirror). Use --network testnet (join.sh maps to chainspec xdc-apothem; xdc.json/xdc-testnet.json are not on the current fork schedule, nethermind#277). Not for mainnet from this release.",
       "version": "1.36.0-xdc.3",
       "commit": "d9ca4e4acd7b",
       "file": "nethermind-{os}-{arch}.tar.gz",
@@ -146,7 +146,7 @@
       "noMirror": true
     },
     "xone": {
-      "_comment": "xone v1.4.2 (08ed4b07, XDCIndia/xOneGo): Apothem follower & block producer, version identity fix. linux-amd64 ONLY, fetched as release asset xone-native-linux-amd64 via gh release download (noMirror). Supports -anchor NUM:0xHASH (+ -anchor.seedrpc) for the fast anchored-snap start: see join.sh --anchor. Older darwin slices (8a054c05) dropped: v1.4.2 ships no darwin asset. `xone --version` -> 'xone v1.4.2 (commit 08ed4b07)'.",
+      "_comment": "xone v1.4.2 (08ed4b07, XDCIndia/xOneGo): Apothem follower & block producer, version identity fix. linux-amd64 ONLY, fetched as release asset xone-native-linux-amd64 via gh release download (noMirror). KNOWN ISSUE (fix pending): on Apothem the anchored start fails at the first epoch switch and a plain start stays at block 0, so xone is not yet a working testnet follower from join.sh. Supports -anchor NUM:0xHASH (+ -anchor.seedrpc) for the fast anchored-snap start: see join.sh --anchor. Older darwin slices (8a054c05) dropped: v1.4.2 ships no darwin asset. `xone --version` -> 'xone v1.4.2 (commit 08ed4b07)'.",
       "version": "1.4.2",
       "commit": "08ed4b07",
       "ghRelease": {

@@ -57,7 +57,8 @@
 #                        platform, falling back to a source build for
 #                        oldxdc/geth/erigon if unavailable; BIN_SOURCE=build
 #                        (or per-client BIN_SOURCE_<client>=build) forces a
-#                        build / skips the download. besu/nethermind/reth also
+#                        build / skips the download. besu needs host Java 21
+#                        (its archive bundles no JRE). besu/nethermind/reth also
 #                        honor OLDXDC_BIN / BESU_BIN / RETH_BIN / NETHERMIND_DIST (or PATH)
 #                        ahead of both. besu & reth read the geth-format
 #                        --genesis natively; erigon loads it directly (v3.5.0+); nethermind
@@ -450,7 +451,8 @@ if [ -n "$MINEADDR" ] && [ -n "$_public" ] && [ -z "$MAXPEERS" ]; then
 fi
 # erigon/reth have no Apothem-mint-proven release yet (e2e-known-bugs.tsv).
 case "${NETWORK:-}:${CLIENT:-}" in testnet:erigon|testnet:reth|apothem:erigon|apothem:reth)
-  echo "warning: $CLIENT is not yet Apothem-mint-proven (e2e-known-bugs.tsv); follower use only." >&2 ;;
+  echo "warning: $CLIENT is not yet Apothem-mint-proven (e2e-known-bugs.tsv); follower use only." >&2 ;;  testnet:xone|apothem:xone)
+  echo "warning: xone testnet: anchor start (--anchor) is a known issue, fix pending; a plain start stays at block 0 (e2e-known-bugs.tsv)." >&2 ;;
 esac
 if [ -n "$XONE_ANCHOR" ] || [ -n "$XONE_ANCHOR_RPC" ]; then
   [ "${CLIENT:-}" = xone ] || { echo "join.sh: --anchor/--anchor-seedrpc are xone only" >&2; exit 1; }
@@ -1278,6 +1280,26 @@ elif [ "$CLIENT" = besu ]; then
   [ -n "$BOOTNODES" ] || { echo "besu join needs peers: set DEFAULT_BOOTNODES in network.env or pass --bootnodes" >&2; exit 1; }
   mkdir -p "$DATADIR"
   python3 -c "import json,sys;print(json.dumps([e for e in sys.argv[1].split(',') if e]))" "$BOOTNODES" > "$DATADIR/static-nodes.json"
+  # Apothem snap: without a genesis `checkpoint` besu downloads ALL ~85M headers
+  # (~30 h). Write a runtime genesis copy with a checkpoint ~3000 blocks behind the
+  # tip, taken from a trusted RPC (BESU_CHECKPOINT_RPC; a trust root, not a peer).
+  # The checkpoint is node-specific so it is never written into the vendored file.
+  if { [ "$NETWORK" = testnet ] || [ "$NETWORK" = apothem ]; } && [ "$SYNCMODE" = snap ]; then
+    if python3 - "${BESU_CHECKPOINT_RPC:-https://erpc.apothem.network}" "$GENESIS" "$DATADIR/genesis-checkpoint.json" <<'PY'
+import json,sys,urllib.request
+def rpc(m,p):
+    r=urllib.request.Request(sys.argv[1],json.dumps({"jsonrpc":"2.0","id":1,"method":m,"params":p}).encode(),{"content-type":"application/json","user-agent":"iwml-join/1"})
+    return json.load(urllib.request.urlopen(r,timeout=20))["result"]
+n=int(rpc("eth_blockNumber",[]),16)-3000
+b=rpc("eth_getBlockByNumber",[hex(n),False])
+g=json.load(open(sys.argv[2]))
+g["config"]["checkpoint"]={"number":n,"hash":b["hash"],"totalDifficulty":str(int(b["totalDifficulty"],16))}
+json.dump(g,open(sys.argv[3],"w"))
+print("  besu: checkpoint %d %s" % (n,b["hash"]))
+PY
+    then GENESIS="$DATADIR/genesis-checkpoint.json"
+    else echo "  warning: could not fetch a besu checkpoint; it will download all headers from genesis (~30 h)" >&2; fi
+  fi
   # besu's --ethstats is <[ws://|wss://]nodename:secret@host:[port]> and the
   # scheme is OPTIONAL -- omit it and besu dials plaintext ws://. The collector
   # is TLS-only on :443, so it rejected every besu report with
