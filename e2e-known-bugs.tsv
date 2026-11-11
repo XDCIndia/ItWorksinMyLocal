@@ -2,9 +2,7 @@
 # Known client bugs. e2e.sh and lib.sh:client_syncmode_status report these as SKIP (with the
 # reason), never FAIL. client/syncmode may be *; platform may be - or *, a platform slug,
 # or !<slug> meaning every platform except that one. Remove a row when the client is fixed.
-besu	snap	-	besu-snap	besu SNAP sync does not complete on XDPoS chains
-xone	fast	-	xone-fast	xone fast sync is not working
-xone	snap	-	xone-snap	xone snap sync is not working
-xone	*	-	xone-net2040-ladder	xone 8a054c05 rejects canonical block 61 (BAD BLOCK invalid merkle root) on the net2040-like fork ladder, so it cannot follow or mint; retest with the refreshed xone build
-nethermind	*	-	nethermind#194	nethermind rejects block 35 with InvalidStateRoot on the net2040 fork ladder
+xone	snap	-	xone-anchor-epoch	xone v1.4.7 on Apothem via join.sh: the anchored snap start (--anchor, with or without --anchor-seedrpc) syncs the anchor window but then rejects every header with 'parent epoch masternode set unavailable (seed via SeedV2Context)', so a fresh datadir does not reach the tip; the live validator runs on a datadir seeded outside join.sh
 # besu mint is NOT listed: besu has no V1 producer, so on a genesis-seated chain it is dropped from the V2 masternode set (QC 3/4); minting needs a post-V2 0x88 candidate registration the harness does not do yet (see README).
+# erigon, reth: Apothem producers are proven live on erigon-xdc v3.8.1-xdc.2 and reth v2.9.0-xdc.4; no rows needed.
+# Removed for the Apothem-proven pins (besu v26.11-xdc.4, nethermind v1.36.0-xdc.3, xone v1.4.7): besu snap (completes on Apothem), nethermind#194 and xone net2040-ladder (measured on older builds), xone fast. Re-add a row if e2e shows a regression on the new pins.

@@ -1,0 +1,10 @@
+# Vendored Apothem (chainId 51) static peers: our snap/eth-100+ capable nodes. The public bootnodes in testnet.list are legacy XDC and serve no snap.
+# Source: GCX /data/erigon-apothem-import/trusted-enodes.txt (2026-11-10). Hosts: xdc04 65.21.71.4 (x3), GCX 65.21.27.213 (nm follower), xdc02 135.181.117.109 (archive geth), 185.180.220.183 (apo full tip).
+enode://bd71cdc87f50a6dd829cde5475d12aaa7bfc15377e9fce5424bce45ed9f8f86e8c2a171d1d846b00f7306c9b7aa8ef60219465f68e4de69a457897175fb270a9@65.21.71.4:30930
+enode://df7730cf6e79d3edc1a4d0c33f62874ed0c7ae32e3ef886c368763208d064017002f07b8c1af36586569c6d3cdfe60ab4fcd91da4ac992023c8121a501e9f2f7@65.21.71.4:30955
+enode://16e59bee1fc3bb0763d9a8f028bc63ff3f107b28c8b922364e528a3e8e11cdf27cc99d3ba48928f384d078d07d858cbf13c9662f433c5d28b98945191e865d8e@65.21.71.4:13170
+enode://91b3ce07aad82b0a5f4529a7a2ac362a5f1542b8b62e37440059b84c9abd9ca1d4b560b69d1287169217710de1ce3de191e136c7efa5a5338d2eea8a118c6da6@65.21.27.213:30421
+enode://a8fa3133cb4e36cf9bb76cb6963723c95fb03815930ff0dd7553ed0219bf8192d66a04972fa05388e3e1bc0554af4cbace1da2d120d62d75d44f3ade1170ba3d@135.181.117.109:31105
+enode://8615b372eb1ab0271a1b53b49c69ea4cf33027c5fbf9449c1af0cd0e03f38280756dd544868d68758657c1e19203fbfdde289beb3b769da2d7bc3120ffe7fe5d@185.180.220.183:31101
+# patched snap server (95.217.106.210): holds 2048 diff layers, the snap state source for anchored/snap starts; besu and nm peers answer snap probes with 0 accounts
+enode://6efd37a6fde68cdf3e00bb066c722ec32dd74d96baad05bafa0df115cdd95cc32c428caf374e86de795797eab1e275896ff5c97e684ccd2d798647aec337a779@95.217.106.210:31310

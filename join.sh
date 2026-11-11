@@ -48,14 +48,17 @@
 #                        boots every client at once, each in its own datadir
 #                        (nodes/<client>-<type>) with a distinct 100-wide port
 #                        block, all joining the same network -- a one-command
-#                        cross-client bring-up. Only oldxdc can seal
-#                        (--mine); all others join sync-only. All clients default
+#                        cross-client bring-up. With --client all, --mine seats
+#                        ONLY the oldxdc child (one key, one process); every
+#                        client has its own mint arm when run alone (see --mine).
+#                        All clients default
 #                        to a
 #                        prebuilt-binary download (binaries.json) for this
 #                        platform, falling back to a source build for
 #                        oldxdc/geth/erigon if unavailable; BIN_SOURCE=build
 #                        (or per-client BIN_SOURCE_<client>=build) forces a
-#                        build / skips the download. besu/nethermind/reth also
+#                        build / skips the download. besu needs host Java 21
+#                        (its archive bundles no JRE). besu/nethermind/reth also
 #                        honor OLDXDC_BIN / BESU_BIN / RETH_BIN / NETHERMIND_DIST (or PATH)
 #                        ahead of both. besu & reth read the geth-format
 #                        --genesis natively; erigon loads it directly (v3.5.0+); nethermind
@@ -163,13 +166,31 @@
 #                        a confirmed-safe equivalent CLI flag to guess at.
 #   --etherbase ADDR     oldxdc --mine only: block-reward address (also env
 #                        ETHERBASE). Omitted (client default) unless given.
-#   --mine ADDR          also mint with this validator address. Every client has a
-#                        real mint arm: oldxdc/geth/xone unlock a keystore account,
-#                        besu/nethermind read the keystore dir, erigon/reth read a
-#                        raw-key file. The key is NEVER a command-line argument
-#                        (it would show in `ps`): give --keyfile and/or --keystore.
-#   --keyfile FILE       0600 file holding the raw hex private key of --mine ADDR
-#                        (erigon --xdc.v1.signerkey, reth XDC_SIGNER_KEY_FILE).
+#   --i-understand-single-signer
+#                        REQUIRED with --mine on --network testnet|mainnet. The
+#                        same validator key must NEVER produce on two nodes at
+#                        once (double-sign); any existing producer for that key
+#                        must be fully stopped first. Also, a non-oldxdc/geth
+#                        producer on these networks defaults --maxpeers to 50
+#                        (it needs ~27+ canonical peers to collect votes).
+#   --anchor NUM:0xHASH  xone only: start the snap header chain from this trusted
+#                        anchor (pin from a trusted oracle, never a live peer)
+#                        instead of genesis -- xone's fast anchored-snap start.
+#   --anchor-seedrpc URL xone only (with --anchor, or the automatic Apothem anchor): archive node HTTP RPC xone
+#                        reads gap-block candidate pools from (xone -anchor.seedrpc).
+#   (sync default)       public networks (testnet/mainnet) default to the smallest-footprint
+#                        sync per client; pass --syncmode archive for full history.
+#   --mine [ADDR]        also mint with this validator address (omit ADDR, or give no
+#                        --keystore, to create a new key in <datadir>/validator/ on the
+#                        first run and reuse it after), using the producer
+#                        flags that run live on Apothem for that client (README:
+#                        "Run an Apothem validator in one command"). The key is NEVER
+#                        a command-line argument (it would show in `ps`): give
+#                        --keystore (+ --password-file). erigon needs a hex key file,
+#                        derived from the keystore at start into <datadir>/signer.key
+#                        (0600, never printed) unless you pass --keyfile.
+#   --keyfile FILE       erigon only: 0600 file holding the raw hex private key of
+#                        --mine ADDR (skips the keystore derivation).
 #   --keystore DIR       geth-format keystore dir holding ADDR's key (default
 #                        <datadir>/keystore; geth/xone/besu/nethermind/oldxdc).
 #   --password-file FILE keystore password file (default ./.pwd, empty password).
@@ -177,6 +198,10 @@
 #                        is SECRET@HOST:PORT (node name prepended) or a full
 #                        NAME:SECRET@HOST:PORT used verbatim.
 #   --no-ethstats        disable ethstats reporting
+#   --dry-run            print the exact command (and env) this would run for the
+#                        chosen client and exit: nothing is downloaded, written or
+#                        started, and no key is read. Use it to review a --mine
+#                        producer before launching it.
 #   --measure            measure sync time and disk use: runs sync-measure.sh
 #                        beside the node (CSV + summary in the datadir, as
 #                        sync-measure.csv / sync-measure.summary). Stops at the
@@ -200,8 +225,9 @@ SELF="$PWD/$(basename "$0")"
 # DATADIR empty here means "use the default convention" (nodes/<client>-<type>),
 # computed once the client is known; an explicit --datadir always wins.
 GENESIS=""; BOOTNODES=""; NETWORKID=""; DATADIR=""; NAME=""; HOST_IP=""; CHAIN=""
-MEASURE=""; MEASURE_INTERVAL=60
+MEASURE=""; MEASURE_INTERVAL=60; DRY=0
 MINEADDR=""; STATICPEERS=""; NETWORK=""; SYNCMODE=""; KEYFILE=""; KEYSTORE=""; PWFILE=""
+SINGLE_SIGNER_OK=0; XONE_ANCHOR=""; XONE_ANCHOR_RPC=
 # STATICPEERS_EXPLICIT: set when the caller passes --staticpeers directly, so
 # the local-sealer harvest below (LOCAL_BOOTNODE=1) knows to never clobber an
 # explicit choice -- it only overrides STATICPEERS it (or peers.list) derived.
@@ -282,13 +308,17 @@ while [ $# -gt 0 ]; do
     --maxpeers)    MAXPEERS=$2; shift 2;;
     --gas-limit)   GAS_LIMIT=$2; shift 2;;
     --etherbase)   ETHERBASE=$2; shift 2;;
-    --mine)        MINEADDR=$2; shift 2;;
+    --mine)        case "${2:-}" in ""|--*) MINEADDR=auto; shift;; *) MINEADDR=$2; shift 2;; esac;;
+    --i-understand-single-signer) SINGLE_SIGNER_OK=1; shift;;
+    --anchor)      XONE_ANCHOR=$2; shift 2;;
+    --anchor-seedrpc) XONE_ANCHOR_RPC=$2; shift 2;;
     --staticpeers) STATICPEERS=$2; STATICPEERS_EXPLICIT=1; shift 2;;
     --ethstats)    ETHSTATS=$2; shift 2;;
     --no-ethstats) ETHSTATS=""; shift;;
+    --dry-run)     DRY=1; shift;;
     --measure)     MEASURE=1; shift;;
     --measure-interval) MEASURE_INTERVAL=$2; shift 2;;
-    -h|--help)     sed -n '2,135p' "$0" | sed 's/^# \{0,1\}//'; exit 0;;
+    -h|--help)     sed -n '2,/^# local 4-node network/p' "$0" | sed 's/^# \{0,1\}//'; exit 0;;
     *) echo "unknown flag: $1" >&2; exit 1;;
   esac
 done
@@ -353,7 +383,14 @@ case "${NETWORK:-}" in
   testnet|apothem)
     [ -z "$GENESIS" ]   && GENESIS="genesis/genesis-testnet.json"
     [ -z "$NETWORKID" ] && NETWORKID=51
-    NM_CONFIG="${NM_CONFIG/xdc-devnet5151/xdc-testnet}"
+    # nethermind v1.36.0-xdc.3: xdc-apothem is the maintained Apothem chainspec
+    # (xdc-testnet is not on the current fork schedule, nethermind#277).
+    NM_CONFIG="${NM_CONFIG/xdc-devnet5151/xdc-apothem}"
+    # besu/xone need the full Apothem fork schedule (xone: else 'invalid base fee' past Gas2500x) (cancun/prague/gas2500x/...); the
+    # vendored genesis-testnet.json stops at byzantium. Same genesis hash 0xbdea512b.
+    case "${CLIENT:-}" in besu|xone) [ "$GENESIS" = "genesis/genesis-testnet.json" ] && GENESIS="genesis/genesis-testnet-besu.json" ;; esac
+    # erigon/reth carry the full Apothem fork schedule in their built-in chain; the vendored genesis stops at byzantium.
+    case "${CLIENT:-}" in erigon) [ -z "$CHAIN" ] && CHAIN=xdc-apothem ;; esac
     NM_CONFIG_EXPLICIT=1   # a curated bundled chainspec, never auto-convert over it
     PUB_BOOTNODES_FILE="bootnodes/testnet.list"
     GAS_LIMIT_DEFAULT=420000000 ;;
@@ -410,6 +447,25 @@ if [ -z "$GAS_LIMIT" ]; then
   echo "error: no gas-limit plateau mapped for --network '${NETWORK:-devnet5151}' (see the GAS_LIMIT_DEFAULT cases above, ItWorksinMyLocal#94/#96/#98); refusing to silently default -- pass an explicit --gas-limit N (or GAS_LIMIT env var) instead. This matters most before --mine: a mismatched or missing plateau on a sealing/proposing join is exactly how #94's netv12 wedge happened." >&2
   exit 1
 fi
+# DOUBLE-SIGN GUARD: a validator key producing on two nodes at once is slashable /
+# forks the seat. Refuse --mine on a PUBLIC network unless the operator explicitly
+# acknowledges it is the single signer.
+case "${NETWORK:-}" in mainnet|xinfin|xdc|testnet|apothem) _public=1 ;; *) _public="" ;; esac
+if [ -n "$MINEADDR" ] && [ -n "$_public" ] && [ "$SINGLE_SIGNER_OK" != 1 ]; then
+  echo "join.sh: refusing --mine on --network $NETWORK without --i-understand-single-signer." >&2
+  echo "  The same validator key must NEVER produce on two nodes at once (double-sign)." >&2
+  echo "  Any existing producer for $MINEADDR must be FULLY STOPPED first (check every host)." >&2
+  exit 1
+fi
+# Non-oldxdc/geth producers need ~27+ canonical peers to collect votes: raise the
+# peer cap (an explicit --maxpeers/MAXPEERS still wins).
+if [ -n "$MINEADDR" ] && [ -n "$_public" ] && [ -z "$MAXPEERS" ]; then
+  case "${CLIENT:-oldxdc}" in oldxdc|geth|geth4) ;; *) MAXPEERS=50; echo "producer on $NETWORK: --maxpeers 50 (needs ~27+ canonical peers for votes)" ;; esac
+fi
+if [ -n "$XONE_ANCHOR" ] || [ -n "$XONE_ANCHOR_RPC" ]; then
+  [ "${CLIENT:-}" = xone ] || { echo "join.sh: --anchor/--anchor-seedrpc are xone only" >&2; exit 1; }
+  [ -z "$XONE_ANCHOR" ] || printf '%s' "$XONE_ANCHOR" | grep -Eq '^[0-9]+:0x[0-9a-fA-F]{64}$' || { echo "join.sh: --anchor needs NUM:0xHASH" >&2; exit 1; }
+fi
 if [ -n "$PUB_BOOTNODES_FILE" ] && [ -z "$BOOTNODES" ] && [ -f "$PUB_BOOTNODES_FILE" ]; then
   BOOTNODES=$(grep -v '^[[:space:]]*#' "$PUB_BOOTNODES_FILE" | grep enode | paste -sd, -)
   echo "No --bootnodes given; using $(echo "$BOOTNODES" | tr ',' '\n' | grep -c enode) public $NETWORK bootnode(s)"
@@ -427,6 +483,15 @@ if [ -n "$PUB_BOOTNODES_FILE" ] && [ -z "$BOOTNODES" ] && [ -f "$PUB_BOOTNODES_F
     else
       echo "note: no seed peers from $_seedurl; fast/snap may be slow to find state-serving peers" >&2
     fi
+  fi
+  # Vendored static peers (bootnodes/<net>-static.list): our snap/modern-capable
+  # Apothem nodes. The public bootnodes above are legacy XDC and serve no snap.
+  _sl="${PUB_BOOTNODES_FILE%.list}-static.list"
+  if [ -f "$_sl" ]; then
+    _st=$(grep -v '^[[:space:]]*#' "$_sl" | grep enode | paste -sd, -)
+    BOOTNODES="$_st,$BOOTNODES"
+    if [ "$STATICPEERS_EXPLICIT" != 1 ]; then STATICPEERS="$_st${STATICPEERS:+,$STATICPEERS}"; fi
+    echo "Added $(echo "$_st" | tr ',' '\n' | grep -c enode) vendored static peer(s) from $_sl"
   fi
 fi
 # The vendored public genesis uses XDC's "xdc"-prefixed address display format in
@@ -693,6 +758,7 @@ if [ "$CLIENT" = all ]; then
   # --mine in a fan-out seats ONLY the oldxdc child (one address cannot be shared
   # by several clients); use netlab/ topologies to seat several clients.
   [ -n "$MINEADDR" ]    && shared+=(--mine "$MINEADDR")
+  [ "$SINGLE_SIGNER_OK" = 1 ] && shared+=(--i-understand-single-signer)
   [ -n "$MAXPEERS" ]    && shared+=(--maxpeers "$MAXPEERS")
   [ -n "$ETHERBASE" ]   && shared+=(--etherbase "$ETHERBASE")   # only the oldxdc --mine child uses it
   # --gas-limit is ALWAYS forwarded (unlike the optional flags above): GAS_LIMIT
@@ -783,7 +849,77 @@ NODETYPE=sync
 # Default datadir: nodes/<client>-<nodetype>, so every client's chaindata lives
 # under ./nodes (clear of run.sh's numbered nodes/1..N local net) and different
 # clients never share a datadir. An explicit --datadir always wins.
-[ -z "$DATADIR" ] && DATADIR="nodes/${CLIENT}-${NODETYPE}"
+# One datadir per client: the role (sync/seal) is a flag, not a path. If this role's
+# default dir does not exist but the other role's does, reuse it, so a synced
+# follower can become a producer (or back) without a fresh empty sync from block 0.
+if [ -z "$DATADIR" ]; then
+  DATADIR="nodes/${CLIENT}-${NODETYPE}"
+  _other=sync; [ "$NODETYPE" = sync ] && _other=seal
+  if [ ! -d "$DATADIR" ] && [ -d "nodes/${CLIENT}-${_other}" ]; then
+    DATADIR="nodes/${CLIENT}-${_other}"
+    echo "reusing existing datadir $DATADIR (role is a flag, not a path)"
+  fi
+  [ -n "$MINEADDR" ] && echo "  datadir: $DATADIR (pass --datadir to reuse a synced follower's directory instead of syncing again)"
+fi
+
+# Validator key: --mine with no keystore (or an empty one) creates ONE new key in
+# <datadir>/validator/ (v3 keystore + random password, 0600 files in a 0700 dir) and a
+# re-run reuses it. Never a second key, never overwritten. The key/password are never printed.
+_KEY_PENDING=0
+if [ -n "$MINEADDR" ] && [ -z "$KEYFILE" ]; then
+  [ "$MINEADDR" = auto ] && [ "$CLIENT" = oldxdc ] && { echo "join.sh: oldxdc needs an explicit --mine ADDR" >&2; exit 1; }
+  _nkeys() { ls "$1" 2>/dev/null | grep -c .; }
+  _addr_of() { ls "$1" | head -1 | sed -E 's/.*--//' | tr 'A-F' 'a-f'; }
+  VDIR="$DATADIR/validator"
+  if [ "$CLIENT" != oldxdc ] && { [ -z "$KEYSTORE" ] || [ "$(_nkeys "$KEYSTORE")" = 0 ]; }; then
+    _n=$(_nkeys "$VDIR/keystore")
+    if [ "$_n" -gt 1 ]; then echo "join.sh: $VDIR/keystore holds $_n keys; refusing to guess. Keep exactly one, or pass --keystore." >&2; exit 1
+    elif [ "$_n" = 1 ]; then
+      KEYSTORE="$VDIR/keystore"; [ -n "$PWFILE" ] || PWFILE="$VDIR/password.txt"
+      _new=0x$(_addr_of "$KEYSTORE"); echo "validator key: reusing $_new from $VDIR"
+    elif [ "$MINEADDR" != auto ]; then
+      echo "join.sh: no keystore for $MINEADDR. Pass --keystore DIR, or use --mine with no address to create a new validator key." >&2; exit 1
+    elif [ "$DRY" = 1 ]; then
+      _KEY_PENDING=1; KEYSTORE="$VDIR/keystore"; PWFILE="$VDIR/password.txt"; _new=0x0000000000000000000000000000000000000000
+      echo "(dry-run) validator key: no key in $VDIR; a new one (v3 keystore + random password, 0600) would be created there" >&2
+    else
+      command -v openssl >/dev/null 2>&1 || { echo "join.sh: creating a validator key needs openssl" >&2; exit 1; }
+      mkdir -p "$DATADIR" && mkdir "$DATADIR/validator.lock" 2>/dev/null \
+        || { echo "join.sh: another run is creating the key in $VDIR (remove $DATADIR/validator.lock if none is)" >&2; exit 1; }
+      mkdir -p "$VDIR" && chmod 700 "$VDIR"
+      _new=$(python3 ./keystore-to-hex.py new "$VDIR/keystore" "$VDIR/password.txt" "$VDIR/address.txt") \
+        || { rmdir "$DATADIR/validator.lock"; echo "join.sh: key creation failed" >&2; exit 1; }
+      rmdir "$DATADIR/validator.lock"
+      KEYSTORE="$VDIR/keystore"; PWFILE="$VDIR/password.txt"
+      cat <<MSG
+
+  ==================== NEW VALIDATOR KEY CREATED ====================
+  Coinbase (validator) address : $_new
+  Keystore                     : $(cd "$KEYSTORE" && pwd)
+  Password file                : $(cd "$VDIR" && pwd)/password.txt
+
+  BACK UP these two files now. Losing them loses the validator.
+  Never run this key on another node (one signer, one node: double-sign).
+
+  The node starts as a follower plus producer. It will NOT seal until the
+  address is proposed and in the masternode set (next epoch switch after the
+  proposal). To propose on Apothem, use a SEPARATE owner address:
+    1. fund the owner with at least 10,000,000 XDC plus gas
+    2. cast send 0x0000000000000000000000000000000000000088 "uploadKYC(string)" "<kyc-hash>" --keystore <owner-keystore> --password-file <owner-pw> --rpc-url https://erpc.apothem.network
+    3. cast send 0x0000000000000000000000000000000000000088 "propose(address)" $_new --value 10000000ether --keystore <owner-keystore> --password-file <owner-pw> --rpc-url https://erpc.apothem.network
+  ===================================================================
+
+MSG
+    fi
+    if [ "$MINEADDR" != auto ] && [ "$(printf '%s' "$MINEADDR" | sed -E 's/^(0x|xdc)//I' | tr 'A-F' 'a-f')" != "${_new#0x}" ] && [ "$_KEY_PENDING" != 1 ]; then
+      echo "join.sh: no keystore for $MINEADDR (the key in $VDIR is $_new). Pass --keystore DIR, or drop the address to use $_new." >&2; exit 1
+    fi
+    MINEADDR="$_new"
+  elif [ "$MINEADDR" = auto ]; then
+    [ "$(_nkeys "$KEYSTORE")" = 1 ] || { echo "join.sh: $KEYSTORE holds several keys; pass --mine ADDR" >&2; exit 1; }
+    MINEADDR="0x$(_addr_of "$KEYSTORE")"
+  fi
+fi
 
 # Per-client default ports: a 100-wide block per client so all seven join clients
 # run side by side with no cross-client clash, in a high band kept clear of
@@ -827,6 +963,15 @@ esac
 # XDPoS source via ensure_bins as before. BIN_SOURCE=build (or the per-client
 # BIN_SOURCE_besu/BIN_SOURCE_reth/BIN_SOURCE_nethermind) skips the download and
 # goes straight to the "not found" hint below.
+if [ "$DRY" = 1 ]; then
+  # --dry-run: no download/build; the printed command names where the binary would live.
+  case "$CLIENT" in
+    besu)       CLIENT_BIN="${BESU_BIN:-$BIN_DIR/besu}" ;;
+    reth)       CLIENT_BIN="${RETH_BIN:-$BIN_DIR/xdc-reth}" ;;
+    nethermind) NETHERMIND_DIST="${NETHERMIND_DIST:-$BIN_DIR/.dist-nethermind}"; CLIENT_BIN="$NETHERMIND_DIST/nethermind" ;;
+    *)          XDC="${OLDXDC_BIN:-$XDC_BIN}" ;;
+  esac
+else
 case "$CLIENT" in
   besu)
     CLIENT_BIN="${BESU_BIN:-$(command -v besu 2>/dev/null)}"
@@ -948,6 +1093,7 @@ except Exception:
       XDC="$XDC_BIN"
     fi ;;
 esac
+fi
 
 # Default the network id to the genesis chainId (erigon --chain <name> needn't).
 if [ -z "$NETWORKID" ] && [ -f "$GENESIS" ]; then
@@ -1041,7 +1187,9 @@ NAME=$(node_name "$HOST" "$CLIENT" "$VER" "$COMMIT" "$NODETYPE" "$IP")
 # nethermind (loads its own chainspec) do their own thing, so skip init there.
 case "$CLIENT" in
   oldxdc|geth|geth4|"")
-    if [ ! -d "$DATADIR/XDC/chaindata" ]; then
+    if [ "$DRY" = 1 ]; then
+      [ -d "$DATADIR/XDC/chaindata" ] || echo "(dry-run) would first run: $XDC --datadir $DATADIR init $GENESIS"
+    elif [ ! -d "$DATADIR/XDC/chaindata" ]; then
       echo "Initialising $DATADIR from $GENESIS ..."
       # geth archive uses the hash state scheme, which must be chosen at init
       INIT_SCHEME=""; case "$CLIENT:$SYNCMODE" in geth:archive|geth4:archive) INIT_SCHEME="--state.scheme=hash" ;; esac
@@ -1085,22 +1233,52 @@ if [ -n "$MINEADDR" ]; then
   printf '%s' "$MINE_HEX" | grep -Eq '^[0-9a-f]{40}$' \
     || { echo "join.sh: --mine needs a 20-byte validator address (got '$MINEADDR')" >&2; exit 1; }
   MINE_ADDR="0x$MINE_HEX"
+  [ "$_KEY_PENDING" = 1 ] && MINE_ADDR="0x<new-validator-address>"
   [ -n "$KEYSTORE" ] || KEYSTORE="$DATADIR/keystore"
-  [ -n "$PWFILE" ] || { PWFILE="./.pwd"; [ -f "$PWFILE" ] || : > "$PWFILE"; }
-  [ -r "$PWFILE" ] || { echo "join.sh: password file unreadable: $PWFILE" >&2; exit 1; }
-  case "$CLIENT" in
-    erigon|reth)
-      [ -r "$KEYFILE" ] || { echo "join.sh: --mine with $CLIENT needs --keyfile FILE (raw hex key, mode 0600)" >&2; exit 1; } ;;
-    oldxdc|xdc) : ;;   # legacy: keys are imported into <datadir>/keystore by run.sh/netlab
-    *)
-      ls "$KEYSTORE" 2>/dev/null | grep -qi "$MINE_HEX" \
-        || { echo "join.sh: --mine $MINE_ADDR: no keystore file for it in $KEYSTORE (give --keystore DIR)" >&2; exit 1; } ;;
-  esac
+  [ -n "$PWFILE" ] || { PWFILE="./.pwd"; [ "$DRY" = 1 ] || [ -f "$PWFILE" ] || : > "$PWFILE"; }
+  if [ "$DRY" != 1 ]; then
+    [ -r "$PWFILE" ] || { echo "join.sh: password file unreadable: $PWFILE" >&2; exit 1; }
+    case "$CLIENT" in
+      oldxdc|xdc) : ;;   # legacy: keys are imported into <datadir>/keystore by run.sh/netlab
+      *)
+        [ "$CLIENT" = erigon ] && [ -n "$KEYFILE" ] && : || ls "$KEYSTORE" 2>/dev/null | grep -qi "$MINE_HEX" \
+          || { echo "join.sh: --mine $MINE_ADDR: no keystore file for it in $KEYSTORE (give --keystore DIR)" >&2; exit 1; } ;;
+    esac
+  fi
+  # abs paths: besu/reth/xone/nethermind read these from another cwd or a JVM property
+  _abs() { if [ -d "$1" ]; then (cd "$1" && pwd); else printf '%s' "$1"; fi; }
+  [ -d "$KEYSTORE" ] && KEYSTORE=$(_abs "$KEYSTORE")
+  PWFILE="$(_abs "$(dirname "$PWFILE")")/$(basename "$PWFILE")"
+  # erigon wants a raw hex key file: derive it from the keystore into a 0600 file in the datadir (never printed).
+  if [ "$CLIENT" = erigon ] && [ -z "$KEYFILE" ]; then
+    KEYFILE="$(_abs "$(dirname "$DATADIR/x")")/signer.key"
+    if [ "$DRY" = 1 ]; then echo "(dry-run) erigon: would derive $KEYFILE (0600) from the keystore for $MINE_ADDR" >&2
+    else
+      mkdir -p "$DATADIR" && KEYFILE="$(cd "$DATADIR" && pwd)/signer.key" \
+        && python3 ./keystore-to-hex.py "$KEYSTORE" "$MINE_ADDR" "$PWFILE" "$KEYFILE" || exit 1
+    fi
+  fi
   echo "  MINT ON: $CLIENT seat $MINE_ADDR"
 fi
 
 echo "Joining ($CLIENT) network=${CHAIN:-id $NETWORKID}  bootnodes=$BOOTNODES"
 echo "  datadir=$DATADIR  identity=$NAME  ip=$IP  ports p2p:$PORT rpc:$RPCPORT ws:$WSPORT"
+
+# --dry-run: the launch lines below run through _dry, which prints the command instead of starting it.
+_dry() {
+  local v
+  for v in ERIGON_XDPOS_STRICT_EPOCH_SWITCH XDC_PRODUCE XDC_PRODUCER XDC_EXPERIMENTAL_SNAPSYNC JAVA_OPTS; do
+    [ -n "${!v:-}" ] && printf '%s=%q\n' "$v" "${!v}"
+  done
+  local a
+  for a in "$@"; do
+    case "$a" in *[!A-Za-z0-9_./:=@%+,-]*|"") printf "'%s' " "${a//\'/\'\\\'\'}" ;; *) printf '%s ' "$a" ;; esac
+  done
+  echo
+}
+_dry_nm() { echo "cd $NETHERMIND_DIST"; _dry ./nethermind "$@"; }
+RUN_XDC="$XDC"; RUN_BIN="$CLIENT_BIN"; RUN_NM=./nethermind
+[ "$DRY" = 1 ] && { RUN_XDC=_dry; RUN_BIN=_dry; RUN_NM=_dry_nm; }
 
 if [ "$CLIENT" = erigon ]; then
   # Erigon (sync-only). --chain takes a built-in name OR a genesis file (the
@@ -1144,23 +1322,25 @@ if [ "$CLIENT" = erigon ]; then
   # 69,70,71), so callers must leave a gap after $PORT either way -- run.sh
   # --all strides its followers by 10 for exactly this reason.
   AP_ARG=""
-  if "$XDC" --help 2>&1 | grep -q 'p2p\.allowed-ports'; then
+  if [ ! -x "$XDC" ] || "$XDC" --help 2>&1 | grep -q 'p2p\.allowed-ports'; then
     AP_ARG="--p2p.allowed-ports $ALLOWED_PORTS"
   else
     echo "  erigon: no --p2p.allowed-ports in this build; it will choose ports upward from $PORT"
   fi
   # prune mode: archive keeps everything, otherwise the client default (full).
+  # Public networks default to the smallest footprint: --prune.mode minimal.
   PM_ARG=""; [ "$ARCHIVE" = 1 ] && PM_ARG="--prune.mode archive"
-  # Mint (proven on the net2040 fleet): --xdc.v2.produce --xdc.v2.vote with the
-  # raw hex key FILE (never the key on the command line). --xdc.v1.produce is
-  # added when this build has it, so a seat can also sign before the V2 switch.
+  [ "$ARCHIVE" != 1 ] && [ -n "$_public" ] && PM_ARG="--prune.mode minimal"
+  # Mint (the live Apothem producer, erigon-xdc v3.8.1-xdc.2): --xdc.v2.produce with the
+  # raw hex key FILE (never the key on the command line); needs >=10 vote-relaying
+  # peers and ERIGON_XDPOS_STRICT_EPOCH_SWITCH=1.
   MINE_ARGS=""
   if [ -n "$MINE_ADDR" ]; then
-    MINE_ARGS="--xdc.v2.produce --xdc.v2.vote --xdc.v1.signerkey $KEYFILE --miner.etherbase $MINE_ADDR"
-    "$XDC" --help 2>&1 | grep -q 'xdc\.v1\.produce' && MINE_ARGS="$MINE_ARGS --xdc.v1.produce"
+    MINE_ARGS="--xdc.v2.produce --xdc.v1.signerkey $KEYFILE --miner.etherbase $MINE_ADDR"
+    export ERIGON_XDPOS_STRICT_EPOCH_SWITCH=1
   fi
   # shellcheck disable=SC2086  # $AP_ARG/$PM_ARG/$MINE_ARGS are intentionally-splitting flag lists
-  "$XDC" --datadir "$DATADIR" --chain "$ERC" --discv4 \
+  "$RUN_XDC" --datadir "$DATADIR" --chain "$ERC" --discv4 \
     --port "$PORT" $AP_ARG --nat "extip:${IP}" $BN_ARG $SP_ARG $MP_ARG $GL_ARG $PM_ARG $MINE_ARGS \
     --http --http.addr 0.0.0.0 --http.port "$RPCPORT" --http.vhosts "*" \
     --http.corsdomain "*" --http.api eth,net,web3,erigon,debug,txpool \
@@ -1196,6 +1376,13 @@ elif [ "$CLIENT" = geth ] || [ "$CLIENT" = geth4 ]; then
   # seat runs --state.scheme=hash); other types keep the client's default scheme.
   GETH_STATE=""; GC_ARG=""
   [ "$ARCHIVE" = 1 ] && { GETH_STATE="--state.scheme=hash"; GC_ARG="--gcmode archive"; }
+  # Public networks default to the smallest footprint: gcmode full and bounded tx
+  # lookup/history (--history.transactions; --txlookuplimit before geth 1.17.4-xdc.7).
+  if [ -n "$_public" ] && [ "$ARCHIVE" != 1 ]; then
+    GC_ARG="--gcmode full"
+    if [ ! -x "$XDC" ] || "$XDC" --help 2>&1 | grep -q 'history\.transactions'; then GC_ARG="$GC_ARG --history.transactions 2350000"
+    else GC_ARG="$GC_ARG --txlookuplimit 2350000"; fi
+  fi
   # Mint (the fleet's geth producer flags): keystore account unlocked from a
   # password FILE, --mine, etherbase = the seat. Account unlock is refused with
   # a non-loopback http/ws bind, so a mint seat binds RPC to 127.0.0.1 (as the
@@ -1206,7 +1393,7 @@ elif [ "$CLIENT" = geth ] || [ "$CLIENT" = geth4 ]; then
     RPC_ADDR=127.0.0.1
   fi
   # shellcheck disable=SC2086
-  "$XDC" --datadir "$DATADIR" --networkid "$NETWORKID" --syncmode "$SYNC_FLAG" $GETH_STATE $GC_ARG $MINE_ARGS \
+  "$RUN_XDC" --datadir "$DATADIR" --networkid "$NETWORKID" --syncmode "$SYNC_FLAG" $GETH_STATE $GC_ARG $MINE_ARGS \
     --bootnodes "$BOOTNODES" --port "$PORT" --nat "extip:${IP}" --identity "$NAME" --maxpeers "${MAXPEERS:-25}" \
     --miner.gaslimit "$GAS_LIMIT" \
     --http --http.corsdomain "*" --http.addr "$RPC_ADDR" --http.port "$RPCPORT" --http.vhosts "*" \
@@ -1220,8 +1407,28 @@ elif [ "$CLIENT" = besu ]; then
   # only used for initial discovery, and besu drops the validators as "UselessPeer"
   # after capability negotiation unless they are pinned via static-nodes.
   [ -n "$BOOTNODES" ] || { echo "besu join needs peers: set DEFAULT_BOOTNODES in network.env or pass --bootnodes" >&2; exit 1; }
-  mkdir -p "$DATADIR"
-  python3 -c "import json,sys;print(json.dumps([e for e in sys.argv[1].split(',') if e]))" "$BOOTNODES" > "$DATADIR/static-nodes.json"
+  [ "$DRY" = 1 ] || { mkdir -p "$DATADIR" && python3 -c "import json,sys;print(json.dumps([e for e in sys.argv[1].split(',') if e]))" "$BOOTNODES" > "$DATADIR/static-nodes.json"; }
+  # Apothem snap: without a genesis `checkpoint` besu downloads ALL ~85M headers
+  # (~30 h). Write a runtime genesis copy with a checkpoint ~3000 blocks behind the
+  # tip, taken from a trusted RPC (BESU_CHECKPOINT_RPC; a trust root, not a peer).
+  # The checkpoint is node-specific so it is never written into the vendored file.
+  if { [ "$NETWORK" = testnet ] || [ "$NETWORK" = apothem ]; } && [ "$SYNCMODE" = snap ]; then
+    if [ "$DRY" = 1 ]; then GENESIS="$DATADIR/genesis-checkpoint.json"; echo "(dry-run) besu: checkpoint ~3000 blocks behind the tip is fetched from ${BESU_CHECKPOINT_RPC:-https://erpc.apothem.network} at start" >&2
+    elif python3 - "${BESU_CHECKPOINT_RPC:-https://erpc.apothem.network}" "$GENESIS" "$DATADIR/genesis-checkpoint.json" <<'PY'
+import json,sys,urllib.request
+def rpc(m,p):
+    r=urllib.request.Request(sys.argv[1],json.dumps({"jsonrpc":"2.0","id":1,"method":m,"params":p}).encode(),{"content-type":"application/json","user-agent":"iwml-join/1"})
+    return json.load(urllib.request.urlopen(r,timeout=20))["result"]
+n=int(rpc("eth_blockNumber",[]),16)-3000
+b=rpc("eth_getBlockByNumber",[hex(n),False])
+g=json.load(open(sys.argv[2]))
+g["config"]["checkpoint"]={"number":n,"hash":b["hash"],"totalDifficulty":hex(int(b["totalDifficulty"],16))}
+json.dump(g,open(sys.argv[3],"w"))
+print("  besu: checkpoint %d %s" % (n,b["hash"]))
+PY
+    then GENESIS="$DATADIR/genesis-checkpoint.json"
+    else echo "  warning: could not fetch a besu checkpoint; it will download all headers from genesis (~30 h)" >&2; fi
+  fi
   # besu's --ethstats is <[ws://|wss://]nodename:secret@host:[port]> and the
   # scheme is OPTIONAL -- omit it and besu dials plaintext ws://. The collector
   # is TLS-only on :443, so it rejected every besu report with
@@ -1245,11 +1452,13 @@ elif [ "$CLIENT" = besu ]; then
   # archive: besu keeps full history only with FOREST storage (BONSAI prunes
   # trie logs); FOREST + FULL sync is the archive combination.
   BESU_STORE=BONSAI; [ "$ARCHIVE" = 1 ] && BESU_STORE=FOREST
+  # BONSAI with trie-log pruning on (smallest footprint) except for archive.
+  BESU_PRUNE=""; [ "$ARCHIVE" != 1 ] && [ -n "$_public" ] && BESU_PRUNE="--bonsai-limit-trie-logs-enabled"
   # Mint (the fleet's run-producer.sh): the xdpos.validator.* system properties
   # carry the keystore dir, password FILE and seat address (startup fails closed
   # if the key does not derive to the address).
   if [ -n "$MINE_ADDR" ]; then
-    export JAVA_OPTS="${JAVA_OPTS:-} -Dxdpos.validator.enabled=true -Dxdpos.validator.chain-id=$NETWORKID -Dxdpos.validator.keystore=$(cd "$KEYSTORE" && pwd) -Dxdpos.validator.password-file=$(cd "$(dirname "$PWFILE")" && pwd)/$(basename "$PWFILE") -Dxdpos.validator.address=$MINE_ADDR"
+    export JAVA_OPTS="${JAVA_OPTS:-} -Dxdpos.validator.enabled=true -Dxdpos.validator.chain-id=$NETWORKID -Dxdpos.validator.keystore=$KEYSTORE -Dxdpos.validator.password-file=$PWFILE -Dxdpos.validator.address=$MINE_ADDR"
   fi
   # besu will not begin syncing until it has --sync-min-peers peers, and the
   # default is 5. A private XDPoS net here runs FOUR sealers, so besu can never
@@ -1259,7 +1468,7 @@ elif [ "$CLIENT" = besu ]; then
   # exactly. It looks like a consensus or peering fault and is neither -- it is
   # a threshold that cannot be met on a small network. Default to 1 and let the
   # operator raise it (BESU_SYNC_MIN_PEERS) on a net large enough to warrant it.
-  "$CLIENT_BIN" \
+  "$RUN_BIN" \
     --genesis-file="$GENESIS" --data-path="$DATADIR" --network-id="$NETWORKID" \
     --sync-mode="$BESU_SYNC" --data-storage-format="$BESU_STORE" \
     --sync-min-peers="${BESU_SYNC_MIN_PEERS:-1}" \
@@ -1268,13 +1477,13 @@ elif [ "$CLIENT" = besu ]; then
     --rpc-http-enabled=true --rpc-http-host=127.0.0.1 --rpc-http-port="$RPCPORT" \
     --rpc-http-apis=ETH,NET,WEB3,ADMIN,DEBUG,TXPOOL \
     --engine-rpc-enabled=false --min-gas-price=0 --auto-log-bloom-caching-enabled=false \
-    $MP_ARG $BESU_ES &
+    $BESU_PRUNE $MP_ARG $BESU_ES &
 elif [ "$CLIENT" = reth ]; then
   # reth-xdc (sync-only). Reads the geth-format genesis natively via --chain <file>.
   # Peers via trusted-only (its discv4/v5 doesn't traverse an XDPoS bootnode), and
   # its --ethstats wants a wss:// URL, not geth's bare host:port.
   [ -n "$BOOTNODES" ] || { echo "reth join needs peers: set DEFAULT_BOOTNODES in network.env or pass --bootnodes" >&2; exit 1; }
-  mkdir -p "$DATADIR"
+  [ "$DRY" = 1 ] || mkdir -p "$DATADIR"
   RETH_ES=""; [ -n "$full" ] && RETH_ES="--ethstats ${ES_NAME}:${ES_SECRET}@wss://${ES_HOSTPORT}"
   MP_ARG=""; [ -n "$MAXPEERS" ] && MP_ARG="--max-peers $MAXPEERS"
   # reth now achieves strict net5151 state parity natively: it applies the
@@ -1286,15 +1495,26 @@ elif [ "$CLIENT" = reth ]; then
   # sync type: reth is staged-sync only. Default keeps all history (= archive);
   # --full prunes, applied only when "full" was asked for explicitly.
   RETH_PRUNE=""; [ -n "$SYNCMODE_EXPLICIT" ] && [ "$SYNCMODE" = full ] && RETH_PRUNE="--full"
-  # Mint (the fleet's reth producer): env, not flags -- XDC_PRODUCE=1 plus a raw
-  # hex key FILE and the seat address.
+  # Public networks default to the smallest pruned mode this build has (--minimal,
+  # else --full); only an explicit --syncmode archive keeps all history.
+  if [ -n "$_public" ] && [ "$ARCHIVE" != 1 ]; then
+    if [ ! -x "$CLIENT_BIN" ] || "$CLIENT_BIN" node --help 2>&1 | grep -q -- '--minimal'; then RETH_PRUNE="--minimal"; else RETH_PRUNE="--full"; fi
+  fi
+  # Apothem uses reth's built-in chain (full fork schedule); other networks load the genesis file.
+  RETH_CHAIN="$GENESIS"; case "${NETWORK:-}" in testnet|apothem) RETH_CHAIN=xdc-apothem ;; esac
+  RETH_NET="--disable-discv5-discovery --disable-dns-discovery --trusted-only"; RETH_MINE=""
+  # Mint (the live Apothem producer, reth v2.9.0-xdc.4): XDC_PRODUCE=1 + the keystore flags,
+  # --full prune, discovery on, and the engine persistence flags.
   if [ -n "$MINE_ADDR" ]; then
-    export XDC_PRODUCE=1 XDC_SIGNER_KEY_FILE="$(cd "$(dirname "$KEYFILE")" && pwd)/$(basename "$KEYFILE")" XDC_SIGNER_ADDRESS="$MINE_ADDR"
+    export XDC_PRODUCE=1
+    [ -n "$_public" ] && [ "$ARCHIVE" != 1 ] && RETH_PRUNE="--full"
+    RETH_NET="--discovery.v5.port $((PORT + 1))"
+    RETH_MINE="--xdc.signer-keystore $KEYSTORE --xdc.signer-password $PWFILE --xdc.signer $MINE_ADDR --engine.persistence-threshold 0 --engine.persistence-backpressure-threshold 16 --engine.disable-prewarming"
   fi
   # shellcheck disable=SC2086
-  "$CLIENT_BIN" node --chain "$GENESIS" --datadir "$DATADIR" $RETH_PRUNE \
+  "$RUN_BIN" node --chain "$RETH_CHAIN" --datadir "$DATADIR" $RETH_PRUNE $RETH_MINE \
     --port "$PORT" --discovery.port "$PORT" \
-    --disable-discv5-discovery --disable-dns-discovery --trusted-only \
+    $RETH_NET \
     --nat "extip:${IP}" --trusted-peers "$BOOTNODES" \
     --http --http.addr 127.0.0.1 --http.port "$RPCPORT" --http.api eth,net,web3,admin,debug \
     --authrpc.addr 127.0.0.1 --authrpc.port "$AUTHRPC_PORT" \
@@ -1306,13 +1526,13 @@ elif [ "$CLIENT" = nethermind ]; then
   # relative to CWD, so cd into the dist first. WebSocketsPort must be set explicitly
   # (the config hardcodes 8549; a clash aborts the whole JSON-RPC stack silently).
   [ -n "$BOOTNODES" ] || { echo "nethermind join needs peers: set DEFAULT_BOOTNODES in network.env or pass --bootnodes" >&2; exit 1; }
-  mkdir -p "$DATADIR"
+  [ "$DRY" = 1 ] || mkdir -p "$DATADIR"
   # Resolve the datadir to an ABSOLUTE path BEFORE the `cd "$NETHERMIND_DIST"`
   # below: nethermind is launched from inside the dist (to resolve configs/ and
   # chainspec/), so a relative --Init.BaseDbPath would land inside the dist dir
   # (e.g. <dist>/nodes/<client>-sync) instead of here -- and silently reuse a
   # stale DB there, ignoring the intended (and chainspec-fresh) datadir.
-  NM_DATADIR="$(cd "$DATADIR" && pwd)"
+  NM_DATADIR="$(_abs "$DATADIR")"
   WS_PORT=$((RPCPORT + 1))
   NM_ES=""; [ -n "$full" ] && NM_ES="--EthStats.Enabled true --EthStats.Name $ES_NAME --EthStats.Secret $ES_SECRET --EthStats.Server wss://${ES_HOSTPORT}/api"
   MP_ARG=""; [ -n "$MAXPEERS" ] && MP_ARG="--Network.MaxActivePeers $MAXPEERS"
@@ -1321,7 +1541,31 @@ elif [ "$CLIENT" = nethermind ]; then
   # (its default, which is what devnet5151 has always used -> unchanged there).
   NM_SYNC=""
   case "$SYNCMODE" in
-    snap) NM_SYNC="--Sync.SnapSync true --Sync.FastSync true" ;;
+    snap) NM_SYNC="--Sync.SnapSync true --Sync.FastSync true"
+      # Smallest footprint on public nets (nm#275: Apothem 111 GB -> 20 GB): Hybrid
+      # pruning, modest memory hint, and bodies on so the old-headers backfill stops
+      # at the AncientBodiesBarrier instead of running to genesis.
+      if [ -n "$_public" ]; then NM_SYNC="$NM_SYNC --Pruning.Mode Hybrid --Init.MemoryHint 3072000000 --Sync.DownloadBodiesInFastSync true"; fi
+      # Apothem: nethermind has no pivot of its own on XDPoS and otherwise downloads
+      # headers forward from genesis (~30 blk/s, weeks). Pin a pivot ~3000 blocks
+      # behind the tip from a trusted RPC (NM_PIVOT_RPC; a trust root, not a peer).
+      if [ "$NETWORK" = testnet ] || [ "$NETWORK" = apothem ]; then
+        [ "$DRY" = 1 ] && _pv="" || _pv=$(python3 - "${NM_PIVOT_RPC:-https://erpc.apothem.network}" <<'PY'
+import json,sys,urllib.request
+def rpc(m,p):
+    r=urllib.request.Request(sys.argv[1],json.dumps({"jsonrpc":"2.0","id":1,"method":m,"params":p}).encode(),{"content-type":"application/json","user-agent":"iwml-join/1"})
+    return json.load(urllib.request.urlopen(r,timeout=20))["result"]
+n=int(rpc("eth_blockNumber",[]),16)-3000
+b=rpc("eth_getBlockByNumber",[hex(n),False])
+print(n,b["hash"],int(b["totalDifficulty"],16))
+PY
+) || _pv=""
+        if [ -n "$_pv" ]; then set -- $_pv
+          NM_SYNC="$NM_SYNC --Sync.PivotNumber $1 --Sync.PivotHash $2 --Sync.PivotTotalDifficulty $3 --Sync.AncientBodiesBarrier $(( $1 - 2800 ))"
+          echo "  nethermind: pivot $1 $2 from ${NM_PIVOT_RPC:-https://erpc.apothem.network}"
+        elif [ "$DRY" = 1 ]; then echo "(dry-run) nethermind: --Sync.Pivot* are fetched from ${NM_PIVOT_RPC:-https://erpc.apothem.network} at start" >&2
+        else echo "  warning: could not fetch a nethermind pivot; it will sync headers from genesis (very slow)" >&2; fi
+      fi ;;
     fast) NM_SYNC="--Sync.FastSync true" ;;
     archive) NM_SYNC="--Sync.FastSync false --Sync.SnapSync false --Pruning.Mode None" ;;
   esac
@@ -1329,13 +1573,13 @@ elif [ "$CLIENT" = nethermind ]; then
   # Mining/KeyStore config keys (password FILE, never the password itself).
   if [ -n "$MINE_ADDR" ]; then
     export XDC_PRODUCER=1   # the fleet unit's name for it (XDC_PRODUCE is ignored: "block production is off")
-    _nm_pw="$(cd "$(dirname "$PWFILE")" && pwd)/$(basename "$PWFILE")"
+    _nm_pw="$PWFILE"
     # nethermind finds a key by the address in the file NAME (lower-case hex, no prefix); oldxdc names files
     # UTC--..--xdc<MixedCase>, so stage a renamed copy.
-    NM_KS="$NM_DATADIR/keystore-nm"; mkdir -p "$NM_KS"
+    NM_KS="$NM_DATADIR/keystore-nm"; [ "$DRY" = 1 ] || { mkdir -p "$NM_KS"; chmod 700 "$NM_KS"; }
     # (file names carry the address in mixed case, so match case-insensitively)
-    for _kf in $(ls "$KEYSTORE" | grep -i "$MINE_HEX"); do _ka=$(printf '%s' "${_kf##*--}" | sed -E 's/^(0x|xdc)//I' | tr 'A-F' 'a-f'); cp -f "$KEYSTORE/$_kf" "$NM_KS/${_kf%--*}--$_ka"; done
-    NM_SYNC="$NM_SYNC --Mining.Enabled true --KeyStore.KeyStoreDirectory $NM_KS --KeyStore.BlockAuthorAccount $MINE_ADDR --KeyStore.PasswordFiles $_nm_pw --KeyStore.UnlockAccounts $MINE_ADDR"
+    [ "$DRY" = 1 ] || for _kf in $(ls "$KEYSTORE" | grep -i "$MINE_HEX"); do _ka=$(printf '%s' "${_kf##*--}" | sed -E 's/^(0x|xdc)//I' | tr 'A-F' 'a-f'); cp -f "$KEYSTORE/$_kf" "$NM_KS/${_kf%--*}--$_ka"; done
+    NM_SYNC="$NM_SYNC --Mining.Enabled true --KeyStore.KeyStoreDirectory $NM_KS --KeyStore.BlockAuthorAccount $MINE_ADDR --KeyStore.PasswordFiles $_nm_pw --KeyStore.UnlockAccounts $MINE_ADDR --Sync.NonValidatorNode false"
   fi
   # net5151: disable nethermind peer persistence. With it ON, the DB-loaded copies
   # of the validator node IDs register in the peer pool BEFORE the static-config
@@ -1345,7 +1589,7 @@ elif [ "$CLIENT" = nethermind ]; then
   # IsPeersPersistenceOn is NOT exposed as a CLI arg in this build, so patch it into
   # the dist config before launch (idempotent). Verified live: nethermind then holds
   # the validators and stays on-tip. Underlying nethermind fix: xdc-nethermind #249.
-  python3 - "$NETHERMIND_DIST/configs/$NM_CONFIG.json" <<'PY'
+  [ "$DRY" = 1 ] || python3 - "$NETHERMIND_DIST/configs/$NM_CONFIG.json" <<'PY'
 import json, sys
 p = sys.argv[1]
 try:
@@ -1356,7 +1600,7 @@ try:
 except Exception as e:
     sys.stderr.write("  warning: could not patch nethermind config %s: %s\n" % (p, e))
 PY
-  ( cd "$NETHERMIND_DIST" && ./nethermind \
+  ( { [ "$DRY" = 1 ] || cd "$NETHERMIND_DIST"; } && "$RUN_NM" \
     --config "$NM_CONFIG" \
     --Init.BaseDbPath "$NM_DATADIR" \
     --Network.P2PPort "$PORT" --Network.DiscoveryPort "$PORT" \
@@ -1368,20 +1612,40 @@ elif [ "$CLIENT" = xone ]; then
   # single-dash flags. Sync-only join here -- it recognises XDPoS from the genesis
   # (config-driven) and inits from -override.genesis on a fresh datadir. Sealing
   # needs a raw -miner.key, which a sync join doesn't carry, so --mine is noted.
-  mkdir -p "$DATADIR"
+  [ "$DRY" = 1 ] || mkdir -p "$DATADIR"
   # archive: -gcmode archive. Mint: -mine -miner.etherbase -unlock -password;
   # xone reads accounts from <datadir>/keystore, so stage the seat's key there.
   XONE_GC=""; [ "$ARCHIVE" = 1 ] && XONE_GC="-gcmode archive"
   XONE_MINE=""
   if [ -n "$MINE_ADDR" ]; then
-    mkdir -p "$DATADIR/keystore"
-    [ "$(cd "$KEYSTORE" && pwd)" = "$(cd "$DATADIR/keystore" && pwd)" ] || for _kf in $(ls "$KEYSTORE" | grep -i "$MINE_HEX"); do cp -f "$KEYSTORE/$_kf" "$DATADIR/keystore/"; done
-    XONE_MINE="-mine -miner.etherbase $MINE_ADDR -unlock $MINE_ADDR -password $PWFILE"
+    # the live Apothem producer flags (xOneGo v1.4.7)
+    XONE_MINE="-mine -miner.keystore $KEYSTORE -miner.password $PWFILE -miner.etherbase $MINE_ADDR"
   fi
   XONE_ES=""; [ -n "$full" ] && XONE_ES="-ethstats $full"
   MP_ARG=""; [ -n "$MAXPEERS" ] && MP_ARG="-maxpeers $MAXPEERS"
+  XONE_ANCH=""; [ -n "$XONE_ANCHOR" ] && XONE_ANCH="-anchor $XONE_ANCHOR"
+  [ -n "$XONE_ANCHOR_RPC" ] && XONE_ANCH="$XONE_ANCH -anchor.seedrpc $XONE_ANCHOR_RPC"
+  # Apothem snap: start from a trusted anchor ~3000 blocks behind the tip (from a trusted RPC, not a peer).
+  if [ -z "$XONE_ANCHOR" ] && [ "$SYNCMODE" = snap ] && { [ "$NETWORK" = testnet ] || [ "$NETWORK" = apothem ]; }; then
+    if [ "$DRY" = 1 ]; then echo "(dry-run) xone: -anchor NUM:0xHASH ~3000 blocks behind the tip is fetched from ${XONE_ANCHOR_RPC_URL:-https://erpc.apothem.network} at start" >&2
+    else
+      _xa=$(python3 - "${XONE_ANCHOR_RPC_URL:-https://erpc.apothem.network}" <<'PY'
+import json,sys,urllib.request
+def rpc(m,p):
+    r=urllib.request.Request(sys.argv[1],json.dumps({"jsonrpc":"2.0","id":1,"method":m,"params":p}).encode(),{"content-type":"application/json","user-agent":"iwml-join/1"})
+    return json.load(urllib.request.urlopen(r,timeout=20))["result"]
+n=int(rpc("eth_blockNumber",[]),16)-3000
+print("%d:%s" % (n,rpc("eth_getBlockByNumber",[hex(n),False])["hash"]))
+PY
+) || _xa=""
+      if [ -n "$_xa" ]; then XONE_ANCH="-anchor $_xa $XONE_ANCH"; echo "  xone: anchor $_xa"
+      else echo "  warning: could not fetch an xone anchor; it will start from genesis (slow)" >&2; fi
+    fi
+  fi
   # shellcheck disable=SC2086
-  "$XDC" -override.genesis "$GENESIS" -networkid "$NETWORKID" -syncmode "$SYNC_FLAG" $XONE_GC $XONE_MINE \
+  XONE_NET="-override.genesis $GENESIS -networkid $NETWORKID"; XONE_SP=""
+  case "${NETWORK:-}" in testnet|apothem) XONE_NET="--network apothem --chaindata.pebble"; [ -n "$STATICPEERS" ] && XONE_SP="-staticnodes $STATICPEERS" ;; esac
+  "$RUN_XDC" $XONE_NET $XONE_SP -syncmode "$SYNC_FLAG" $XONE_GC $XONE_MINE $XONE_ANCH \
     -datadir "$DATADIR" -port "$PORT" -discovery.port "$PORT" -nat "extip:${IP}" \
     -bootnodes "$BOOTNODES" $MP_ARG -miner.gaslimit "$GAS_LIMIT" \
     -http -http.addr 0.0.0.0 -http.port "$RPCPORT" -http.vhosts "*" \
@@ -1408,7 +1672,7 @@ else
   # should never silently carry a different ceiling than every other node
   # in the same topology.
   # shellcheck disable=SC2086
-  "$XDC" --datadir "$DATADIR" --networkid "$NETWORKID" --syncmode full $([ "$ARCHIVE" = 1 ] && echo "--gcmode archive") \
+  "$RUN_XDC" --datadir "$DATADIR" --networkid "$NETWORKID" --syncmode full $([ "$ARCHIVE" = 1 ] && echo "--gcmode archive") \
     --bootnodes "$BOOTNODES" --port "$PORT" --nat "extip:${IP}" --identity "$NAME" $MP_ARG \
     --targetgaslimit "$GAS_LIMIT" \
     --rpc --rpccorsdomain "*" --rpcaddr 0.0.0.0 --rpcport "$RPCPORT" --rpcvhosts "*" \
@@ -1417,6 +1681,7 @@ else
     $MINE_FLAGS $ETHSTATS_ARG &
 fi
 child_proc=$!
+[ "$DRY" = 1 ] && { wait; exit 0; }
 # --measure: time-to-tip and disk use, logged beside the datadir. The node log is
 # only known when --client all redirected this child to <datadir>.log; with it,
 # geth-xdc snap/fast runs are measured until the history backfill completes.

@@ -13,6 +13,7 @@ build a genesis, run 4 mining nodes + a bootnode, and let other machines join.
 - [Choosing a client](#choosing-a-client)
 - [Quick start](#quick-start)
   - [Run every client against it](#run-every-client-against-it)
+- [Default sync footprint on public networks](#default-sync-footprint-on-public-networks)
 - [Everyday commands](#everyday-commands)
 - [Generating a genesis](#generating-a-genesis)
 - [Joining from another machine](#joining-from-another-machine)
@@ -20,6 +21,7 @@ build a genesis, run 4 mining nodes + a bootnode, and let other machines join.
 - [Network details](#network-details)
 - [Troubleshooting](#troubleshooting)
 - [The puppeth fix](#the-puppeth-fix)
+- [Apothem validator addresses](docs/apothem-validators.md)
 
 ---
 
@@ -225,6 +227,73 @@ nethermind | xone`, or `--client all` to attach one of each at once. See
 **Which one do I want?** If you are evaluating clients or testing consensus
 changes, start your own (A) — you control the genesis and the validator set. Use
 (B) only to follow a chain someone else is producing.
+
+---
+
+## Run an Apothem validator in one command
+
+`join.sh --network testnet --mine <addr>` brings up an Apothem (chainId 51) validator for any of the six clients. It downloads the pinned release, syncs with the smallest footprint (snap / fast / minimal), dials our trusted peers, reports to `stats.xdcindia.com`, and starts the producer with the flags that run live on Apothem today.
+
+| Client | Pinned release | Producer flags join.sh passes for `--mine` |
+|---|---|---|
+| geth | `v1.17.10-xdc.21` | `--keystore --unlock --password --mine --miner.etherbase`, RPC bound to 127.0.0.1 |
+| erigon | `erigon-xdc v3.8.1-xdc.2` | `--xdc.v2.produce --xdc.v1.signerkey <hexfile> --miner.etherbase`, env `ERIGON_XDPOS_STRICT_EPOCH_SWITCH=1`; the hex file is derived from the keystore at start into a 0600 file in the datadir and never printed |
+| reth | `reth v2.9.0-xdc.4` | env `XDC_PRODUCE=1`, `--xdc.signer-keystore --xdc.signer-password --xdc.signer`, `--full`, `--engine.persistence-threshold 0 --engine.persistence-backpressure-threshold 16 --engine.disable-prewarming` |
+| besu | `besu v26.11-xdc.4` (needs a full JDK 21, e.g. Temurin 21) | `-Dxdpos.validator.*` JAVA_OPTS (keystore, password file, address) |
+| nethermind | `v1.36.0-xdc.3` | `XDC_PRODUCER=1`, `--Mining.Enabled true --KeyStore.* --Sync.NonValidatorNode false` |
+| xone | `xOneGo v1.4.7` | `-mine -miner.keystore <dir> -miner.password <file> -miner.etherbase <addr>`; known issue: a fresh datadir does not yet sync from join.sh's anchored start (see below) |
+
+**No key yet?** Run it with `--mine` and no address. On the first run join.sh creates one new validator key in `<datadir>/validator/` (`keystore/UTC--...` as a standard v3 keystore, `password.txt` with a random password, `address.txt`; files 0600, directory 0700), prints the coinbase address and where the two files are, and starts the node. A re-run on the same datadir reuses that key (never a second one; more than one key in the directory is refused). The node runs as a follower plus producer and does not seal until you propose the address and it is in the masternode set (next section). Back up `keystore/` and `password.txt` at once: losing them loses the validator. The key and password are never printed, and the key must never run on another node.
+
+```bash
+./join.sh --network testnet --client geth --mine --i-understand-single-signer
+```
+
+To use a key you already have, pass its keystore directory (geth format) and the file holding its password:
+
+```bash
+./join.sh --network testnet --client geth \
+  --mine 0xYourValidatorAddr --keystore ~/validator/keystore --password-file ~/validator/password.txt \
+  --i-understand-single-signer
+```
+
+Swap `--client` for `erigon`, `reth`, `besu`, `nethermind` or `xone`. Add `--name <label>` (the ethstats / SkyNet node name), `--datadir <dir>`, and `--port/--rpcport/--wsport/--authrpc-port` when you run more than one node on a host. `--dry-run` prints the exact command and environment for the chosen client and exits, without downloading, writing or starting anything; review it before the first real start:
+
+```bash
+./join.sh --network testnet --client erigon --mine 0xYourValidatorAddr \
+  --keystore ~/validator/keystore --password-file ~/validator/password.txt \
+  --i-understand-single-signer --dry-run
+```
+
+Notes:
+
+- All six pinned releases are mirrored on xdc.network and verified by sha256; no GitHub login is needed.
+- besu needs a full JDK 21 with Flight Recorder (Temurin 21 works). Ubuntu's `openjdk-21-jre-headless` fails at start with `Failure when starting JFR on_create_vm_3`; set `JAVA_HOME` to a Temurin install.
+- A producer needs vote-relaying peers (erigon wants at least 10). join.sh raises `--maxpeers` to 50 for non-geth producers.
+- To turn an already-synced follower into a producer, pass the follower's `--datadir`; otherwise a new `nodes/<client>-seal` directory starts a fresh sync.
+- xone: v1.4.7 runs as a live Apothem validator, but starting it from an empty datadir with join.sh's anchored snap start stops at `parent epoch masternode set unavailable` (tracked in `e2e-known-bugs.tsv`). Start it on a datadir that is already at the tip.
+- nethermind: let it reach the tip as a follower first, then restart with `--mine` on the same `--datadir`.
+
+### Become a masternode (propose)
+
+A running producer only mints once its address is in the masternode set. The **owner** account (not the coinbase) registers the candidate through the validator contract `0x0000000000000000000000000000000000000088`:
+
+1. The owner uploads KYC: `uploadKYC(string)`.
+2. The owner proposes the coinbase: `propose(address)`, payable with at least the minimum stake, **10,000,000 XDC** (`minCandidateCap`; re-read it before sending).
+
+```bash
+RPC=https://erpc.apothem.network
+V=0x0000000000000000000000000000000000000088
+cast call $V "minCandidateCap()(uint256)" --rpc-url $RPC
+cast send $V "uploadKYC(string)" "<kyc-hash>" --keystore ~/owner/keystore --password-file ~/owner/password.txt --rpc-url $RPC
+cast send $V "propose(address)" 0xYourValidatorAddr --value 10000000ether --keystore ~/owner/keystore --password-file ~/owner/password.txt --rpc-url $RPC
+```
+
+The owner must be a different account from the validator (coinbase) address, and rewards accrue to the owner. The candidate joins the masternode set at the next epoch switch (900 blocks) once it ranks in by stake. Until then the producer logs that it is not in the masternode set and does not seal. More in [docs/apothem-validators.md](docs/apothem-validators.md).
+
+### One signer per key
+
+A validator key must **never** produce on two nodes at once: that is a double-sign. Stop every other producer for the address, on every host, before you start this one. join.sh refuses `--mine` on `--network testnet|mainnet` unless you pass `--i-understand-single-signer`, and it never takes the key on the command line.
 
 ---
 
@@ -452,6 +521,19 @@ done
 > a missing field must not be mistaken for agreement.
 
 ---
+
+## Default sync footprint on public networks
+
+`join.sh --network testnet|mainnet` defaults to the smallest-footprint sync per client; pass `--syncmode archive` for full history.
+
+| Client | Default flags | Disk at tip, Apothem (measured) |
+|---|---|---|
+| geth | `--syncmode snap --gcmode full --history.transactions 2350000` (`XDC_EXPERIMENTAL_SNAPSYNC=1` is set for snap) | 35 GB at tip, 45 GB ~1 h later (history backfill) |
+| erigon | `--prune.mode minimal` | not measured |
+| reth | `--minimal` if the build has it, else `--full` (a `--mine` producer uses `--full`) | not measured |
+| besu | `SNAP` + `BONSAI` + `--bonsai-limit-trie-logs-enabled`, and on testnet a genesis checkpoint ~3000 blocks behind the tip from a trusted RPC (`BESU_CHECKPOINT_RPC`); needs host Java 21 | 27 GB, tip after ~50 min |
+| nethermind | SnapSync, `Pruning.Mode Hybrid`, `Init.MemoryHint 3072000000`, bodies on with a pivot from a trusted RPC (`NM_PIVOT_RPC`) so the old-headers backfill stops at `AncientBodiesBarrier` (nm#275) | 20 GB, tip after ~12 min. The same node on the previous defaults (bodies off) grew to 94 GB |
+| xone | `-syncmode snap` with a trusted anchor ~3000 blocks behind the tip from a trusted RPC (`XONE_ANCHOR_RPC_URL`); known issue, see above | n/a |
 
 ## Everyday commands
 

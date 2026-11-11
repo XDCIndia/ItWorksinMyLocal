@@ -1045,6 +1045,11 @@ JOIN_ALL_CLIENTS="oldxdc geth erigon besu nethermind reth xone geth4"
 #   nethermind  full fast snap archive   (Sync.* / Pruning.Mode)
 #   reth        full archive             (staged sync; --full prunes, default keeps all)
 #   xone        full fast snap archive   (fast is accepted by the flag table but see known bugs)
+# Public-network (testnet/mainnet) DEFAULT = smallest footprint, set in join.sh (archive only when asked):
+#   geth snap + gcmode full + bounded --history.transactions; erigon --prune.mode minimal;
+#   reth --minimal (else --full); besu SNAP + BONSAI + trie-log pruning (+ testnet checkpoint);
+#   nethermind SnapSync + Pruning Hybrid + bodies/AncientBodiesBarrier (nm#275); xone snap
+#   (falls back to full until its anchored start works, see e2e-known-bugs.tsv).
 client_syncmodes() {
   case "$1" in
     oldxdc|xdc|XDC) echo "full archive" ;;
