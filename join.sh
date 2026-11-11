@@ -1625,6 +1625,8 @@ elif [ "$CLIENT" = xone ]; then
   # single-dash flags. Sync-only join here -- it recognises XDPoS from the genesis
   # (config-driven) and inits from -override.genesis on a fresh datadir. Sealing
   # needs a raw -miner.key, which a sync join doesn't carry, so --mine is noted.
+  # an empty datadir (no chaindata yet) is a fresh snap start; --mine and a rerun create/keep other files there
+  XONE_FRESH=1; { [ -e "$DATADIR/chaindata-pebble" ] || [ -e "$DATADIR/chaindata" ]; } && XONE_FRESH=0
   [ "$DRY" = 1 ] || mkdir -p "$DATADIR"
   # archive: -gcmode archive. Mint: -mine -miner.etherbase -unlock -password;
   # xone reads accounts from <datadir>/keystore, so stage the seat's key there.
@@ -1650,11 +1652,12 @@ elif [ "$CLIENT" = xone ]; then
     # the last ~128 blocks (the state download takes longer) and nethermind peers answer storage ranges with 0 accounts / a truncated
     # frame, so the run restarts at a new pivot forever. The fleet's patched snap server keeps 2048 diff layers; start from it alone
     # (it is in bootnodes/testnet-static.list); discovery adds the other peers once the state is in.
-    if [ "$BOOTNODES_EXPLICIT" != 1 ] && [ "$STATICPEERS_EXPLICIT" != 1 ]; then
+    if [ "$XONE_FRESH" = 1 ] && [ "$BOOTNODES_EXPLICIT" != 1 ] && [ "$STATICPEERS_EXPLICIT" != 1 ]; then
       _snap=${XONE_SNAP_SERVER:-$(grep -h -o 'enode://[0-9a-f]*@95\.217\.106\.210:[0-9]*' "${PUB_BOOTNODES_FILE%.list}-static.list" 2>/dev/null | head -1)}
       if [ -n "$_snap" ]; then
         # the snap server does not announce a head or push blocks, so the other peers are added over RPC once the state is in (below)
         XONE_LATE_PEERS=$(printf '%s' "$STATICPEERS" | tr ',' '\n' | grep enode | grep -v "$_snap" | paste -sd, -)
+        XONE_FLAG=$(mktemp -u)
         BOOTNODES="$_snap"; STATICPEERS="$_snap"; echo "  xone: snap state from $_snap"
       fi
     fi
@@ -1682,7 +1685,7 @@ PY
     -http -http.addr 0.0.0.0 -http.port "$RPCPORT" -http.vhosts "*" \
     -http.api eth,net,web3,admin,debug,txpool,XDPoS \
     -authrpc.port "$AUTHRPC_PORT" \
-    $XONE_ES &
+    $XONE_ES > >(while IFS= read -r _l; do printf '%s\n' "$_l"; case $_l in *"reward-checkpoint backfill complete"*) [ -z "${XONE_FLAG:-}" ] || : > "$XONE_FLAG";; esac; done) 2>&1 &
 else
   # oldxdc (XDPoSChain): classic flags; --mine unlocks a validator to also seal.
   # --maxpeers/--etherbase are additive: omitted (client default) unless given.
@@ -1713,18 +1716,19 @@ else
 fi
 child_proc=$!
 [ "$DRY" = 1 ] && { wait; exit 0; }
-# xone snap start (see above): head 0 -> pivot adopted means the state download is done; only now give it the other peers
-# (it follows the tip and executes forward from them). Exits with the node.
+# xone snap start (see above): "reward-checkpoint backfill complete" in its log is the end of the state download (no RPC shows it: the
+# header head and eth_syncing look the same before and after, and state reads fail either way). Only now give it the other peers; it
+# follows the tip and executes forward from them. Exits with the node.
 if [ -n "${XONE_LATE_PEERS:-}" ]; then
   ( while kill -0 "$child_proc" 2>/dev/null; do
-      _h=$(curl -s -m5 -XPOST -H content-type:application/json -d '{"jsonrpc":"2.0","id":1,"method":"eth_blockNumber","params":[]}' "http://127.0.0.1:${RPCPORT}" | grep -o '"result":"0x[0-9a-f]*"' | cut -d'"' -f4)
-      if [ -n "$_h" ] && [ "$_h" != 0x0 ]; then
+      if [ -e "$XONE_FLAG" ]; then
+        rm -f "$XONE_FLAG"
         for _e in $(printf '%s' "$XONE_LATE_PEERS" | tr ',' ' '); do
           curl -s -m5 -XPOST -H content-type:application/json -d "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"admin_addPeer\",\"params\":[\"$_e\"]}" "http://127.0.0.1:${RPCPORT}" >/dev/null
         done
-        echo "  xone: state in at $_h; added the other static peers"; break
+        echo "  xone: state in; added the other static peers"; break
       fi
-      sleep 10
+      sleep 5
     done ) &
 fi
 # --measure: time-to-tip and disk use, logged beside the datadir. The node log is
