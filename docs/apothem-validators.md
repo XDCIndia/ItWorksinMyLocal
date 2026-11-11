@@ -13,7 +13,7 @@ Public addresses of the per-client Apothem (chainId 51) validators. Addresses on
 
 Owner and coinbase are deliberately different, and unique per client, so rewards are trackable per client. Rewards accrue to the owner. Never reuse an owner across clients.
 
-erigon and reth have no Apothem-mint-proven release yet (join.sh warns when they are used with `--network testnet`).
+Latest releases running as live Apothem validators: geth v1.17.10-xdc.21, xOneGo v1.4.7, nethermind v1.36.0-xdc.3, erigon-xdc v3.8.1-xdc.2, reth v2.9.0-xdc.4, besu v26.11-xdc.4. join.sh pins these.
 
 ## How to propose
 
@@ -34,7 +34,7 @@ The candidate enters the masternode set at the next epoch switch after it ranks 
 
     ./join.sh --network testnet --client <c> --mine <addr> --keystore <dir> --password-file <file> --i-understand-single-signer
 
-erigon/reth take `--keyfile FILE` (raw hex key, mode 0600) instead of a keystore. A non-geth producer on testnet raises `--maxpeers` to 50 and uses `bootnodes/testnet-static.list`, since it needs about 27+ canonical peers to collect votes.
+erigon needs a raw hex key file; join.sh derives it from the keystore into a 0600 file in the datadir (or pass `--keyfile FILE`). A non-geth producer on testnet raises `--maxpeers` to 50 and uses `bootnodes/testnet-static.list`, since it needs about 27+ canonical peers to collect votes.
 
 ## Single-signer rule
 
