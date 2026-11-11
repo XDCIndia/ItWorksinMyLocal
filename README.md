@@ -241,7 +241,7 @@ changes, start your own (A) — you control the genesis and the validator set. U
 | reth | `reth v2.9.0-xdc.4` | env `XDC_PRODUCE=1`, `--xdc.signer-keystore --xdc.signer-password --xdc.signer`, `--full`, `--engine.persistence-threshold 0 --engine.persistence-backpressure-threshold 16 --engine.disable-prewarming` |
 | besu | `besu v26.11-xdc.4` (needs a full JDK 21, e.g. Temurin 21) | `-Dxdpos.validator.*` JAVA_OPTS (keystore, password file, address) |
 | nethermind | `v1.36.0-xdc.3` | `XDC_PRODUCER=1`, `--Mining.Enabled true --KeyStore.* --Sync.NonValidatorNode false` |
-| xone | `xOneGo v1.4.7` | `-mine -miner.keystore <dir> -miner.password <file> -miner.etherbase <addr>`; known issue: a fresh datadir does not yet sync from join.sh's anchored start (see below) |
+| xone | `xOneGo v1.4.7` | `-mine -miner.keystore <dir> -miner.password <file> -miner.etherbase <addr>` |
 
 **No key yet?** Run it with `--mine` and no address. On the first run join.sh creates one new validator key in `<datadir>/validator/` (`keystore/UTC--...` as a standard v3 keystore, `password.txt` with a random password, `address.txt`; files 0600, directory 0700), prints the coinbase address and where the two files are, and starts the node. A re-run on the same datadir reuses that key (never a second one; more than one key in the directory is refused). The node runs as a follower plus producer and does not seal until you propose the address and it is in the masternode set (next section). Back up `keystore/` and `password.txt` at once: losing them loses the validator. The key and password are never printed, and the key must never run on another node.
 
@@ -271,8 +271,8 @@ Notes:
 - besu needs a full JDK 21 with Flight Recorder (Temurin 21 works). Ubuntu's `openjdk-21-jre-headless` fails at start with `Failure when starting JFR on_create_vm_3`; set `JAVA_HOME` to a Temurin install.
 - A producer needs vote-relaying peers (erigon wants at least 10). join.sh raises `--maxpeers` to 50 for non-geth producers.
 - To turn an already-synced follower into a producer, pass the follower's `--datadir`; otherwise a new `nodes/<client>-seal` directory starts a fresh sync.
-- xone: v1.4.7 runs as a live Apothem validator, but starting it from an empty datadir with join.sh's anchored snap start stops at `parent epoch masternode set unavailable` (tracked in `e2e-known-bugs.tsv`). Start it on a datadir that is already at the tip.
-- nethermind: let it reach the tip as a follower first, then restart with `--mine` on the same `--datadir`.
+- xone: an empty datadir starts from a trusted anchor and reads the gap-block candidate pools from an archive (`--anchor-seedrpc`, default `https://earpc.apothem.network`; `erpc.apothem.network` is not an archive), with the fleet snap server as the only peer for the state download. Override with `XONE_ANCHOR_SEEDRPC_URL` / `XONE_SNAP_SERVER`, or pass your own `--bootnodes`/`--staticpeers`.
+- nethermind: `--mine` works from an empty datadir (the node snap-syncs first and starts consensus once it is at the V2 head; on Apothem join.sh writes the gap-block candidate pools it needs to `<datadir>/gap-seed.json` from `NM_GAP_SEED_RPC`, default `https://earpc.apothem.network`).
 
 ### Become a masternode (propose)
 
@@ -348,7 +348,7 @@ reason. Use `net2040-like-5` for a small bring-up; `--clients`, `--syncmodes`,
 `--until <block|fork>`, `--mint`, `--keep` narrow or extend it. Run it on a fleet host,
 not a laptop/orchestrator.
 
-Mint validation status (65.21.71.4, `topologies/mint-<client>.json` = 4 geth seats + one client seat): erigon seals canonical blocks; xone and nethermind are known-bug SKIPs (see `e2e-known-bugs.tsv`); besu follows but is not in the V2 masternode set when seated from genesis (it has no V1 producer), so besu minting needs a post-V2 candidate registration that is not automated yet. besu on a host with musl installed needs the musl libs hidden (rocksdbjni picks a musl .so that is not in the jar).
+Mint validation status (65.21.71.4, `topologies/mint-<client>.json` = 4 geth seats + one client seat): erigon seals canonical blocks; xone and nethermind are no longer known-bug SKIPs; besu follows but is not in the V2 masternode set when seated from genesis (it has no V1 producer), so besu minting needs a post-V2 candidate registration that is not automated yet. besu on a host with musl installed needs the musl libs hidden (rocksdbjni picks a musl .so that is not in the jar).
 
 Every client now has a real `--mine ADDR` arm in `join.sh` (geth/xone/oldxdc unlock a
 keystore, besu/nethermind read the keystore dir, erigon/reth read a 0600 raw-key file
@@ -533,7 +533,7 @@ done
 | reth | `--minimal` if the build has it, else `--full` (a `--mine` producer uses `--full`) | not measured |
 | besu | `SNAP` + `BONSAI` + `--bonsai-limit-trie-logs-enabled`, and on testnet a genesis checkpoint ~3000 blocks behind the tip from a trusted RPC (`BESU_CHECKPOINT_RPC`); needs host Java 21 | 27 GB, tip after ~50 min |
 | nethermind | SnapSync, `Pruning.Mode Hybrid`, `Init.MemoryHint 3072000000`, bodies on with a pivot from a trusted RPC (`NM_PIVOT_RPC`) so the old-headers backfill stops at `AncientBodiesBarrier` (nm#275) | 20 GB, tip after ~12 min. The same node on the previous defaults (bodies off) grew to 94 GB |
-| xone | `-syncmode snap` with a trusted anchor ~3000 blocks behind the tip from a trusted RPC (`XONE_ANCHOR_RPC_URL`); known issue, see above | n/a |
+| xone | `-syncmode snap` with a trusted anchor ~3000 blocks behind the tip from a trusted RPC (`XONE_ANCHOR_RPC_URL`), gap pools from an archive RPC, state from the fleet snap server | n/a |
 
 ## Everyday commands
 
