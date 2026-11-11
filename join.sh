@@ -180,7 +180,9 @@
 #                        reads gap-block candidate pools from (xone -anchor.seedrpc).
 #   (sync default)       public networks (testnet/mainnet) default to the smallest-footprint
 #                        sync per client; pass --syncmode archive for full history.
-#   --mine ADDR          also mint with this validator address, using the producer
+#   --mine [ADDR]        also mint with this validator address (omit ADDR, or give no
+#                        --keystore, to create a new key in <datadir>/validator/ on the
+#                        first run and reuse it after), using the producer
 #                        flags that run live on Apothem for that client (README:
 #                        "Run an Apothem validator in one command"). The key is NEVER
 #                        a command-line argument (it would show in `ps`): give
@@ -306,7 +308,7 @@ while [ $# -gt 0 ]; do
     --maxpeers)    MAXPEERS=$2; shift 2;;
     --gas-limit)   GAS_LIMIT=$2; shift 2;;
     --etherbase)   ETHERBASE=$2; shift 2;;
-    --mine)        MINEADDR=$2; shift 2;;
+    --mine)        case "${2:-}" in ""|--*) MINEADDR=auto; shift;; *) MINEADDR=$2; shift 2;; esac;;
     --i-understand-single-signer) SINGLE_SIGNER_OK=1; shift;;
     --anchor)      XONE_ANCHOR=$2; shift 2;;
     --anchor-seedrpc) XONE_ANCHOR_RPC=$2; shift 2;;
@@ -860,6 +862,65 @@ if [ -z "$DATADIR" ]; then
   [ -n "$MINEADDR" ] && echo "  datadir: $DATADIR (pass --datadir to reuse a synced follower's directory instead of syncing again)"
 fi
 
+# Validator key: --mine with no keystore (or an empty one) creates ONE new key in
+# <datadir>/validator/ (v3 keystore + random password, 0600 files in a 0700 dir) and a
+# re-run reuses it. Never a second key, never overwritten. The key/password are never printed.
+_KEY_PENDING=0
+if [ -n "$MINEADDR" ] && [ -z "$KEYFILE" ]; then
+  [ "$MINEADDR" = auto ] && [ "$CLIENT" = oldxdc ] && { echo "join.sh: oldxdc needs an explicit --mine ADDR" >&2; exit 1; }
+  _nkeys() { ls "$1" 2>/dev/null | grep -c .; }
+  _addr_of() { ls "$1" | head -1 | sed -E 's/.*--//' | tr 'A-F' 'a-f'; }
+  VDIR="$DATADIR/validator"
+  if [ "$CLIENT" != oldxdc ] && { [ -z "$KEYSTORE" ] || [ "$(_nkeys "$KEYSTORE")" = 0 ]; }; then
+    _n=$(_nkeys "$VDIR/keystore")
+    if [ "$_n" -gt 1 ]; then echo "join.sh: $VDIR/keystore holds $_n keys; refusing to guess. Keep exactly one, or pass --keystore." >&2; exit 1
+    elif [ "$_n" = 1 ]; then
+      KEYSTORE="$VDIR/keystore"; [ -n "$PWFILE" ] || PWFILE="$VDIR/password.txt"
+      _new=0x$(_addr_of "$KEYSTORE"); echo "validator key: reusing $_new from $VDIR"
+    elif [ "$MINEADDR" != auto ]; then
+      echo "join.sh: no keystore for $MINEADDR. Pass --keystore DIR, or use --mine with no address to create a new validator key." >&2; exit 1
+    elif [ "$DRY" = 1 ]; then
+      _KEY_PENDING=1; KEYSTORE="$VDIR/keystore"; PWFILE="$VDIR/password.txt"; _new=0x0000000000000000000000000000000000000000
+      echo "(dry-run) validator key: no key in $VDIR; a new one (v3 keystore + random password, 0600) would be created there" >&2
+    else
+      command -v openssl >/dev/null 2>&1 || { echo "join.sh: creating a validator key needs openssl" >&2; exit 1; }
+      mkdir -p "$DATADIR" && mkdir "$DATADIR/validator.lock" 2>/dev/null \
+        || { echo "join.sh: another run is creating the key in $VDIR (remove $DATADIR/validator.lock if none is)" >&2; exit 1; }
+      mkdir -p "$VDIR" && chmod 700 "$VDIR"
+      _new=$(python3 ./keystore-to-hex.py new "$VDIR/keystore" "$VDIR/password.txt" "$VDIR/address.txt") \
+        || { rmdir "$DATADIR/validator.lock"; echo "join.sh: key creation failed" >&2; exit 1; }
+      rmdir "$DATADIR/validator.lock"
+      KEYSTORE="$VDIR/keystore"; PWFILE="$VDIR/password.txt"
+      cat <<MSG
+
+  ==================== NEW VALIDATOR KEY CREATED ====================
+  Coinbase (validator) address : $_new
+  Keystore                     : $(cd "$KEYSTORE" && pwd)
+  Password file                : $(cd "$VDIR" && pwd)/password.txt
+
+  BACK UP these two files now. Losing them loses the validator.
+  Never run this key on another node (one signer, one node: double-sign).
+
+  The node starts as a follower plus producer. It will NOT seal until the
+  address is proposed and in the masternode set (next epoch switch after the
+  proposal). To propose on Apothem, use a SEPARATE owner address:
+    1. fund the owner with at least 10,000,000 XDC plus gas
+    2. cast send 0x0000000000000000000000000000000000000088 "uploadKYC(string)" "<kyc-hash>" --keystore <owner-keystore> --password-file <owner-pw> --rpc-url https://erpc.apothem.network
+    3. cast send 0x0000000000000000000000000000000000000088 "propose(address)" $_new --value 10000000ether --keystore <owner-keystore> --password-file <owner-pw> --rpc-url https://erpc.apothem.network
+  ===================================================================
+
+MSG
+    fi
+    if [ "$MINEADDR" != auto ] && [ "$(printf '%s' "$MINEADDR" | sed -E 's/^(0x|xdc)//I' | tr 'A-F' 'a-f')" != "${_new#0x}" ] && [ "$_KEY_PENDING" != 1 ]; then
+      echo "join.sh: no keystore for $MINEADDR (the key in $VDIR is $_new). Pass --keystore DIR, or drop the address to use $_new." >&2; exit 1
+    fi
+    MINEADDR="$_new"
+  elif [ "$MINEADDR" = auto ]; then
+    [ "$(_nkeys "$KEYSTORE")" = 1 ] || { echo "join.sh: $KEYSTORE holds several keys; pass --mine ADDR" >&2; exit 1; }
+    MINEADDR="0x$(_addr_of "$KEYSTORE")"
+  fi
+fi
+
 # Per-client default ports: a 100-wide block per client so all seven join clients
 # run side by side with no cross-client clash, in a high band kept clear of
 # run.sh's local net (30301, 30303-6, 8545-58), any XDPoS validator ports
@@ -1172,6 +1233,7 @@ if [ -n "$MINEADDR" ]; then
   printf '%s' "$MINE_HEX" | grep -Eq '^[0-9a-f]{40}$' \
     || { echo "join.sh: --mine needs a 20-byte validator address (got '$MINEADDR')" >&2; exit 1; }
   MINE_ADDR="0x$MINE_HEX"
+  [ "$_KEY_PENDING" = 1 ] && MINE_ADDR="0x<new-validator-address>"
   [ -n "$KEYSTORE" ] || KEYSTORE="$DATADIR/keystore"
   [ -n "$PWFILE" ] || { PWFILE="./.pwd"; [ "$DRY" = 1 ] || [ -f "$PWFILE" ] || : > "$PWFILE"; }
   if [ "$DRY" != 1 ]; then

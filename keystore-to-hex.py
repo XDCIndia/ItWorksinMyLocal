@@ -2,6 +2,11 @@
 """Write the raw hex private key of a geth-format keystore account to a 0600 file.
 
 usage: keystore-to-hex.py KEYSTORE_DIR ADDRESS PASSWORD_FILE OUT_FILE
+       keystore-to-hex.py new KEYSTORE_DIR PASSWORD_FILE ADDRESS_FILE
+
+`new` creates a fresh validator key as a standard v3 keystore (scrypt, geth
+parameters) with a random password written to PASSWORD_FILE (0600), the address
+to ADDRESS_FILE, and prints ONLY the address. The key and password are never printed.
 
 erigon's --xdc.v1.signerkey wants a hex key file, not a keystore. The key is
 only ever written to OUT_FILE (created 0600); it is never printed. Needs
@@ -70,7 +75,54 @@ def main(ks, addr, pwfile, out):
         f.write(key.hex() + "\n")
     os.chmod(out, 0o600)
 
+def secp256k1_pub(d):
+    P = 2**256 - 2**32 - 977
+    N = 0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEBAAEDCE6AF48A03BBFD25E8CD0364141
+    G = (0x79BE667EF9DCBBAC55A06295CE870B07029BFCDB2DCE28D959F2815B16F81798,
+         0x483ADA7726A3C4655DA4FBFC0E1108A8FD17B448A68554199C47D08FFB10D4B8)
+    def add(a, b):
+        if a is None: return b
+        if b is None: return a
+        if a[0] == b[0] and (a[1] + b[1]) % P == 0: return None
+        l = (3 * a[0] * a[0] * pow(2 * a[1], -1, P) if a == b else (b[1] - a[1]) * pow(b[0] - a[0], -1, P)) % P
+        x = (l * l - a[0] - b[0]) % P
+        return (x, (l * (a[0] - x) - a[1]) % P)
+    r, q = None, G
+    while d:
+        if d & 1: r = add(r, q)
+        q = add(q, q); d >>= 1
+    return r
+
+def new_key(ks, pwfile, addrfile):
+    import secrets, time, uuid
+    N = 0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEBAAEDCE6AF48A03BBFD25E8CD0364141
+    d = 0
+    while not 0 < d < N:
+        d = int.from_bytes(secrets.token_bytes(32), "big")
+    x, y = secp256k1_pub(d)
+    addr = keccak256(x.to_bytes(32, "big") + y.to_bytes(32, "big"))[12:].hex()
+    pw = secrets.token_urlsafe(24).encode()
+    salt, iv = secrets.token_bytes(32), secrets.token_bytes(16)
+    dk = hashlib.scrypt(pw, salt=salt, n=262144, r=8, p=1, dklen=32, maxmem=2**31 - 1)
+    ct = subprocess.run(["openssl", "enc", "-aes-128-ctr", "-K", dk[:16].hex(), "-iv", iv.hex()],
+                        input=d.to_bytes(32, "big"), capture_output=True, check=True).stdout
+    j = {"address": addr, "version": 3, "id": str(uuid.uuid4()),
+         "crypto": {"cipher": "aes-128-ctr", "ciphertext": ct.hex(), "cipherparams": {"iv": iv.hex()},
+                    "kdf": "scrypt", "kdfparams": {"dklen": 32, "n": 262144, "p": 1, "r": 8, "salt": salt.hex()},
+                    "mac": keccak256(dk[16:32] + ct).hex()}}
+    os.makedirs(ks, mode=0o700, exist_ok=True)
+    os.chmod(ks, 0o700)
+    def w(path, text):
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        with os.fdopen(fd, "w") as f: f.write(text)
+    w(pwfile, pw.decode() + "\n")
+    w(os.path.join(ks, "UTC--%s--%s" % (time.strftime("%Y-%m-%dT%H-%M-%S.000000000Z", time.gmtime()), addr)), json.dumps(j))
+    w(addrfile, "0x" + addr + "\n")
+    print("0x" + addr)
+
 if __name__ == "__main__":
+    if len(sys.argv) == 5 and sys.argv[1] == "new":
+        new_key(*sys.argv[2:]); sys.exit(0)
     if len(sys.argv) != 5:
         sys.exit(__doc__)
     main(*sys.argv[1:])

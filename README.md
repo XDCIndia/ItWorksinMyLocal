@@ -243,7 +243,13 @@ changes, start your own (A) — you control the genesis and the validator set. U
 | nethermind | `v1.36.0-xdc.3` | `XDC_PRODUCER=1`, `--Mining.Enabled true --KeyStore.* --Sync.NonValidatorNode false` |
 | xone | `xOneGo v1.4.7` | `-mine -miner.keystore <dir> -miner.password <file> -miner.etherbase <addr>`; known issue: a fresh datadir does not yet sync from join.sh's anchored start (see below) |
 
-Every client takes the same arguments (use a keystore directory in geth format, and a file holding its password):
+**No key yet?** Run it with `--mine` and no address. On the first run join.sh creates one new validator key in `<datadir>/validator/` (`keystore/UTC--...` as a standard v3 keystore, `password.txt` with a random password, `address.txt`; files 0600, directory 0700), prints the coinbase address and where the two files are, and starts the node. A re-run on the same datadir reuses that key (never a second one; more than one key in the directory is refused). The node runs as a follower plus producer and does not seal until you propose the address and it is in the masternode set (next section). Back up `keystore/` and `password.txt` at once: losing them loses the validator. The key and password are never printed, and the key must never run on another node.
+
+```bash
+./join.sh --network testnet --client geth --mine --i-understand-single-signer
+```
+
+To use a key you already have, pass its keystore directory (geth format) and the file holding its password:
 
 ```bash
 ./join.sh --network testnet --client geth \
