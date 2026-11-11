@@ -101,6 +101,12 @@
 #   --torrent-port N     erigon BitTorrent port (also env TORRENT_PORT).
 #   --privapi ADDR:PORT  erigon private API address (also env PRIVAPI).
 #   --mcp-port N         erigon MCP port (also env MCP_PORT).
+#   --snap-webseed URL   erigon only: HTTP webseed serving the E3 snapshot files (also env
+#                        SNAP_WEBSEED), e.g. an nginx over a synced node's datadir/snapshots.
+#   --snap-chaintoml URL erigon only: the matching preverified.toml (a URL or file; also env
+#                        SNAP_CHAINTOML). With both set, an EMPTY datadir downloads the frozen
+#                        block + state files over HTTP and only executes the short tail, instead
+#                        of replaying 85M Apothem blocks over P2P. Unset = unchanged behaviour.
 #                        The four flags above (and their env vars) let two
 #                        instances of the SAME client run side by side --
 #                        otherwise they'd collide on the per-client default.
@@ -305,6 +311,8 @@ while [ $# -gt 0 ]; do
     --torrent-port) TORRENT_PORT=$2; shift 2;;
     --privapi)     PRIVAPI=$2; shift 2;;
     --mcp-port)    MCP_PORT=$2; shift 2;;
+    --snap-webseed) SNAP_WEBSEED=$2; shift 2;;
+    --snap-chaintoml) SNAP_CHAINTOML=$2; shift 2;;
     --maxpeers)    MAXPEERS=$2; shift 2;;
     --gas-limit)   GAS_LIMIT=$2; shift 2;;
     --etherbase)   ETHERBASE=$2; shift 2;;
@@ -1339,9 +1347,18 @@ if [ "$CLIENT" = erigon ]; then
     MINE_ARGS="--xdc.v2.produce --xdc.v1.signerkey $KEYFILE --miner.etherbase $MINE_ADDR"
     export ERIGON_XDPOS_STRICT_EPOCH_SWITCH=1
   fi
-  # shellcheck disable=SC2086  # $AP_ARG/$PM_ARG/$MINE_ARGS are intentionally-splitting flag lists
+  # E3 snapshot bootstrap: --snap.chaintoml-url (erigon-xdc v3.8.1-xdc.2+, which passes it to
+  # the embedded downloader) + --webseed fetch the frozen files over HTTP into an empty datadir.
+  SNAP_ARGS=""
+  [ -n "${SNAP_CHAINTOML:-}" ] && SNAP_ARGS="$SNAP_ARGS --snap.chaintoml-url $SNAP_CHAINTOML"
+  if [ -n "${SNAP_WEBSEED:-}" ]; then
+    # erigon wants the webseed in its native "v1:<url>" form ("unhandled webseed" otherwise)
+    case "$SNAP_WEBSEED" in v1:*) ;; *) SNAP_WEBSEED="v1:$SNAP_WEBSEED" ;; esac
+    SNAP_ARGS="$SNAP_ARGS --webseed $SNAP_WEBSEED"
+  fi
+  # shellcheck disable=SC2086  # $AP_ARG/$PM_ARG/$MINE_ARGS/$SNAP_ARGS are intentionally-splitting flag lists
   "$RUN_XDC" --datadir "$DATADIR" --chain "$ERC" --discv4 \
-    --port "$PORT" $AP_ARG --nat "extip:${IP}" $BN_ARG $SP_ARG $MP_ARG $GL_ARG $PM_ARG $MINE_ARGS \
+    --port "$PORT" $AP_ARG --nat "extip:${IP}" $BN_ARG $SP_ARG $MP_ARG $GL_ARG $PM_ARG $MINE_ARGS $SNAP_ARGS \
     --http --http.addr 0.0.0.0 --http.port "$RPCPORT" --http.vhosts "*" \
     --http.corsdomain "*" --http.api eth,net,web3,erigon,debug,txpool \
     --ws --ws.port "$WSPORT" \
