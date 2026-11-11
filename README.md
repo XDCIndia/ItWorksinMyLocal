@@ -239,7 +239,7 @@ changes, start your own (A) — you control the genesis and the validator set. U
 | geth | `v1.17.10-xdc.21` | `--keystore --unlock --password --mine --miner.etherbase`, RPC bound to 127.0.0.1 |
 | erigon | `erigon-xdc v3.8.1-xdc.2` | `--xdc.v2.produce --xdc.v1.signerkey <hexfile> --miner.etherbase`, env `ERIGON_XDPOS_STRICT_EPOCH_SWITCH=1`; the hex file is derived from the keystore at start into a 0600 file in the datadir and never printed |
 | reth | `reth v2.9.0-xdc.4` | env `XDC_PRODUCE=1`, `--xdc.signer-keystore --xdc.signer-password --xdc.signer`, `--full`, `--engine.persistence-threshold 0 --engine.persistence-backpressure-threshold 16 --engine.disable-prewarming` |
-| besu | `besu v26.11-xdc.4` (host Java 21) | `-Dxdpos.validator.*` JAVA_OPTS (keystore, password file, address) |
+| besu | `besu v26.11-xdc.4` (needs a full JDK 21, e.g. Temurin 21) | `-Dxdpos.validator.*` JAVA_OPTS (keystore, password file, address) |
 | nethermind | `v1.36.0-xdc.3` | `XDC_PRODUCER=1`, `--Mining.Enabled true --KeyStore.* --Sync.NonValidatorNode false` |
 | xone | `xOneGo v1.4.7` | `-mine -miner.keystore <dir> -miner.password <file> -miner.etherbase <addr>`; known issue: a fresh datadir does not yet sync from join.sh's anchored start (see below) |
 
@@ -268,6 +268,7 @@ Swap `--client` for `erigon`, `reth`, `besu`, `nethermind` or `xone`. Add `--nam
 Notes:
 
 - All six pinned releases are mirrored on xdc.network and verified by sha256; no GitHub login is needed.
+- besu needs a full JDK 21 with Flight Recorder (Temurin 21 works). Ubuntu's `openjdk-21-jre-headless` fails at start with `Failure when starting JFR on_create_vm_3`; set `JAVA_HOME` to a Temurin install.
 - A producer needs vote-relaying peers (erigon wants at least 10). join.sh raises `--maxpeers` to 50 for non-geth producers.
 - To turn an already-synced follower into a producer, pass the follower's `--datadir`; otherwise a new `nodes/<client>-seal` directory starts a fresh sync.
 - xone: v1.4.7 runs as a live Apothem validator, but starting it from an empty datadir with join.sh's anchored snap start stops at `parent epoch masternode set unavailable` (tracked in `e2e-known-bugs.tsv`). Start it on a datadir that is already at the tip.
