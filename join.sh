@@ -1314,7 +1314,7 @@ def rpc(m,p):
 n=int(rpc("eth_blockNumber",[]),16)-3000
 b=rpc("eth_getBlockByNumber",[hex(n),False])
 g=json.load(open(sys.argv[2]))
-g["config"]["checkpoint"]={"number":n,"hash":b["hash"],"totalDifficulty":str(int(b["totalDifficulty"],16))}
+g["config"]["checkpoint"]={"number":n,"hash":b["hash"],"totalDifficulty":hex(int(b["totalDifficulty"],16))}
 json.dump(g,open(sys.argv[3],"w"))
 print("  besu: checkpoint %d %s" % (n,b["hash"]))
 PY
