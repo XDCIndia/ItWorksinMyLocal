@@ -197,6 +197,44 @@
         "linux-amd64": "7bbd462d2d54a22ee1c6605978670094c24774f80e022806419f80236ec61aed",
         "linux-arm64": "69fdd8a142d340417b7872b0cf692359cf036727c1e0b243a56e064d199e6b71"
       }
+    },
+    "xone-py": {
+      "_comment": "xOnePy (XDCIndia/xOnePy, Python) -- FOLLOWER ONLY: follows Apothem (chainId 51) from genesis; validator mode is not supported (join.sh refuses --mine). Distinct from 'xone' (xOneGo), 'xone-rs' (Rust) and 'xone-ts' (TypeScript). One PyInstaller --onefile executable (~32 MB, glibc 2.39), linux-amd64 only: PyInstaller does not cross-build. Prebuilt only, never built here.",
+      "version": "0.1.0",
+      "commit": "33c37308",
+      "file": "xone-py-{os}-{arch}",
+      "archive": "none",
+      "produces": {
+        "xone-py": ""
+      },
+      "platforms": [
+        "linux-amd64"
+      ],
+      "sha256": {
+        "linux-amd64": "0858c7e37ce859d570770da0d0fab2361e6421fd80011800af4be3bd38c2e536"
+      }
+    },
+    "xone-c": {
+      "_comment": "xOneC (XDCIndia/xOneC, C++) -- NOT RUNNABLE: T0 only (prints its version and checks a chainspec); it has no p2p, sync or RPC yet, and join.sh refuses to start it. Pinned for when its node lands. Distinct from 'xone', 'xone-rs', 'xone-ts' and 'xone-py'. Cross-built with zig c++; the binary reads the vendored chainspec from the build tree, so it only runs where it was built.",
+      "version": "0.1.0",
+      "commit": "3331a4fb",
+      "file": "xone-c-{os}-{arch}",
+      "archive": "none",
+      "produces": {
+        "xone-c": ""
+      },
+      "platforms": [
+        "darwin-amd64",
+        "darwin-arm64",
+        "linux-amd64",
+        "linux-arm64"
+      ],
+      "sha256": {
+        "darwin-amd64": "63041f8193536fb835678cf2dc559b124dc22503fd2174632fe1c430fe5983f4",
+        "darwin-arm64": "622f51a128e7a23e7a6c3df9d5201d10922f7f90b9380cc2ccdbbd3839342092",
+        "linux-amd64": "58bf0ca86ff1729f0d25efc2792b57d01818d5826d0f19025e1da9e70bd24bdf",
+        "linux-arm64": "2cb20e29318ee371f3c65f9f90a8caa982b31dfa25a76f884eb8300b2191ed85"
+      }
     }
   }
 }

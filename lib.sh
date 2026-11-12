@@ -116,6 +116,26 @@ case "$CLIENT" in
     CLIENT_TARGETS=""
     NODE_NAME_BIN="xone-ts"
     ;;
+  xone-py|xone_py)
+    # xOnePy (XDCIndia/xOnePy, Python): FOLLOWER ONLY. Syncs Apothem from
+    # genesis; validator mode is not supported. Prebuilt download only
+    # (binaries.json xone-py, PyInstaller one-file, linux-amd64); never built here.
+    CLIENT=xone-py
+    XDPOS_REPO="${XDPOS_REPO:-https://github.com/XDCIndia/xOnePy}"
+    XDPOS_DIR="${XDPOS_DIR:-$_LIB_DIR/../xOnePy}"
+    CLIENT_TARGETS=""
+    NODE_NAME_BIN="xone-py"
+    ;;
+  xone-c|xone_c)
+    # xOneC (XDCIndia/xOneC, C++): NO NODE YET (T0: version and chainspec check
+    # only). join.sh refuses to start it. The id and the binary pin are here for
+    # when its node lands.
+    CLIENT=xone-c
+    XDPOS_REPO="${XDPOS_REPO:-https://github.com/XDCIndia/xOneC}"
+    XDPOS_DIR="${XDPOS_DIR:-$_LIB_DIR/../xOneC}"
+    CLIENT_TARGETS=""
+    NODE_NAME_BIN="xone-c"
+    ;;
   all)
     # Meta-client: join.sh fans "all" out to one child process per real client
     # (each re-sources lib.sh with its own concrete client). The dispatcher itself
@@ -134,7 +154,7 @@ case "$CLIENT" in
     echo "  use --client geth4   to stay pinned to 1.17.4-xdc.7" >&2
     exit 1;;
   *)
-    echo "unknown CLIENT '$CLIENT' (use: oldxdc | geth | geth4 | erigon | besu | nethermind | reth | xone | xone-rs | xone-ts | all)" >&2; exit 1;;
+    echo "unknown CLIENT '$CLIENT' (use: oldxdc | geth | geth4 | erigon | besu | nethermind | reth | xone | xone-rs | xone-ts | xone-py | xone-c | all)" >&2; exit 1;;
 esac
 
 # Binaries live under a per-client, per-platform dir so the clients coexist.
@@ -276,7 +296,7 @@ DEFAULT_NUM_NODES=4
 # Followers" section falls back to the exact same list run.sh would launch,
 # rather than a second hand-maintained copy that can drift from it (as the
 # in-repo one did: it was missing geth4 until fixed here).
-DEFAULT_ALL_CLIENTS="geth geth4 erigon xone besu nethermind reth xone-rs xone-ts"
+DEFAULT_ALL_CLIENTS="geth geth4 erigon xone besu nethermind reth xone-rs xone-ts xone-py"
 
 # --all follower port helpers -- ONE definition, used by run.sh's pre-flight
 # check, its launch loop, AND status.sh's "Modern Followers" report. All three
@@ -373,6 +393,18 @@ client_version_commit() {
       out=$(_vquery "$bin" --version 2>/dev/null | head -1)
       ver=$(printf '%s\n' "$out" | sed -nE 's#^xOneTS/v([0-9][^-/]*).*#\1#p')
       commit=$(printf '%s\n' "$out" | sed -nE 's#^xOneTS/v[^-/]*-([0-9a-f]{7,})[-/].*#\1#p' | cut -c1-8)
+      ;;
+    xone-py)
+      # "xOnePy/v<ver>-<commit>-<date>/<os>/cpython<ver>"
+      out=$(_vquery "$bin" --version 2>/dev/null | head -1)
+      ver=$(printf '%s\n' "$out" | sed -nE 's#^xOnePy/v([0-9][^-/]*).*#\1#p')
+      commit=$(printf '%s\n' "$out" | sed -nE 's#^xOnePy/v[^-/]*-([0-9a-f]{7,})[-/].*#\1#p' | cut -c1-8)
+      ;;
+    xone-c)
+      # "xOneC/v<ver>-<commit>-<date>/<os>/clang<ver>"
+      out=$(_vquery "$bin" --version 2>/dev/null | head -1)
+      ver=$(printf '%s\n' "$out" | sed -nE 's#^xOneC/v([0-9][^-/]*).*#\1#p')
+      commit=$(printf '%s\n' "$out" | sed -nE 's#^xOneC/v[^-/]*-([0-9a-f]{7,})[-/].*#\1#p' | cut -c1-8)
       ;;
     xone)
       # "xone v<ver> (commit <hash>)" -- the commit is PARENTHESISED, not glued as
@@ -1067,6 +1099,8 @@ client_exe_names() {
     xone)           echo "xone" ;;
     xone-rs)        echo "xone-rs" ;;
     xone-ts)        echo "xone-ts" ;;
+    xone-py)        echo "xone-py" ;;
+    xone-c)         echo "xone-c" ;;
     bootnode)       echo "bootnode" ;;
     *)              echo "" ;;
   esac
@@ -1077,7 +1111,7 @@ client_exe_names() {
 # (which reports a "Join Clients" table) -- previously status.sh kept its own
 # 7-entry copy with no geth4, so a `join.sh --client all` run (which starts 8
 # clients) was reported as only 7 (ItWorksinMyLocal#181 investigation).
-JOIN_ALL_CLIENTS="oldxdc geth erigon besu nethermind reth xone geth4 xone-rs xone-ts"
+JOIN_ALL_CLIENTS="oldxdc geth erigon besu nethermind reth xone geth4 xone-rs xone-ts xone-py"
 
 # client_syncmodes <client>: the sync types this client can run in, i.e. the
 # values join.sh --syncmode accepts for it. "archive" = keep all history.
@@ -1104,6 +1138,7 @@ client_syncmodes() {
     reth)           echo "full archive" ;;
     xone-rs)        echo "full" ;;   # follower only; always syncs from genesis
     xone-ts)        echo "full" ;;   # follower only; always syncs from genesis
+    xone-py)        echo "full" ;;   # follower only; always syncs from genesis
     *)              echo "" ;;
   esac
 }
@@ -1152,6 +1187,8 @@ join_client_port_offset() {
     geth4)      echo 700 ;;
     xone-rs)    echo 800 ;;
     xone-ts)    echo 900 ;;
+    xone-py)    echo 1000 ;;
+    xone-c)     echo 1100 ;;
     *)          echo 0 ;;
   esac
 }

@@ -40,7 +40,7 @@
 #                        (overrides --ip; default: derived from ./bootnode.key)
 #   --host IP[:PORT]     alias of --ip
 #   --client C           node client: oldxdc (default) | geth | geth4 | erigon |
-#                        besu | nethermind | reth | xone | xone-rs | xone-ts | all. geth4 is the
+#                        besu | nethermind | reth | xone | xone-rs | xone-ts | xone-py | xone-c | all. geth4 is the
 #                        1.17.4 pin (linux-amd64 only, so it is skipped on
 #                        darwin); it was accepted here long before this line
 #                        listed it. xone is the go-ethereum-
@@ -49,7 +49,9 @@
 #                        (--network testnet) only, syncs from genesis; --mine is
 #                        refused (validator mode not yet supported). xone-ts is
 #                        xOneTS (XDCIndia/xOneTS, TypeScript): same limits as
-#                        xone-rs (follower only, Apothem only, --mine refused). "all"
+#                        xone-rs (follower only, Apothem only, --mine refused). xone-py is
+#                        xOnePy (XDCIndia/xOnePy, Python): the same limits (linux-amd64
+#                        binary only). xone-c is xOneC (C++): no node yet, refused. "all"
 #                        boots every client at once, each in its own datadir
 #                        (nodes/<client>-<type>) with a distinct 100-wide port
 #                        block, all joining the same network -- a one-command
@@ -352,7 +354,7 @@ if [ -n "$SYNCMODE" ]; then
   esac
 fi
 # xone-rs and xone-ts have one sync type: full, from genesis (no snap/fast/archive).
-case "${CLIENT:-}" in xone-rs|xone-ts) [ -z "$SYNCMODE" ] && SYNCMODE=full ;; esac
+case "${CLIENT:-}" in xone-rs|xone-ts|xone-py) [ -z "$SYNCMODE" ] && SYNCMODE=full ;; esac
 if [ -z "$SYNCMODE" ]; then
   case "${NETWORK:-}" in
     mainnet|xinfin|xdc|testnet|apothem) SYNCMODE=snap ;;
@@ -467,7 +469,10 @@ fi
 # acknowledges it is the single signer.
 case "${NETWORK:-}" in mainnet|xinfin|xdc|testnet|apothem) _public=1 ;; *) _public="" ;; esac
 # xone-rs (xOne, Rust) and xone-ts (xOneTS, TypeScript) are followers only, qualified on Apothem alone.
-if [ "${CLIENT:-}" = xone-rs ] || [ "${CLIENT:-}" = xone-ts ]; then
+if [ "${CLIENT:-}" = xone-c ]; then
+  echo "join.sh: xone-c is not runnable: xOneC has no node yet (T0: version and chainspec check only). Track https://github.com/XDCIndia/xOneC (TB-09, TB-10)." >&2; exit 1
+fi
+if [ "${CLIENT:-}" = xone-rs ] || [ "${CLIENT:-}" = xone-ts ] || [ "${CLIENT:-}" = xone-py ]; then
   [ -z "$MINEADDR" ] || { echo "join.sh: $CLIENT is follower only; syncs from genesis; validator mode not yet supported" >&2; exit 1; }
   # (a `--client all` child gets --chainid, not --network)
   case "${NETWORK:-}:${NETWORKID:-}" in testnet:*|apothem:*|:51) ;; *) echo "join.sh: $CLIENT is follower only; syncs from genesis; validator mode not yet supported. It supports Apothem only (--network testnet), not '${NETWORK:-}'." >&2; exit 1 ;; esac
@@ -991,6 +996,7 @@ if [ "$DRY" = 1 ]; then
     reth)       CLIENT_BIN="${RETH_BIN:-$BIN_DIR/xdc-reth}" ;;
     xone-rs)    CLIENT_BIN="${XONE_RS_BIN:-$BIN_DIR/xone-rs}" ;;
     xone-ts)    CLIENT_BIN="${XONE_TS_BIN:-$BIN_DIR/xone-ts}" ;;
+    xone-py)    CLIENT_BIN="${XONE_PY_BIN:-$BIN_DIR/xone-py}" ;;
     nethermind) NETHERMIND_DIST="${NETHERMIND_DIST:-$BIN_DIR/.dist-nethermind}"; CLIENT_BIN="$NETHERMIND_DIST/nethermind" ;;
     *)          XDC="${OLDXDC_BIN:-$XDC_BIN}" ;;
   esac
@@ -1059,6 +1065,15 @@ case "$CLIENT" in
       download_bins && CLIENT_BIN="$BIN_DIR/xone-ts"
     fi
     [ -x "$CLIENT_BIN" ] || { echo "xone-ts binary not found or not verified. Set XONE_TS_BIN=/path/to/xone-ts, or let this script download it from https://xdc.network/snapshots/bin/xone-ts-$_xslug (sha256-verified)." >&2; exit 1; } ;;
+  xone-py)
+    # xOnePy (Python, PyInstaller one-file), follower only. Prebuilt only: XONE_PY_BIN,
+    # then PATH, then the sha256-verified binaries.json download (linux-amd64 only).
+    _xslug=$(platform_slug)
+    CLIENT_BIN="${XONE_PY_BIN:-$(command -v xone-py 2>/dev/null)}"
+    if [ ! -x "$CLIENT_BIN" ]; then
+      download_bins && CLIENT_BIN="$BIN_DIR/xone-py"
+    fi
+    [ -x "$CLIENT_BIN" ] || { echo "xone-py binary not found or not verified (only linux-amd64 is published). Set XONE_PY_BIN=/path/to/xone-py, or let this script download it from https://xdc.network/snapshots/bin/xone-py-$_xslug (sha256-verified)." >&2; exit 1; } ;;
   nethermind)
     NM_ON_PATH=$(command -v nethermind 2>/dev/null)
     NETHERMIND_DIST="${NETHERMIND_DIST:-${NM_ON_PATH:+$(dirname "$NM_ON_PATH")}}"
@@ -1702,6 +1717,20 @@ elif [ "$CLIENT" = xone-ts ]; then
     --http --http.addr 0.0.0.0 --http.port "$RPCPORT" --http.api eth,net,web3,XDPoS \
     --ws --ws.addr 0.0.0.0 --ws.port "$WSPORT" \
     $XTS_ES &
+elif [ "$CLIENT" = xone-py ]; then
+  # xOnePy (XDCIndia/xOnePy, Python): FOLLOWER ONLY, Apothem from genesis. It has a built-in
+  # Apothem boot list; $BOOTNODES (vendored lists plus xdc.network seeds) is passed when set.
+  # --discovery.port and the authrpc flags are accepted but not acted on, so none are passed.
+  # Never mines: --mine was refused above.
+  [ "$DRY" = 1 ] || mkdir -p "$DATADIR"
+  XPY_ES=""; [ -n "$full" ] && XPY_ES="--ethstats $full"
+  XPY_BOOT=""; [ -n "$BOOTNODES" ] && XPY_BOOT="--bootnodes $BOOTNODES"
+  # shellcheck disable=SC2086
+  "$RUN_BIN" --network apothem --datadir "$DATADIR" --port "$PORT" \
+    $XPY_BOOT --identity "$NAME" \
+    --http --http.addr 0.0.0.0 --http.port "$RPCPORT" --http.api eth,net,web3,XDPoS \
+    --ws --ws.addr 0.0.0.0 --ws.port "$WSPORT" \
+    $XPY_ES &
 elif [ "$CLIENT" = xone ]; then
   # xone-native (XDCIndia/xOneGo): go-ethereum-derived XDPoS client with
   # single-dash flags. Sync-only join here -- it recognises XDPoS from the genesis
