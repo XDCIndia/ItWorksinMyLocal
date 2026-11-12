@@ -40,14 +40,16 @@
 #                        (overrides --ip; default: derived from ./bootnode.key)
 #   --host IP[:PORT]     alias of --ip
 #   --client C           node client: oldxdc (default) | geth | geth4 | erigon |
-#                        besu | nethermind | reth | xone | xone-rs | all. geth4 is the
+#                        besu | nethermind | reth | xone | xone-rs | xone-ts | all. geth4 is the
 #                        1.17.4 pin (linux-amd64 only, so it is skipped on
 #                        darwin); it was accepted here long before this line
 #                        listed it. xone is the go-ethereum-
 #                        derived XDPoS reference client (XDCIndia/xOneGo). xone-rs is
 #                        xOne (XDCIndia/xOne, Rust): FOLLOWER ONLY, Apothem
 #                        (--network testnet) only, syncs from genesis; --mine is
-#                        refused (validator mode not yet supported). "all"
+#                        refused (validator mode not yet supported). xone-ts is
+#                        xOneTS (XDCIndia/xOneTS, TypeScript): same limits as
+#                        xone-rs (follower only, Apothem only, --mine refused). "all"
 #                        boots every client at once, each in its own datadir
 #                        (nodes/<client>-<type>) with a distinct 100-wide port
 #                        block, all joining the same network -- a one-command
@@ -349,8 +351,8 @@ if [ -n "$SYNCMODE" ]; then
     *) echo "join.sh: invalid --syncmode '$SYNCMODE' (expected: full | fast | snap | archive)" >&2; exit 1 ;;
   esac
 fi
-# xone-rs has one sync type: full, from genesis (no snap/fast/archive).
-[ -z "$SYNCMODE" ] && [ "${CLIENT:-}" = xone-rs ] && SYNCMODE=full
+# xone-rs and xone-ts have one sync type: full, from genesis (no snap/fast/archive).
+case "${CLIENT:-}" in xone-rs|xone-ts) [ -z "$SYNCMODE" ] && SYNCMODE=full ;; esac
 if [ -z "$SYNCMODE" ]; then
   case "${NETWORK:-}" in
     mainnet|xinfin|xdc|testnet|apothem) SYNCMODE=snap ;;
@@ -464,11 +466,11 @@ fi
 # forks the seat. Refuse --mine on a PUBLIC network unless the operator explicitly
 # acknowledges it is the single signer.
 case "${NETWORK:-}" in mainnet|xinfin|xdc|testnet|apothem) _public=1 ;; *) _public="" ;; esac
-# xone-rs (xOne, Rust) is a follower only and is qualified on Apothem alone.
-if [ "${CLIENT:-}" = xone-rs ]; then
-  [ -z "$MINEADDR" ] || { echo "join.sh: xone-rs is follower only; syncs from genesis; validator mode not yet supported" >&2; exit 1; }
+# xone-rs (xOne, Rust) and xone-ts (xOneTS, TypeScript) are followers only, qualified on Apothem alone.
+if [ "${CLIENT:-}" = xone-rs ] || [ "${CLIENT:-}" = xone-ts ]; then
+  [ -z "$MINEADDR" ] || { echo "join.sh: $CLIENT is follower only; syncs from genesis; validator mode not yet supported" >&2; exit 1; }
   # (a `--client all` child gets --chainid, not --network)
-  case "${NETWORK:-}:${NETWORKID:-}" in testnet:*|apothem:*|:51) ;; *) echo "join.sh: xone-rs is follower only; syncs from genesis; validator mode not yet supported. It supports Apothem only (--network testnet), not '${NETWORK:-}'." >&2; exit 1 ;; esac
+  case "${NETWORK:-}:${NETWORKID:-}" in testnet:*|apothem:*|:51) ;; *) echo "join.sh: $CLIENT is follower only; syncs from genesis; validator mode not yet supported. It supports Apothem only (--network testnet), not '${NETWORK:-}'." >&2; exit 1 ;; esac
 fi
 if [ -n "$MINEADDR" ] && [ -n "$_public" ] && [ "$SINGLE_SIGNER_OK" != 1 ]; then
   echo "join.sh: refusing --mine on --network $NETWORK without --i-understand-single-signer." >&2
@@ -988,6 +990,7 @@ if [ "$DRY" = 1 ]; then
     besu)       CLIENT_BIN="${BESU_BIN:-$BIN_DIR/besu}" ;;
     reth)       CLIENT_BIN="${RETH_BIN:-$BIN_DIR/xdc-reth}" ;;
     xone-rs)    CLIENT_BIN="${XONE_RS_BIN:-$BIN_DIR/xone-rs}" ;;
+    xone-ts)    CLIENT_BIN="${XONE_TS_BIN:-$BIN_DIR/xone-ts}" ;;
     nethermind) NETHERMIND_DIST="${NETHERMIND_DIST:-$BIN_DIR/.dist-nethermind}"; CLIENT_BIN="$NETHERMIND_DIST/nethermind" ;;
     *)          XDC="${OLDXDC_BIN:-$XDC_BIN}" ;;
   esac
@@ -1047,6 +1050,15 @@ case "$CLIENT" in
       fi
     fi
     [ -x "$CLIENT_BIN" ] || { echo "xone-rs binary not found or not verified. Set XONE_RS_BIN=/path/to/xone-rs, or let this script download it from https://xdc.network/snapshots/bin/xone-rs-$_xslug (sha256-verified)." >&2; exit 1; } ;;
+  xone-ts)
+    # xOneTS (TypeScript, Bun --compile), follower only. Prebuilt only: XONE_TS_BIN,
+    # then PATH, then the sha256-verified binaries.json download. Never built here.
+    _xslug=$(platform_slug)
+    CLIENT_BIN="${XONE_TS_BIN:-$(command -v xone-ts 2>/dev/null)}"
+    if [ ! -x "$CLIENT_BIN" ]; then
+      download_bins && CLIENT_BIN="$BIN_DIR/xone-ts"
+    fi
+    [ -x "$CLIENT_BIN" ] || { echo "xone-ts binary not found or not verified. Set XONE_TS_BIN=/path/to/xone-ts, or let this script download it from https://xdc.network/snapshots/bin/xone-ts-$_xslug (sha256-verified)." >&2; exit 1; } ;;
   nethermind)
     NM_ON_PATH=$(command -v nethermind 2>/dev/null)
     NETHERMIND_DIST="${NETHERMIND_DIST:-${NM_ON_PATH:+$(dirname "$NM_ON_PATH")}}"
@@ -1676,6 +1688,20 @@ elif [ "$CLIENT" = xone-rs ]; then
     --http --http.addr 0.0.0.0 --http.port "$RPCPORT" --http.vhosts "*" --http.api eth,net,web3,XDPoS \
     --ws --ws.addr 0.0.0.0 --ws.port "$WSPORT" \
     $XRS_ES &
+elif [ "$CLIENT" = xone-ts ]; then
+  # xOneTS (XDCIndia/xOneTS, TypeScript): FOLLOWER ONLY, Apothem from genesis. Has no
+  # built-in boot list, so --bootnodes is mandatory ($BOOTNODES already merges the
+  # vendored lists and xdc.network seeds). It has no --discovery.port, --nat,
+  # --maxpeers, --http.vhosts or authrpc flag. Never mines: --mine was refused above.
+  [ -n "$BOOTNODES" ] || { echo "xone-ts join needs peers: it has no built-in bootnode list; pass --bootnodes" >&2; exit 1; }
+  [ "$DRY" = 1 ] || mkdir -p "$DATADIR"
+  XTS_ES=""; [ -n "$full" ] && XTS_ES="--ethstats $full"
+  # shellcheck disable=SC2086
+  "$RUN_BIN" --network apothem --datadir "$DATADIR" --port "$PORT" \
+    --bootnodes "$BOOTNODES" --identity "$NAME" \
+    --http --http.addr 0.0.0.0 --http.port "$RPCPORT" --http.api eth,net,web3,XDPoS \
+    --ws --ws.addr 0.0.0.0 --ws.port "$WSPORT" \
+    $XTS_ES &
 elif [ "$CLIENT" = xone ]; then
   # xone-native (XDCIndia/xOneGo): go-ethereum-derived XDPoS client with
   # single-dash flags. Sync-only join here -- it recognises XDPoS from the genesis
