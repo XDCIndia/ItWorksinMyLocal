@@ -155,7 +155,7 @@
       }
     },
     "xone-rs": {
-      "_comment": "xOne (XDCIndia/xOne, Rust) -- FOLLOWER ONLY: follows Apothem (chainId 51) from genesis; validator mode is not supported (join.sh refuses --mine). Distinct from 'xone' (xOneGo, Go). Prebuilt only, never built here. No pinned sha256 yet: sha256Sidecar makes lib.sh read <file>.sha256 from the mirror at download time and refuse on a missing/mismatching hash (fail closed). Pin the hashes under 'sha256' (and drop the flag) once the release is published; a pinned hash always wins.",
+      "_comment": "xOne (XDCIndia/xOne, Rust) -- FOLLOWER ONLY: follows Apothem (chainId 51) from genesis; validator mode is not supported (join.sh refuses --mine). Distinct from 'xone' (xOneGo, Go). Prebuilt only, never built here. darwin builds target macOS 11+ and are cross-built (not yet run on a Mac).",
       "version": "0.1.0",
       "commit": "46e87696",
       "file": "xone-rs-{os}-{arch}",
@@ -169,8 +169,12 @@
         "linux-amd64",
         "linux-arm64"
       ],
-      "sha256Sidecar": true,
-      "sha256": {}
+      "sha256": {
+        "darwin-amd64": "f6d1881058e28b90e76718846377216e9fb041e6cc08746a80d78c7703940879",
+        "darwin-arm64": "24fbc53b97fd0b156ffc1aea030fa2a9b6a08a08b95f7f6be8dd8be60f883222",
+        "linux-amd64": "f9a908077633c50a50372e1cc8e0272128da60c951d4af26769381a3309be223",
+        "linux-arm64": "60d5c13e4e512b5b29056eb94188390f5d2f98d091d21bc0c6095eb87508f8cb"
+      }
     }
   }
 }
