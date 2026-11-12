@@ -103,8 +103,8 @@ Neither is normal. Please file an issue rather than working around it.
 ### Which clients `--all` starts
 
 `geth`, `geth4`, `erigon`, `xone`, `besu`, `nethermind`, `reth`, as followers
-beside the 4 sealers. (`xone-rs` and `xone-ts` are not started by `run.sh --all`: they support Apothem only, no
-local network. `join.sh --client all --network testnet` does include them, as followers.) Any client whose binary is missing or unrunnable is
+beside the 4 sealers. (`xone-rs`, `xone-ts` and `xone-py` are not started by `run.sh --all`: they support Apothem only, no
+local network. `join.sh --client all --network testnet` does include them, as followers. `xone-c` has no node yet and is in neither.) Any client whose binary is missing or unrunnable is
 **skipped and reported**, so a partial `bin/` degrades gracefully rather than
 failing. Narrow it explicitly when you want to:
 
@@ -258,7 +258,7 @@ To use a key you already have, pass its keystore directory (geth format) and the
   --i-understand-single-signer
 ```
 
-Swap `--client` for `erigon`, `reth`, `besu`, `nethermind` or `xone` (or `xone-rs` / `xone-ts`, Apothem follower only: `--network testnet`). Add `--name <label>` (the ethstats / SkyNet node name), `--datadir <dir>`, and `--port/--rpcport/--wsport/--authrpc-port` when you run more than one node on a host. `--dry-run` prints the exact command and environment for the chosen client and exits, without downloading, writing or starting anything; review it before the first real start:
+Swap `--client` for `erigon`, `reth`, `besu`, `nethermind` or `xone` (or `xone-rs` / `xone-ts` / `xone-py`, Apothem follower only: `--network testnet`). Add `--name <label>` (the ethstats / SkyNet node name), `--datadir <dir>`, and `--port/--rpcport/--wsport/--authrpc-port` when you run more than one node on a host. `--dry-run` prints the exact command and environment for the chosen client and exits, without downloading, writing or starting anything; review it before the first real start:
 
 ```bash
 ./join.sh --network testnet --client erigon --mine 0xYourValidatorAddr \
@@ -334,6 +334,8 @@ toolchains) are download-only unless you point `join.sh` at your own binary via
 | `reth` | [`XDCIndia/reth`](https://github.com/XDCIndia/reth) | download or `RETH_BIN`/PATH | reads geth genesis natively. Follows a private XDPoS net to tip with state-root parity **only from the build carrying the epoch-reward fix** — see the warning below |
 | `xone` | [`XDCIndia/xOneGo`](https://github.com/XDCIndia/xOneGo) | download (mirror, GitHub-release fallback) | Go XDPoS reference client. Follows a private net to tip, and seals in exact fair share when seated as a validator |
 | `xone-rs` | [`XDCIndia/xOne`](https://github.com/XDCIndia/xOne) (Rust, private) | download only (mirror, sha256-verified; never built here) | **follower only; syncs from genesis; validator mode not yet supported.** Apothem only (`--network testnet`), no private nets; `--mine` is refused. No built-in bootnodes, so `join.sh` always passes `--bootnodes`. Not the same client as `xone` (xOneGo, Go) |
+| `xone-py` | [`XDCIndia/xOnePy`](https://github.com/XDCIndia/xOnePy) (Python) | download only (mirror, sha256-verified; never built here) | **follower only; syncs from genesis; validator mode not yet supported.** One PyInstaller executable, **linux-amd64 only**. Apothem only (`--network testnet`); `--mine` is refused. Has a built-in Apothem boot list; `join.sh` still passes `--bootnodes`. About 100-170 blocks/s from genesis. |
+| `xone-c` | [`XDCIndia/xOneC`](https://github.com/XDCIndia/xOneC) (C++) | pinned only | **not runnable: no node yet** (T0: prints its version, checks a chainspec). `join.sh --client xone-c` refuses and says why. |
 | `xone-ts` | [`XDCIndia/xOneTS`](https://github.com/XDCIndia/xOneTS) (TypeScript) | download only (mirror, sha256-verified; never built here) | **follower only; syncs from genesis; validator mode not yet supported.** Single self-contained Bun executable. Apothem only (`--network testnet`); `--mine` is refused. No built-in bootnodes, so `join.sh` always passes `--bootnodes`. Not `xone` (Go) or `xone-rs` (Rust) |
 
 ### Every client, every sync type, minting: `e2e.sh` (net2040-like)
@@ -381,6 +383,8 @@ for **all seven** clients:
 | `xone` | ✅ | xdc.network mirror |
 | `xone-rs` | n/a | Apothem follower only (`join.sh --network testnet --client xone-rs`); not in the local-network e2e |
 | `xone-ts` | n/a | Apothem follower only (`join.sh --network testnet --client xone-ts`); not in the local-network e2e |
+| `xone-py` | n/a | Apothem follower only (`join.sh --network testnet --client xone-py`); not in the local-network e2e |
+| `xone-c` | n/a | no node yet |
 
 Reproduce it per client with:
 
@@ -486,7 +490,7 @@ Or one at a time:
 
 ```bash
 ./join.sh --client geth --genesis ./genesis/genesis.json --ip <YOUR_IP>:<BOOTNODE_PORT> --chainid <YOUR_CHAINID>
-#          oldxdc | geth | geth4 | erigon | reth | besu | nethermind | xone | xone-rs | xone-ts
+#          oldxdc | geth | geth4 | erigon | reth | besu | nethermind | xone | xone-rs | xone-ts | xone-py
 ```
 
 > **Do not omit those flags here.** With no `--genesis`/`--ip`, `join.sh` falls back
@@ -540,6 +544,7 @@ done
 | nethermind | SnapSync, `Pruning.Mode Hybrid`, `Init.MemoryHint 3072000000`, bodies on with a pivot from a trusted RPC (`NM_PIVOT_RPC`) so the old-headers backfill stops at `AncientBodiesBarrier` (nm#275) | 20 GB, tip after ~12 min. The same node on the previous defaults (bodies off) grew to 94 GB |
 | xone-rs | none: always full from genesis (follower only; ~214 blocks/s, the V2 switch at 56,828,700 not yet reached) | n/a |
 | xone-ts | none: always full from genesis (follower only) | n/a |
+| xone-py | none: always full from genesis (follower only; linux-amd64 binary) | n/a |
 | xone | `-syncmode snap` with a trusted anchor ~3000 blocks behind the tip from a trusted RPC (`XONE_ANCHOR_RPC_URL`), gap pools from an archive RPC, state from the fleet snap server | n/a |
 
 ## Everyday commands
