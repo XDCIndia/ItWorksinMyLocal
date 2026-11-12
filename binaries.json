@@ -179,7 +179,7 @@
     "xone-ts": {
       "_comment": "xOneTS (XDCIndia/xOneTS, TypeScript) -- FOLLOWER ONLY: follows Apothem (chainId 51) from genesis; validator mode is not supported (join.sh refuses --mine). Distinct from 'xone' (xOneGo, Go) and 'xone-rs' (Rust). Single self-contained Bun --compile executable (~84 MB), prebuilt only, never built here.",
       "version": "0.1.0",
-      "commit": "7769e7ec",
+      "commit": "b3273fa1",
       "file": "xone-ts-{os}-{arch}",
       "archive": "none",
       "produces": {
@@ -192,10 +192,10 @@
         "linux-arm64"
       ],
       "sha256": {
-        "darwin-amd64": "4d027ffc413d6732b3e0148a29bb9a6682f62f82af0eaa0ddc4de78e1a8f390f",
-        "darwin-arm64": "f6b0201ad4c5cd6ee20a9f90d7fa0fdb1198ca910aca42732d8144943bc26376",
-        "linux-amd64": "c7233aa256d45b6bac22b414d14cc6abe1b083cf663da7e23102d18cc26d4e05",
-        "linux-arm64": "89667c3b1e9832998367b39333958472cea156803131480c71a4085febb5bf19"
+        "darwin-amd64": "dc52acd740128ee90f0a7f765751518660b716315373e5b73f381022302bbef7",
+        "darwin-arm64": "0ef144492e38d8576af157a86b88be45a397fca6091c61b7d7b28d378edcbb8f",
+        "linux-amd64": "7bbd462d2d54a22ee1c6605978670094c24774f80e022806419f80236ec61aed",
+        "linux-arm64": "69fdd8a142d340417b7872b0cf692359cf036727c1e0b243a56e064d199e6b71"
       }
     }
   }
