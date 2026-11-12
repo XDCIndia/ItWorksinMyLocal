@@ -232,7 +232,7 @@ SELF="$PWD/$(basename "$0")"
 # computed once the client is known; an explicit --datadir always wins.
 GENESIS=""; BOOTNODES=""; NETWORKID=""; DATADIR=""; NAME=""; HOST_IP=""; CHAIN=""
 MEASURE=""; MEASURE_INTERVAL=60; DRY=0
-MINEADDR=""; STATICPEERS=""; NETWORK=""; SYNCMODE=""; KEYFILE=""; KEYSTORE=""; PWFILE=""
+BOOTNODES_EXPLICIT=0; MINEADDR=""; STATICPEERS=""; NETWORK=""; SYNCMODE=""; KEYFILE=""; KEYSTORE=""; PWFILE=""
 SINGLE_SIGNER_OK=0; XONE_ANCHOR=""; XONE_ANCHOR_RPC=
 # STATICPEERS_EXPLICIT: set when the caller passes --staticpeers directly, so
 # the local-sealer harvest below (LOCAL_BOOTNODE=1) knows to never clobber an
@@ -293,7 +293,7 @@ while [ $# -gt 0 ]; do
     --genesis)     GENESIS=$2; shift 2;;
     --chain)       CHAIN=$2; shift 2;;
     --nm-config)   NM_CONFIG=$2; NM_CONFIG_EXPLICIT=1; shift 2;;
-    --bootnodes)   BOOTNODES=$2; shift 2;;
+    --bootnodes)   BOOTNODES=$2; BOOTNODES_EXPLICIT=1; shift 2;;
     --ip)          HOST_IP=$2; shift 2;;
     --host)        HOST_IP=$2; shift 2;;
     --client)      export CLIENT=$2; shift 2;;
@@ -1230,6 +1230,9 @@ case "$_sm_status" in
   SKIP*) echo "join.sh: warning: known client bug for $CLIENT/$SYNCMODE: ${_sm_status#SKIP } (see e2e-known-bugs.tsv)" >&2 ;;
 esac
 
+# absolute-path helper, used by the mint block and by the nethermind arm (which cds into its dist)
+_abs() { if [ -d "$1" ]; then (cd "$1" && pwd); else printf '%s' "$1"; fi; }
+
 # --- mint (--mine ADDR) -------------------------------------------------------
 # Never seat a node unless --mine is really set AND a key is reachable: a seat
 # that is in the genesis validator set but not signing silently stalls a BFT net
@@ -1254,7 +1257,6 @@ if [ -n "$MINEADDR" ]; then
     esac
   fi
   # abs paths: besu/reth/xone/nethermind read these from another cwd or a JVM property
-  _abs() { if [ -d "$1" ]; then (cd "$1" && pwd); else printf '%s' "$1"; fi; }
   [ -d "$KEYSTORE" ] && KEYSTORE=$(_abs "$KEYSTORE")
   PWFILE="$(_abs "$(dirname "$PWFILE")")/$(basename "$PWFILE")"
   # erigon wants a raw hex key file: derive it from the keystore into a 0600 file in the datadir (never printed).
@@ -1597,6 +1599,17 @@ PY
     # (file names carry the address in mixed case, so match case-insensitively)
     [ "$DRY" = 1 ] || for _kf in $(ls "$KEYSTORE" | grep -i "$MINE_HEX"); do _ka=$(printf '%s' "${_kf##*--}" | sed -E 's/^(0x|xdc)//I' | tr 'A-F' 'a-f'); cp -f "$KEYSTORE/$_kf" "$NM_KS/${_kf%--*}--$_ka"; done
     NM_SYNC="$NM_SYNC --Mining.Enabled true --KeyStore.KeyStoreDirectory $NM_KS --KeyStore.BlockAuthorAccount $MINE_ADDR --KeyStore.PasswordFiles $_nm_pw --KeyStore.UnlockAccounts $MINE_ADDR --Sync.NonValidatorNode false"
+    # Producer mode verifies every header, and each epoch-switch header after a snap pivot needs its gap block's candidate pool,
+    # which a snap-started node never executes: without the seed file the header sync dies with "No snapshot found for header #N"
+    # and the node stays at block 0. Read the pools from an archive (erpc.apothem.network is not one) up to the tip.
+    if [ "$NETWORK" = testnet ] || [ "$NETWORK" = apothem ]; then
+      if [ "$DRY" = 1 ]; then echo "(dry-run) nethermind: XDC_GAP_SNAPSHOT_SEED written from ${NM_GAP_SEED_RPC:-https://earpc.apothem.network} at start" >&2
+      else
+        python3 "$(dirname "$0")/nm-gap-seed.py" "$NM_DATADIR/gap-seed.json" "${NM_GAP_SEED_RPC:-https://earpc.apothem.network}" \
+          && export XDC_GAP_SNAPSHOT_SEED="$NM_DATADIR/gap-seed.json" \
+          || { echo "join.sh: could not write the nethermind gap seed from ${NM_GAP_SEED_RPC:-https://earpc.apothem.network} (set NM_GAP_SEED_RPC to an archive)" >&2; exit 1; }
+      fi
+    fi
   fi
   # net5151: disable nethermind peer persistence. With it ON, the DB-loaded copies
   # of the validator node IDs register in the peer pool BEFORE the static-config
@@ -1629,6 +1642,8 @@ elif [ "$CLIENT" = xone ]; then
   # single-dash flags. Sync-only join here -- it recognises XDPoS from the genesis
   # (config-driven) and inits from -override.genesis on a fresh datadir. Sealing
   # needs a raw -miner.key, which a sync join doesn't carry, so --mine is noted.
+  # an empty datadir (no chaindata yet) is a fresh snap start; --mine and a rerun create/keep other files there
+  XONE_FRESH=1; { [ -e "$DATADIR/chaindata-pebble" ] || [ -e "$DATADIR/chaindata" ]; } && XONE_FRESH=0
   [ "$DRY" = 1 ] || mkdir -p "$DATADIR"
   # archive: -gcmode archive. Mint: -mine -miner.etherbase -unlock -password;
   # xone reads accounts from <datadir>/keystore, so stage the seat's key there.
@@ -1644,6 +1659,25 @@ elif [ "$CLIENT" = xone ]; then
   [ -n "$XONE_ANCHOR_RPC" ] && XONE_ANCH="$XONE_ANCH -anchor.seedrpc $XONE_ANCHOR_RPC"
   # Apothem snap: start from a trusted anchor ~3000 blocks behind the tip (from a trusted RPC, not a peer).
   if [ -z "$XONE_ANCHOR" ] && [ "$SYNCMODE" = snap ] && { [ "$NETWORK" = testnet ] || [ "$NETWORK" = apothem ]; }; then
+    # The anchor sits ~3000 blocks back, i.e. outside the pre-gap window in which the first epoch switch after the pivot
+    # can read its gap-block candidate pool from state the node executed itself (core/chain/xdc_gap_seed.go
+    # CheckPivotPlacement). Without an archive to read that pool from, the first epoch switch is rejected with
+    # "parent epoch masternode set unavailable". erpc.apothem.network is NOT an archive (missing trie node), so default to
+    # the archive endpoint; the pool read from it is checked against the QC-certified switch header (Engine.CheckGapPool).
+    [ -n "$XONE_ANCHOR_RPC" ] || XONE_ANCH="$XONE_ANCH -anchor.seedrpc ${XONE_ANCHOR_SEEDRPC_URL:-https://earpc.apothem.network}"
+    # xone has no mid-sync pivot refresh: a snap run dies when the peer stops serving its pivot's state. Public geth peers serve only
+    # the last ~128 blocks (the state download takes longer) and nethermind peers answer storage ranges with 0 accounts / a truncated
+    # frame, so the run restarts at a new pivot forever. The fleet's patched snap server keeps 2048 diff layers; start from it alone
+    # (it is in bootnodes/testnet-static.list); discovery adds the other peers once the state is in.
+    if [ "$XONE_FRESH" = 1 ] && [ "$BOOTNODES_EXPLICIT" != 1 ] && [ "$STATICPEERS_EXPLICIT" != 1 ]; then
+      _snap=${XONE_SNAP_SERVER:-$(grep -h -o 'enode://[0-9a-f]*@95\.217\.106\.210:[0-9]*' "${PUB_BOOTNODES_FILE%.list}-static.list" 2>/dev/null | head -1)}
+      if [ -n "$_snap" ]; then
+        # the snap server does not announce a head or push blocks, so the other peers are added over RPC once the state is in (below)
+        XONE_LATE_PEERS=$(printf '%s' "$STATICPEERS" | tr ',' '\n' | grep enode | grep -v "$_snap" | paste -sd, -)
+        XONE_FLAG=$(mktemp -u)
+        BOOTNODES="$_snap"; STATICPEERS="$_snap"; echo "  xone: snap state from $_snap"
+      fi
+    fi
     if [ "$DRY" = 1 ]; then echo "(dry-run) xone: -anchor NUM:0xHASH ~3000 blocks behind the tip is fetched from ${XONE_ANCHOR_RPC_URL:-https://erpc.apothem.network} at start" >&2
     else
       _xa=$(python3 - "${XONE_ANCHOR_RPC_URL:-https://erpc.apothem.network}" <<'PY'
@@ -1668,7 +1702,7 @@ PY
     -http -http.addr 0.0.0.0 -http.port "$RPCPORT" -http.vhosts "*" \
     -http.api eth,net,web3,admin,debug,txpool,XDPoS \
     -authrpc.port "$AUTHRPC_PORT" \
-    $XONE_ES &
+    $XONE_ES > >(while IFS= read -r _l; do printf '%s\n' "$_l"; case $_l in *"reward-checkpoint backfill complete"*) [ -z "${XONE_FLAG:-}" ] || : > "$XONE_FLAG";; esac; done) 2>&1 &
 else
   # oldxdc (XDPoSChain): classic flags; --mine unlocks a validator to also seal.
   # --maxpeers/--etherbase are additive: omitted (client default) unless given.
@@ -1699,6 +1733,21 @@ else
 fi
 child_proc=$!
 [ "$DRY" = 1 ] && { wait; exit 0; }
+# xone snap start (see above): "reward-checkpoint backfill complete" in its log is the end of the state download (no RPC shows it: the
+# header head and eth_syncing look the same before and after, and state reads fail either way). Only now give it the other peers; it
+# follows the tip and executes forward from them. Exits with the node.
+if [ -n "${XONE_LATE_PEERS:-}" ]; then
+  ( while kill -0 "$child_proc" 2>/dev/null; do
+      if [ -e "$XONE_FLAG" ]; then
+        rm -f "$XONE_FLAG"
+        for _e in $(printf '%s' "$XONE_LATE_PEERS" | tr ',' ' '); do
+          curl -s -m5 -XPOST -H content-type:application/json -d "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"admin_addPeer\",\"params\":[\"$_e\"]}" "http://127.0.0.1:${RPCPORT}" >/dev/null
+        done
+        echo "  xone: state in; added the other static peers"; break
+      fi
+      sleep 5
+    done ) &
+fi
 # --measure: time-to-tip and disk use, logged beside the datadir. The node log is
 # only known when --client all redirected this child to <datadir>.log; with it,
 # geth-xdc snap/fast runs are measured until the history backfill completes.
