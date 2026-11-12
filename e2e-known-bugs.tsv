@@ -3,5 +3,6 @@
 # reason), never FAIL. client/syncmode may be *; platform may be - or *, a platform slug,
 # or !<slug> meaning every platform except that one. Remove a row when the client is fixed.
 # besu mint is NOT listed: besu has no V1 producer, so on a genesis-seated chain it is dropped from the V2 masternode set (QC 3/4); minting needs a post-V2 0x88 candidate registration the harness does not do yet (see README).
+# xone-rs (xOne, Rust) is follower only and Apothem only: join.sh refuses --mine and any other network, so it has no mint/sync-type rows here.
 # erigon, reth: Apothem producers are proven live on erigon-xdc v3.8.1-xdc.2 and reth v2.9.0-xdc.4; no rows needed.
 # Removed for the Apothem-proven pins (besu v26.11-xdc.4, nethermind v1.36.0-xdc.3, xone v1.4.7): besu snap (completes on Apothem), nethermind#194 and xone net2040-ladder (measured on older builds), xone fast, xone snap (anchored start; join.sh now passes the archive seed RPC and the snap server). Re-add a row if e2e shows a regression on the new pins.

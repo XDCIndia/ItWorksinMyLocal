@@ -103,7 +103,8 @@ Neither is normal. Please file an issue rather than working around it.
 ### Which clients `--all` starts
 
 `geth`, `geth4`, `erigon`, `xone`, `besu`, `nethermind`, `reth`, as followers
-beside the 4 sealers. Any client whose binary is missing or unrunnable is
+beside the 4 sealers. (`xone-rs` is not started by `run.sh --all`: it supports Apothem only, no
+local network. `join.sh --client all --network testnet` does include it, as a follower.) Any client whose binary is missing or unrunnable is
 **skipped and reported**, so a partial `bin/` degrades gracefully rather than
 failing. Narrow it explicitly when you want to:
 
@@ -257,7 +258,7 @@ To use a key you already have, pass its keystore directory (geth format) and the
   --i-understand-single-signer
 ```
 
-Swap `--client` for `erigon`, `reth`, `besu`, `nethermind` or `xone`. Add `--name <label>` (the ethstats / SkyNet node name), `--datadir <dir>`, and `--port/--rpcport/--wsport/--authrpc-port` when you run more than one node on a host. `--dry-run` prints the exact command and environment for the chosen client and exits, without downloading, writing or starting anything; review it before the first real start:
+Swap `--client` for `erigon`, `reth`, `besu`, `nethermind` or `xone` (or `xone-rs`, Apothem follower only: `--network testnet`). Add `--name <label>` (the ethstats / SkyNet node name), `--datadir <dir>`, and `--port/--rpcport/--wsport/--authrpc-port` when you run more than one node on a host. `--dry-run` prints the exact command and environment for the chosen client and exits, without downloading, writing or starting anything; review it before the first real start:
 
 ```bash
 ./join.sh --network testnet --client erigon --mine 0xYourValidatorAddr \
@@ -332,6 +333,7 @@ toolchains) are download-only unless you point `join.sh` at your own binary via
 | `nethermind` | `XDCIndia/xdc-nethermind-private` (private — no public repo) | download or `NETHERMIND_DIST`/PATH | **custom `NETHERMIND_DIST` required for 5151** — the prebuilt archive doesn't ship `chainspec/xdc-devnet5151.json` |
 | `reth` | [`XDCIndia/reth`](https://github.com/XDCIndia/reth) | download or `RETH_BIN`/PATH | reads geth genesis natively. Follows a private XDPoS net to tip with state-root parity **only from the build carrying the epoch-reward fix** — see the warning below |
 | `xone` | [`XDCIndia/xOneGo`](https://github.com/XDCIndia/xOneGo) | download (mirror, GitHub-release fallback) | Go XDPoS reference client. Follows a private net to tip, and seals in exact fair share when seated as a validator |
+| `xone-rs` | [`XDCIndia/xOne`](https://github.com/XDCIndia/xOne) (Rust, private) | download only (mirror, sha256-verified; never built here) | **follower only; syncs from genesis; validator mode not yet supported.** Apothem only (`--network testnet`), no private nets; `--mine` is refused. No built-in bootnodes, so `join.sh` always passes `--bootnodes`. Not the same client as `xone` (xOneGo, Go) |
 
 ### Every client, every sync type, minting: `e2e.sh` (net2040-like)
 
@@ -376,6 +378,7 @@ for **all seven** clients:
 | `besu` | ✅ | xdc.network mirror (large — expect a slow download) |
 | `nethermind` | ✅ | xdc.network mirror |
 | `xone` | ✅ | xdc.network mirror |
+| `xone-rs` | n/a | Apothem follower only (`join.sh --network testnet --client xone-rs`); not in the local-network e2e |
 
 Reproduce it per client with:
 
@@ -481,7 +484,7 @@ Or one at a time:
 
 ```bash
 ./join.sh --client geth --genesis ./genesis/genesis.json --ip <YOUR_IP>:<BOOTNODE_PORT> --chainid <YOUR_CHAINID>
-#          oldxdc | geth | geth4 | erigon | reth | besu | nethermind | xone
+#          oldxdc | geth | geth4 | erigon | reth | besu | nethermind | xone | xone-rs
 ```
 
 > **Do not omit those flags here.** With no `--genesis`/`--ip`, `join.sh` falls back
@@ -533,6 +536,7 @@ done
 | reth | `--minimal` if the build has it, else `--full` (a `--mine` producer uses `--full`) | not measured |
 | besu | `SNAP` + `BONSAI` + `--bonsai-limit-trie-logs-enabled`, and on testnet a genesis checkpoint ~3000 blocks behind the tip from a trusted RPC (`BESU_CHECKPOINT_RPC`); needs host Java 21 | 27 GB, tip after ~50 min |
 | nethermind | SnapSync, `Pruning.Mode Hybrid`, `Init.MemoryHint 3072000000`, bodies on with a pivot from a trusted RPC (`NM_PIVOT_RPC`) so the old-headers backfill stops at `AncientBodiesBarrier` (nm#275) | 20 GB, tip after ~12 min. The same node on the previous defaults (bodies off) grew to 94 GB |
+| xone-rs | none: always full from genesis (follower only; ~214 blocks/s, the V2 switch at 56,828,700 not yet reached) | n/a |
 | xone | `-syncmode snap` with a trusted anchor ~3000 blocks behind the tip from a trusted RPC (`XONE_ANCHOR_RPC_URL`), gap pools from an archive RPC, state from the fleet snap server | n/a |
 
 ## Everyday commands

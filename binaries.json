@@ -153,6 +153,24 @@
       "sha256": {
         "linux-amd64": "17c3dc1bda3671fb5819e84c3bd85a12d647ebd90a016c8fb0be992d539abf85"
       }
+    },
+    "xone-rs": {
+      "_comment": "xOne (XDCIndia/xOne, Rust) -- FOLLOWER ONLY: follows Apothem (chainId 51) from genesis; validator mode is not supported (join.sh refuses --mine). Distinct from 'xone' (xOneGo, Go). Prebuilt only, never built here. No pinned sha256 yet: sha256Sidecar makes lib.sh read <file>.sha256 from the mirror at download time and refuse on a missing/mismatching hash (fail closed). Pin the hashes under 'sha256' (and drop the flag) once the release is published; a pinned hash always wins.",
+      "version": "0.1.0",
+      "commit": "46e87696",
+      "file": "xone-rs-{os}-{arch}",
+      "archive": "none",
+      "produces": {
+        "xone-rs": ""
+      },
+      "platforms": [
+        "darwin-amd64",
+        "darwin-arm64",
+        "linux-amd64",
+        "linux-arm64"
+      ],
+      "sha256Sidecar": true,
+      "sha256": {}
     }
   }
 }
