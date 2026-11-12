@@ -11,6 +11,8 @@ Public addresses of the per-client Apothem (chainId 51) validators. Addresses on
 | nethermind | 0x1a56B4Eb82410bf6c9aF800B2834a351c5166CCD | 0xf5217cEeBEC77FC2b9bAbD2F298c20b6069a3BdB | to be proposed |
 | xone | 0x68a20B568D8058d1498f5308719D1a139C4C7f5a | 0xffd83c1CA48a321309E5C03Dc1cfDf19b290c542 | to be proposed |
 
+`xone-rs` (xOne, Rust, `XDCIndia/xOne`) is **not** a validator: follower only; syncs from genesis; validator mode not yet supported. `join.sh --client xone-rs --mine` fails with that message, and it has no key above.
+
 Owner and coinbase are deliberately different, and unique per client, so rewards are trackable per client. Rewards accrue to the owner. Never reuse an owner across clients.
 
 Latest releases running as live Apothem validators: geth v1.17.10-xdc.21, xOneGo v1.4.7, nethermind v1.36.0-xdc.3, erigon-xdc v3.8.1-xdc.2, reth v2.9.0-xdc.4, besu v26.11-xdc.4. join.sh pins these.

@@ -95,6 +95,16 @@ case "$CLIENT" in
     CLIENT_TARGETS="xone"
     NODE_NAME_BIN="xone"
     ;;
+  xone-rs|xone_rs)
+    # xOne (XDCIndia/xOne, Rust): FOLLOWER ONLY. Syncs Apothem from genesis;
+    # validator mode is not supported. Prebuilt download only (binaries.json
+    # xone-rs); never built here. Distinct from `xone` (xOneGo, Go).
+    CLIENT=xone-rs
+    XDPOS_REPO="${XDPOS_REPO:-https://github.com/XDCIndia/xOne}"
+    XDPOS_DIR="${XDPOS_DIR:-$_LIB_DIR/../xOne}"
+    CLIENT_TARGETS=""
+    NODE_NAME_BIN="xone-rs"
+    ;;
   all)
     # Meta-client: join.sh fans "all" out to one child process per real client
     # (each re-sources lib.sh with its own concrete client). The dispatcher itself
@@ -113,7 +123,7 @@ case "$CLIENT" in
     echo "  use --client geth4   to stay pinned to 1.17.4-xdc.7" >&2
     exit 1;;
   *)
-    echo "unknown CLIENT '$CLIENT' (use: oldxdc | geth | geth4 | erigon | besu | nethermind | reth | xone | all)" >&2; exit 1;;
+    echo "unknown CLIENT '$CLIENT' (use: oldxdc | geth | geth4 | erigon | besu | nethermind | reth | xone | xone-rs | all)" >&2; exit 1;;
 esac
 
 # Binaries live under a per-client, per-platform dir so the clients coexist.
@@ -255,7 +265,7 @@ DEFAULT_NUM_NODES=4
 # Followers" section falls back to the exact same list run.sh would launch,
 # rather than a second hand-maintained copy that can drift from it (as the
 # in-repo one did: it was missing geth4 until fixed here).
-DEFAULT_ALL_CLIENTS="geth geth4 erigon xone besu nethermind reth"
+DEFAULT_ALL_CLIENTS="geth geth4 erigon xone besu nethermind reth xone-rs"
 
 # --all follower port helpers -- ONE definition, used by run.sh's pre-flight
 # check, its launch loop, AND status.sh's "Modern Followers" report. All three
@@ -340,6 +350,12 @@ client_version_commit() {
       # version part stays a version.
       ver=$(printf '%s\n' "$out" | awk '/^Version:/{print $2; exit}' | sed -E 's/\+[0-9a-f]+$//')
       commit=$(printf '%s\n' "$out" | awk '/^Commit:/{print substr($2,1,8); exit}')
+      ;;
+    xone-rs)
+      # "xOne/v<ver>-<commit>-<date>/<os>/rustc<ver>"
+      out=$(_vquery "$bin" --version 2>/dev/null | head -1)
+      ver=$(printf '%s\n' "$out" | sed -nE 's#^xOne/v([0-9][^-/]*).*#\1#p')
+      commit=$(printf '%s\n' "$out" | sed -nE 's#^xOne/v[^-/]*-([0-9a-f]{7,})[-/].*#\1#p' | cut -c1-8)
       ;;
     xone)
       # "xone v<ver> (commit <hash>)" -- the commit is PARENTHESISED, not glued as
@@ -448,6 +464,17 @@ base = (os.environ.get("BIN_BASE_URL") or c.get("baseUrl") or m.get("baseUrl") o
 # ordinary curl fetch fails. Both may be present; curl (against the possibly-
 # stale xdc.network mirror) is always tried first, gh is the fallback.
 gh = c.get("ghRelease") or {}
+# sha256Sidecar: no pinned hash yet -- read it from the mirror's <file>.sha256
+# (sha256sum format). Same origin as the binary, so weaker than a pin; a missing
+# or malformed sidecar leaves sha empty and download_bins() refuses (fail closed).
+if not sha and c.get("sha256Sidecar") and base:
+    try:
+        import re, urllib.request
+        t = urllib.request.urlopen(base + "/" + file + ".sha256", timeout=20).read().decode()
+        mm = re.match(r"\s*([0-9a-f]{64})\b", t)
+        sha = mm.group(1) if mm else ""
+    except Exception:
+        sha = ""
 
 def q(s):
     return "'" + str(s).replace("'", "'\\''") + "'"
@@ -1021,6 +1048,7 @@ client_exe_names() {
     nethermind)     echo "nethermind dotnet" ;;
     reth)           echo "xdc-reth" ;;
     xone)           echo "xone" ;;
+    xone-rs)        echo "xone-rs" ;;
     bootnode)       echo "bootnode" ;;
     *)              echo "" ;;
   esac
@@ -1031,7 +1059,7 @@ client_exe_names() {
 # (which reports a "Join Clients" table) -- previously status.sh kept its own
 # 7-entry copy with no geth4, so a `join.sh --client all` run (which starts 8
 # clients) was reported as only 7 (ItWorksinMyLocal#181 investigation).
-JOIN_ALL_CLIENTS="oldxdc geth erigon besu nethermind reth xone geth4"
+JOIN_ALL_CLIENTS="oldxdc geth erigon besu nethermind reth xone geth4 xone-rs"
 
 # client_syncmodes <client>: the sync types this client can run in, i.e. the
 # values join.sh --syncmode accepts for it. "archive" = keep all history.
@@ -1056,6 +1084,7 @@ client_syncmodes() {
     geth|geth4|besu|nethermind|xone) echo "full fast snap archive" ;;
     erigon)         echo "full snap archive" ;;
     reth)           echo "full archive" ;;
+    xone-rs)        echo "full" ;;   # follower only; always syncs from genesis
     *)              echo "" ;;
   esac
 }
@@ -1102,6 +1131,7 @@ join_client_port_offset() {
     reth)       echo 500 ;;
     xone)       echo 600 ;;
     geth4)      echo 700 ;;
+    xone-rs)    echo 800 ;;
     *)          echo 0 ;;
   esac
 }
