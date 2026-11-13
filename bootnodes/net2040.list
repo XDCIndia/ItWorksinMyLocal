@@ -1,2 +1,6 @@
-# net2040 bootnode (xdc03). Seat enodes are discovered from it.
-enode://811036da9df829952b10bdf2cc089c65d3db5f4e3cebd57f0983ce448f808925381bbd21688911e5f1f419e0c7e790c5827019f1bcfc80a50f65278b677a4451@167.235.13.113:35000
+# net2040 (chainId 2040) bootnodes: live geth nodes with public IPs, refreshed 2026-11-13
+# from admin_nodeInfo / admin_peers on xdc02. Verified TCP-reachable and on genesis 0x8d8ff2e9...
+# xdc02 modern producer M1
+enode://006acbf527aaff495a6aa3516aa7e6a4b32ae7ec42d18646b4068a292102131a3832636365ee821ae172cf998ca0c2c12be6299988d37f2af136e40923b11f5d@135.181.117.109:35001
+# net2040-geth-3599
+enode://46683dcb9314ab1e36f91da0fdd2f93b6e5d5e5836eee0db1c17e8e519dbd50ebda5a6a02a7638fd54866dd737785cfcec9e0a1ad26df5a2815ae2cd12ca9528@65.21.71.4:35090
