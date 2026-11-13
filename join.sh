@@ -14,13 +14,14 @@
 # Flags:
 #   --network NAME       public XDC network to join: mainnet (chainId 50) |
 #                        testnet/apothem (chainId 51) | net2040 (chainId 2040,
-#                        the multi-client test net) | devnet5151 (default).
+#                        the multi-client test net; live at
+#                        https://skynet.xdcindia.com/stats?net=2040) | devnet5151 (default).
 #                        mainnet/testnet use the vendored public genesis
 #                        (genesis/genesis-<net>.json) + public bootnodes
 #                        (bootnodes/<net>.list, from XinFinOrg/XinFin-Node) by
 #                        default. Works with --client <c> or --client all.
 #   --syncmode MODE      full | fast | snap | archive (anything else is rejected
-#                        up front). Default: snap for --network mainnet/testnet
+#                        up front). Default: snap for --network mainnet/testnet (net2040: snap for geth, full for the rest)
 #                        (bounds disk to recent state), full for devnet5151.
 #                        archive = full sync that keeps all history. Mapped per
 #                        client: geth --syncmode full --gcmode archive (+hash
@@ -353,11 +354,16 @@ if [ -n "$SYNCMODE" ]; then
     *) echo "join.sh: invalid --syncmode '$SYNCMODE' (expected: full | fast | snap | archive)" >&2; exit 1 ;;
   esac
 fi
+# xone-rs/ts/py take a built-in --network: apothem by default, net2040 when asked.
+XCLI_NET=apothem; case "${NETWORK:-}" in net2040|2040) XCLI_NET=net2040 ;; esac
 # xone-rs and xone-ts have one sync type: full, from genesis (no snap/fast/archive).
 case "${CLIENT:-}" in xone-rs|xone-ts|xone-py) [ -z "$SYNCMODE" ] && SYNCMODE=full ;; esac
 if [ -z "$SYNCMODE" ]; then
   case "${NETWORK:-}" in
     mainnet|xinfin|xdc|testnet|apothem) SYNCMODE=snap ;;
+    # net2040: only geth is verified to snap-sync it (reaches the tip in ~2 min vs hours
+    # from genesis); every other client is verified with full, so full stays its default.
+    net2040|2040) case "${CLIENT:-}" in geth|geth4) SYNCMODE=snap ;; *) SYNCMODE=full ;; esac ;;
     *)                                  SYNCMODE=full ;;
   esac
 fi
@@ -436,7 +442,7 @@ case "${NETWORK:-}" in
     # net2040: the live chainId-2040 multi-client network (2s period, 11
     # masternodes, fork ladder to Amsterdam). genesis/genesis-2040.json is the
     # live genesis verbatim (hash 0x8d8ff2e9...); bootnodes/net2040.list is its
-    # bootnode. nethermind has no bundled chainspec, so one is auto-converted.
+    # bootnode. nethermind ships a bundled xdc-net2040 chainspec; xone-rs/ts/py use their built-in net2040.
     [ -z "$GENESIS" ]   && GENESIS="genesis/genesis-2040.json"
     [ -z "$NETWORKID" ] && NETWORKID=2040
     NM_CONFIG="${NM_CONFIG/xdc-devnet5151/xdc-net2040}"
@@ -468,14 +474,16 @@ fi
 # forks the seat. Refuse --mine on a PUBLIC network unless the operator explicitly
 # acknowledges it is the single signer.
 case "${NETWORK:-}" in mainnet|xinfin|xdc|testnet|apothem) _public=1 ;; *) _public="" ;; esac
-# xone-rs (xOne, Rust) and xone-ts (xOneTS, TypeScript) are followers only, qualified on Apothem alone.
+# net2040 is a live net with a fixed masternode set: join it as a follower only.
+case "${NETWORK:-}" in net2040|2040) [ -z "$MINEADDR" ] || { echo "join.sh: --mine is not supported on --network net2040 (follower only; its masternode seats are held by the fleet)." >&2; exit 1; } ;; esac
+# xone-rs (xOne, Rust), xone-ts (xOneTS, TypeScript) and xone-py (xOnePy, Python) are followers only (Apothem and net2040).
 if [ "${CLIENT:-}" = xone-c ]; then
   echo "join.sh: xone-c is not runnable: xOneC has no node yet (T0: version and chainspec check only). Track https://github.com/XDCIndia/xOneC (TB-09, TB-10)." >&2; exit 1
 fi
 if [ "${CLIENT:-}" = xone-rs ] || [ "${CLIENT:-}" = xone-ts ] || [ "${CLIENT:-}" = xone-py ]; then
   [ -z "$MINEADDR" ] || { echo "join.sh: $CLIENT is follower only; syncs from genesis; validator mode not yet supported" >&2; exit 1; }
   # (a `--client all` child gets --chainid, not --network)
-  case "${NETWORK:-}:${NETWORKID:-}" in testnet:*|apothem:*|:51) ;; *) echo "join.sh: $CLIENT is follower only; syncs from genesis; validator mode not yet supported. It supports Apothem only (--network testnet), not '${NETWORK:-}'." >&2; exit 1 ;; esac
+  case "${NETWORK:-}:${NETWORKID:-}" in testnet:*|apothem:*|:51|net2040:*|2040:*|:2040) ;; *) echo "join.sh: $CLIENT is follower only; syncs from genesis; validator mode not yet supported. It supports Apothem (--network testnet) and net2040 only, not '${NETWORK:-}'." >&2; exit 1 ;; esac
 fi
 if [ -n "$MINEADDR" ] && [ -n "$_public" ] && [ "$SINGLE_SIGNER_OK" != 1 ]; then
   echo "join.sh: refusing --mine on --network $NETWORK without --i-understand-single-signer." >&2
@@ -498,6 +506,9 @@ if [ -n "$PUB_BOOTNODES_FILE" ] && [ -z "$BOOTNODES" ] && [ -f "$PUB_BOOTNODES_F
   # The public bootnodes reach canonical XDPoSChain peers, which serve no
   # fast/snap state; without a modern peer a fast/snap node waits for peers and
   # crawls. Add the modern seed nodes one.sh uses (SEEDS_URL= disables).
+  # net2040: our bootnodes are live geth nodes that serve eth directly, so dial them
+  # as static peers too (erigon/reth need that; peers.list is devnet5151's, wrong chain).
+  case "$PUB_BOOTNODES_FILE" in *net2040*) [ "$STATICPEERS_EXPLICIT" = 1 ] || STATICPEERS="$BOOTNODES" ;; esac
   case "$PUB_BOOTNODES_FILE" in *mainnet*) _seednet=mainnet ;; *testnet*) _seednet=apothem ;; *) _seednet="" ;; esac
   _seedurl=${SEEDS_URL-https://xdc.network/snapshots/seeds/$_seednet.enodes}
   if [ -n "$_seednet" ] && [ -n "$_seedurl" ]; then
@@ -652,7 +663,8 @@ fi
 # modern clients pinned to the PUBLIC peers.list (wrong chain) -> 0 peers on
 # the local network. Promote such a bootnode to a local join so the harvest
 # runs for it too.
-if [ "$LOCAL_BOOTNODE" != 1 ] && [ -n "$BOOTNODES" ]; then
+# (not for a live public net: running ON a net2040 bootnode host must not trigger the local harvest)
+if [ "$LOCAL_BOOTNODE" != 1 ] && [ -n "$BOOTNODES" ] && [ -z "$PUB_BOOTNODES_FILE" ]; then
   _myip=$(detect_ip 2>/dev/null)
   case ",$BOOTNODES," in
     *@127.0.0.1:*|*@localhost:*) LOCAL_BOOTNODE=1 ;;
@@ -1698,7 +1710,7 @@ elif [ "$CLIENT" = xone-rs ]; then
   XRS_ES=""; [ -n "$full" ] && XRS_ES="--ethstats $full"
   MP_ARG=""; [ -n "$MAXPEERS" ] && MP_ARG="--maxpeers $MAXPEERS"
   # shellcheck disable=SC2086
-  "$RUN_BIN" --network apothem --datadir "$DATADIR" --port "$PORT" --discovery.port "$PORT" \
+  "$RUN_BIN" --network "$XCLI_NET" --datadir "$DATADIR" --port "$PORT" --discovery.port "$PORT" \
     --bootnodes "$BOOTNODES" --nat "extip:${IP}" --identity "$NAME" $MP_ARG \
     --http --http.addr 0.0.0.0 --http.port "$RPCPORT" --http.vhosts "*" --http.api eth,net,web3,XDPoS \
     --ws --ws.addr 0.0.0.0 --ws.port "$WSPORT" \
@@ -1712,7 +1724,7 @@ elif [ "$CLIENT" = xone-ts ]; then
   [ "$DRY" = 1 ] || mkdir -p "$DATADIR"
   XTS_ES=""; [ -n "$full" ] && XTS_ES="--ethstats $full"
   # shellcheck disable=SC2086
-  "$RUN_BIN" --network apothem --datadir "$DATADIR" --port "$PORT" \
+  "$RUN_BIN" --network "$XCLI_NET" --datadir "$DATADIR" --port "$PORT" \
     --bootnodes "$BOOTNODES" --identity "$NAME" \
     --http --http.addr 0.0.0.0 --http.port "$RPCPORT" --http.api eth,net,web3,XDPoS \
     --ws --ws.addr 0.0.0.0 --ws.port "$WSPORT" \
@@ -1726,7 +1738,7 @@ elif [ "$CLIENT" = xone-py ]; then
   XPY_ES=""; [ -n "$full" ] && XPY_ES="--ethstats $full"
   XPY_BOOT=""; [ -n "$BOOTNODES" ] && XPY_BOOT="--bootnodes $BOOTNODES"
   # shellcheck disable=SC2086
-  "$RUN_BIN" --network apothem --datadir "$DATADIR" --port "$PORT" \
+  "$RUN_BIN" --network "$XCLI_NET" --datadir "$DATADIR" --port "$PORT" \
     $XPY_BOOT --identity "$NAME" \
     --http --http.addr 0.0.0.0 --http.port "$RPCPORT" --http.api eth,net,web3,XDPoS \
     --ws --ws.addr 0.0.0.0 --ws.port "$WSPORT" \

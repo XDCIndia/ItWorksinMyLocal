@@ -211,6 +211,7 @@ Skynet stats: https://skynet.xdcindia.com/stats?net=<chainId>
 # 1. a public XDC network — genesis and bootnodes are vendored, nothing else needed
 ./join.sh --network mainnet   --client geth      # chainId 50
 ./join.sh --network testnet   --client geth      # apothem, chainId 51
+./join.sh --network net2040   --client geth      # live multi-client test net, chainId 2040
 ./join.sh --network devnet5151 --client geth     # the default if --network is omitted
 
 # 2. a local net running on THIS machine (started by setup.sh/run.sh above)
@@ -219,6 +220,8 @@ Skynet stats: https://skynet.xdcindia.com/stats?net=<chainId>
 # 3. a net on ANOTHER machine — you need its genesis.json and its IP
 ./join.sh --client geth --genesis /path/to/genesis.json --ip <HOST_IP>
 ```
+
+**net2040** (chainId 2040, genesis `0x8d8ff2e9d8369b7b4af5a84eb010e2b1a358eefa9f971985435d538dda235714`) is the live multi-client test net. `join.sh --network net2040 --client <c>` uses `genesis/genesis-2040.json` and `bootnodes/net2040.list` (live geth nodes with public IPs; refresh it from `admin_nodeInfo` on a producer when one moves). Works for `geth`, `erigon`, `reth`, `besu`, `nethermind`, `xone`, `xone-rs`, `xone-ts` and `xone-py`; `xone-c` has no node yet and is refused. Followers only: `--mine` is not part of the net2040 join. The default sync is `snap` for geth (tip in about 2 minutes, but budget tens of GB of disk) and `full` for every other client (they sync from genesis, so reaching the tip takes hours). Nodes report to ethstats by default and are meant to show under <https://skynet.xdcindia.com/stats?net=2040>.
 
 Swap `--client` for any of `oldxdc | geth | geth4 | erigon | reth | besu |
 nethermind | xone`, or `--client all` to attach one of each at once. See
@@ -333,10 +336,10 @@ toolchains) are download-only unless you point `join.sh` at your own binary via
 | `nethermind` | `XDCIndia/xdc-nethermind-private` (private — no public repo) | download or `NETHERMIND_DIST`/PATH | **custom `NETHERMIND_DIST` required for 5151** — the prebuilt archive doesn't ship `chainspec/xdc-devnet5151.json` |
 | `reth` | [`XDCIndia/reth`](https://github.com/XDCIndia/reth) | download or `RETH_BIN`/PATH | reads geth genesis natively. Follows a private XDPoS net to tip with state-root parity **only from the build carrying the epoch-reward fix** — see the warning below |
 | `xone` | [`XDCIndia/xOneGo`](https://github.com/XDCIndia/xOneGo) | download (mirror, GitHub-release fallback) | Go XDPoS reference client. Follows a private net to tip, and seals in exact fair share when seated as a validator |
-| `xone-rs` | [`XDCIndia/xOne`](https://github.com/XDCIndia/xOne) (Rust, private) | download only (mirror, sha256-verified; never built here) | **follower only; syncs from genesis; validator mode not yet supported.** Apothem only (`--network testnet`), no private nets; `--mine` is refused. No built-in bootnodes, so `join.sh` always passes `--bootnodes`. Not the same client as `xone` (xOneGo, Go) |
-| `xone-py` | [`XDCIndia/xOnePy`](https://github.com/XDCIndia/xOnePy) (Python) | download only (mirror, sha256-verified; never built here) | **follower only; syncs from genesis; validator mode not yet supported.** One PyInstaller executable, **linux-amd64 only**. Apothem only (`--network testnet`); `--mine` is refused. Has a built-in Apothem boot list; `join.sh` still passes `--bootnodes`. About 100-170 blocks/s from genesis. |
+| `xone-rs` | [`XDCIndia/xOne`](https://github.com/XDCIndia/xOne) (Rust, private) | download only (mirror, sha256-verified; never built here) | **follower only; syncs from genesis; validator mode not yet supported.** Apothem (`--network testnet`) and net2040 only, no other private nets; `--mine` is refused. No built-in bootnodes, so `join.sh` always passes `--bootnodes`. Not the same client as `xone` (xOneGo, Go) |
+| `xone-py` | [`XDCIndia/xOnePy`](https://github.com/XDCIndia/xOnePy) (Python) | download only (mirror, sha256-verified; never built here) | **follower only; syncs from genesis; validator mode not yet supported.** One PyInstaller executable, **linux-amd64 only**. Apothem (`--network testnet`) and net2040; `--mine` is refused. Has a built-in Apothem boot list; `join.sh` still passes `--bootnodes`. About 100-170 blocks/s from genesis. |
 | `xone-c` | [`XDCIndia/xOneC`](https://github.com/XDCIndia/xOneC) (C++) | pinned only | **not runnable: no node yet** (T0: prints its version, checks a chainspec). `join.sh --client xone-c` refuses and says why. |
-| `xone-ts` | [`XDCIndia/xOneTS`](https://github.com/XDCIndia/xOneTS) (TypeScript) | download only (mirror, sha256-verified; never built here) | **follower only; syncs from genesis; validator mode not yet supported.** Single self-contained Bun executable. Apothem only (`--network testnet`); `--mine` is refused. No built-in bootnodes, so `join.sh` always passes `--bootnodes`. Not `xone` (Go) or `xone-rs` (Rust) |
+| `xone-ts` | [`XDCIndia/xOneTS`](https://github.com/XDCIndia/xOneTS) (TypeScript) | download only (mirror, sha256-verified; never built here) | **follower only; syncs from genesis; validator mode not yet supported.** Single self-contained Bun executable. Apothem (`--network testnet`) and net2040; `--mine` is refused. No built-in bootnodes, so `join.sh` always passes `--bootnodes`. Not `xone` (Go) or `xone-rs` (Rust) |
 
 ### Every client, every sync type, minting: `e2e.sh` (net2040-like)
 
