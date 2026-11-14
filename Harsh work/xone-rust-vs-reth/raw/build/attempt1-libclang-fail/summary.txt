@@ -1,0 +1,19 @@
+commit: 07eb9fe Merge pull request #146 from XDCIndia/feat/disk-flat
+host: 8 cores, 3738 MB RAM, swap 8192 MB
+start: 2026-11-13T20:02:02Z
+== 1. toolchain (pinned by rust-toolchain.toml)
+rustc 1.94.0 (4a4ef493e 2026-03-02)
+toolchain_seconds: 113
+== 2. fetch dependencies
+fetch_exit: 0
+fetch_seconds: 126
+== 3. compile (release, -j 2, xone binary)
+build_exit: 101
+build_seconds: 228
+Percent of CPU this job got: 188%
+Elapsed (wall clock) time (h:mm:ss or m:ss): 3:47.96
+Maximum resident set size (kbytes): 516452
+--- first errors:
+191:error: failed to run custom build command for `mdbx-sys v13.11.0`
+200:warning: build failed, waiting for other jobs to finish...
+end: 2026-11-13T20:09:49Z

@@ -1,0 +1,1 @@
+xone: genesis: invalid genesis json: unknown field `SwitchEpoch`, expected one of `switchBlock`, `switchEpoch`, `allConfigs` at line 1 column 1764
