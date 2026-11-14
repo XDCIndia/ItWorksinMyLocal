@@ -1,0 +1,16 @@
+# Corruption lines from the 4 sealers after the 2026-11-13 disk-full crash (full logs not committed: 127 MB)
+== xdc1
+WARN [11-13|20:47:18.401] Head state missing, repairing chain      number=5349 hash=035fc8..d8d3ad
+INFO [11-13|20:47:18.410] Rewound blockchain to past state         number=5160 hash=64cc46..28eb5b
+== xdc2
+WARN [11-13|20:47:18.760] Head state missing, repairing chain      number=5351 hash=e2b77b..604eba
+INFO [11-13|20:47:18.767] Rewound blockchain to past state         number=5160 hash=64cc46..28eb5b
+== xdc3
+ERROR[11-13|20:47:20.595] Failed to create mining context          err="missing trie Node cee9dab4d74cda0ac8bf9001ffbc02b3cef0458876a0639b008a6a67e2710e1a (path )"
+ERROR[11-13|20:47:21.144] Failed to create mining context          err="missing trie Node cee9dab4d74cda0ac8bf9001ffbc02b3cef0458876a0639b008a6a67e2710e1a (path )"
+ERROR[11-13|20:47:23.144] Failed to create mining context          err="missing trie Node cee9dab4d74cda0ac8bf9001ffbc02b3cef0458876a0639b008a6a67e2710e1a (path )"
+ERROR[11-13|20:47:25.145] Failed to create mining context          err="missing trie Node cee9dab4d74cda0ac8bf9001ffbc02b3cef0458876a0639b008a6a67e2710e1a (path )"
+ERROR[11-13|20:47:27.146] Failed to create mining context          err="missing trie Node cee9dab4d74cda0ac8bf9001ffbc02b3cef0458876a0639b008a6a67e2710e1a (path )"
+== xdc4
+WARN [11-13|20:47:19.551] Head state missing, repairing chain      number=5351 hash=e2b77b..604eba
+INFO [11-13|20:47:19.557] Rewound blockchain to past state         number=5160 hash=64cc46..28eb5b

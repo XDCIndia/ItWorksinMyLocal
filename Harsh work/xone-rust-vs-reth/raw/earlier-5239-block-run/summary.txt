@@ -1,0 +1,15 @@
+client: xone
+binary: /home/harsh/xone-rust/target/release/xone (19658992 bytes)
+version: xOne/v0.1.0-07eb9fec-dirty-13112026/linux-x86_64/rustc1.94.0
+start_tip: 5232
+start: 2026-11-13T20:25:33Z
+caught_up_after_s: 14.856709027 at block 5239
+end_head: 5299
+same_hash_as_sealer_at_5294: YES
+peak_rss_mb: 68
+disk: 70M
+end: 2026-11-13T20:27:51Z
+sync_blocks_per_s: 353.6  (4543 blocks in 13s, after first block)
+cpu_pct_median_sync: 87   (100 = one full core)
+cpu_pct_median_steady: 1
+rss_mb_median_steady: 68

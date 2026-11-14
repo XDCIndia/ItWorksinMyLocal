@@ -1,0 +1,18 @@
+commit: 07eb9fe Merge pull request #146 from XDCIndia/feat/disk-flat
+host: 8 cores, 3738 MB RAM, swap 8192 MB
+start: 2026-11-13T20:14:16Z
+== 1. toolchain (pinned by rust-toolchain.toml)
+rustc 1.94.0 (4a4ef493e 2026-03-02)
+toolchain_seconds: 1
+== 2. fetch dependencies
+fetch_exit: 0
+fetch_seconds: 5
+== 3. compile (release, -j 2, xone binary)
+build_exit: 0
+build_seconds: 362
+Percent of CPU this job got: 194%
+Elapsed (wall clock) time (h:mm:ss or m:ss): 6:01.80
+Maximum resident set size (kbytes): 754504
+-rwxr-xr-x 2 harsh harsh 19658992 Nov 13 20:20 target/release/xone
+xOne/v0.1.0-07eb9fec-dirty-13112026/linux-x86_64/rustc1.94.0
+end: 2026-11-13T20:20:24Z

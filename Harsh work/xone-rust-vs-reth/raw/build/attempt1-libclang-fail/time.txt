@@ -1,0 +1,24 @@
+Command exited with non-zero status 101
+	Command being timed: "cargo build --release --locked -j 2 -p xone"
+	User time (seconds): 361.07
+	System time (seconds): 68.73
+	Percent of CPU this job got: 188%
+	Elapsed (wall clock) time (h:mm:ss or m:ss): 3:47.96
+	Average shared text size (kbytes): 0
+	Average unshared data size (kbytes): 0
+	Average stack size (kbytes): 0
+	Average total size (kbytes): 0
+	Maximum resident set size (kbytes): 516452
+	Average resident set size (kbytes): 0
+	Major (requiring I/O) page faults: 2069
+	Minor (reclaiming a frame) page faults: 4925385
+	Voluntary context switches: 90977
+	Involuntary context switches: 4695
+	Swaps: 0
+	File system inputs: 180040
+	File system outputs: 1423536
+	Socket messages sent: 0
+	Socket messages received: 0
+	Signals delivered: 0
+	Page size (bytes): 4096
+	Exit status: 101

@@ -1,0 +1,22 @@
+client: xone
+binary: /home/harsh/xone-rust/target/release/xone (19658992 bytes)
+version: xOne/v0.1.0-07eb9fec-dirty-13112026/linux-x86_64/rustc1.94.0
+range: 1,800 blocks (genesis -> block 1800)
+target_block: 1800
+chain_tip_at_start: 3681
+start: 2026-11-14T03:25:15Z
+reached_target_after_s: 1.881487412
+hash_match_block_900: YES
+hash_match_block_1800: YES
+end_head: 3743
+peak_rss_mb: 76
+disk_mb: 68
+end: 2026-11-14T03:27:22Z
+sync_blocks_per_s: 960.5   (blocks 188->1800 in 1.7s, timed from first imported block)
+time_to_first_block_s: 0.2
+cpu_pct_median_sync: 88   (100 = one full core)
+cpu_pct_peak_sync: 101.6
+cpu_pct_median_steady: 0
+rss_mb_median_steady: 76
+block_time_ms (single-block imports, n=60): p50=12.0 p99=18.0 max=19.0
+block_time_ms (batched sync, per block = batch time / batch size, n=29 batches): p50=0.95 p99=1.38

@@ -1,0 +1,105 @@
+started chain 20119 genesis 0xca872ff060dca60dd0c6b92cb5fa144e26a7a2c7d07dbf21a3d5082632bb74c7
+chain: following from block 0 0xca872ff060dca60dd0c6b92cb5fa144e26a7a2c7d07dbf21a3d5082632bb74c7
+rpc: http listening on 127.0.0.1:37001
+chain: peer 93afd874 connected, eth/100, rank 6771
+chain: peer 54c5b836 connected, eth/100, rank 6771
+chain: peer 3cceeb15 connected, eth/100, rank 6771
+chain: peer 9768f305 connected, eth/100, rank 6771
+chain: imported 128 blocks (32 transactions) in 112 ms, head 128
+chain: imported 128 blocks (36 transactions) in 113 ms, head 256
+chain: imported 128 blocks (32 transactions) in 113 ms, head 384
+chain: imported 128 blocks (36 transactions) in 116 ms, head 512
+chain: imported 128 blocks (32 transactions) in 112 ms, head 640
+chain: imported 128 blocks (36 transactions) in 119 ms, head 768
+chain: imported 128 blocks (40 transactions) in 114 ms, head 896
+chain: state checkpoint of block 1000 written in 7 ms
+chain: imported 128 blocks (36 transactions) in 168 ms, head 1024
+chain: imported 128 blocks (32 transactions) in 113 ms, head 1152
+chain: imported 128 blocks (36 transactions) in 122 ms, head 1280
+chain: imported 128 blocks (32 transactions) in 134 ms, head 1408
+chain: imported 128 blocks (36 transactions) in 116 ms, head 1536
+chain: imported 128 blocks (32 transactions) in 117 ms, head 1664
+chain: imported 128 blocks (44 transactions) in 119 ms, head 1792
+chain: imported 128 blocks (32 transactions) in 141 ms, head 1920
+chain: state checkpoint of block 2000 written in 9 ms
+chain: imported 128 blocks (36 transactions) in 116 ms, head 2048
+chain: imported 128 blocks (36 transactions) in 118 ms, head 2176
+chain: imported 128 blocks (32 transactions) in 158 ms, head 2304
+chain: imported 128 blocks (36 transactions) in 120 ms, head 2432
+chain: imported 128 blocks (32 transactions) in 117 ms, head 2560
+chain: imported 128 blocks (44 transactions) in 117 ms, head 2688
+chain: imported 128 blocks (32 transactions) in 145 ms, head 2816
+chain: imported 128 blocks (36 transactions) in 117 ms, head 2944
+chain: state checkpoint of block 3000 written in 12 ms
+chain: imported 128 blocks (32 transactions) in 117 ms, head 3072
+chain: imported 128 blocks (36 transactions) in 142 ms, head 3200
+chain: imported 128 blocks (32 transactions) in 120 ms, head 3328
+chain: imported 128 blocks (36 transactions) in 117 ms, head 3456
+chain: imported 128 blocks (40 transactions) in 118 ms, head 3584
+chain: imported 128 blocks (36 transactions) in 151 ms, head 3712
+chain: imported 128 blocks (32 transactions) in 116 ms, head 3840
+chain: imported 128 blocks (36 transactions) in 124 ms, head 3968
+chain: state checkpoint of block 4000 written in 15 ms
+chain: imported 104 blocks (28 transactions) in 122 ms, head 4072
+chain: imported 1 blocks (0 transactions) in 2 ms, head 4073
+chain: imported 1 blocks (0 transactions) in 15 ms, head 4074
+chain: imported 1 blocks (0 transactions) in 11 ms, head 4075
+chain: imported 1 blocks (0 transactions) in 13 ms, head 4076
+chain: imported 1 blocks (0 transactions) in 8 ms, head 4077
+chain: imported 1 blocks (0 transactions) in 10 ms, head 4078
+chain: imported 1 blocks (0 transactions) in 13 ms, head 4079
+chain: imported 1 blocks (0 transactions) in 12 ms, head 4080
+chain: imported 1 blocks (4 transactions) in 11 ms, head 4081
+chain: imported 1 blocks (0 transactions) in 11 ms, head 4082
+chain: imported 1 blocks (0 transactions) in 8 ms, head 4083
+chain: imported 1 blocks (0 transactions) in 13 ms, head 4084
+chain: imported 1 blocks (0 transactions) in 8 ms, head 4085
+chain: imported 1 blocks (0 transactions) in 10 ms, head 4086
+chain: imported 1 blocks (0 transactions) in 8 ms, head 4087
+chain: imported 1 blocks (0 transactions) in 10 ms, head 4088
+chain: imported 1 blocks (0 transactions) in 8 ms, head 4089
+chain: imported 1 blocks (0 transactions) in 11 ms, head 4090
+chain: imported 1 blocks (0 transactions) in 8 ms, head 4091
+chain: imported 1 blocks (0 transactions) in 13 ms, head 4092
+chain: imported 1 blocks (0 transactions) in 8 ms, head 4093
+chain: imported 1 blocks (0 transactions) in 8 ms, head 4094
+chain: imported 1 blocks (0 transactions) in 16 ms, head 4095
+chain: imported 1 blocks (4 transactions) in 12 ms, head 4096
+chain: imported 1 blocks (0 transactions) in 12 ms, head 4097
+chain: imported 1 blocks (0 transactions) in 11 ms, head 4098
+chain: imported 1 blocks (0 transactions) in 13 ms, head 4099
+chain: imported 1 blocks (0 transactions) in 12 ms, head 4100
+chain: imported 1 blocks (0 transactions) in 12 ms, head 4101
+chain: imported 1 blocks (0 transactions) in 9 ms, head 4102
+chain: imported 1 blocks (0 transactions) in 12 ms, head 4103
+chain: imported 1 blocks (0 transactions) in 8 ms, head 4104
+chain: imported 1 blocks (0 transactions) in 10 ms, head 4105
+chain: imported 1 blocks (0 transactions) in 8 ms, head 4106
+chain: imported 1 blocks (0 transactions) in 14 ms, head 4107
+chain: imported 1 blocks (0 transactions) in 9 ms, head 4108
+chain: imported 1 blocks (0 transactions) in 10 ms, head 4109
+chain: imported 1 blocks (0 transactions) in 11 ms, head 4110
+chain: imported 1 blocks (4 transactions) in 11 ms, head 4111
+chain: imported 1 blocks (0 transactions) in 13 ms, head 4112
+chain: imported 1 blocks (0 transactions) in 13 ms, head 4113
+chain: imported 1 blocks (0 transactions) in 12 ms, head 4114
+chain: imported 1 blocks (0 transactions) in 15 ms, head 4115
+chain: imported 1 blocks (0 transactions) in 12 ms, head 4116
+chain: imported 1 blocks (0 transactions) in 8 ms, head 4117
+chain: imported 1 blocks (0 transactions) in 9 ms, head 4118
+chain: imported 1 blocks (0 transactions) in 11 ms, head 4119
+chain: imported 1 blocks (0 transactions) in 11 ms, head 4120
+chain: imported 1 blocks (0 transactions) in 9 ms, head 4121
+chain: imported 1 blocks (0 transactions) in 12 ms, head 4122
+chain: imported 1 blocks (0 transactions) in 14 ms, head 4123
+chain: imported 1 blocks (0 transactions) in 9 ms, head 4124
+chain: imported 1 blocks (0 transactions) in 10 ms, head 4125
+chain: imported 1 blocks (4 transactions) in 13 ms, head 4126
+chain: imported 1 blocks (0 transactions) in 10 ms, head 4127
+chain: imported 1 blocks (0 transactions) in 8 ms, head 4128
+chain: imported 1 blocks (0 transactions) in 12 ms, head 4129
+chain: imported 1 blocks (0 transactions) in 10 ms, head 4130
+chain: imported 1 blocks (0 transactions) in 9 ms, head 4131
+chain: imported 1 blocks (0 transactions) in 9 ms, head 4132
+chain: state checkpoint of block 4132 written
+stopped

@@ -1,0 +1,19 @@
+client: reth
+binary: /home/harsh/iwiml-20119/bin/reth/Linux-x86_64/xdc-reth (80724088 bytes)
+version: Reth Version: 2.9.0-dev
+target_block: 2000
+chain_tip_at_start: 2143
+start: 2026-11-13T22:01:33Z
+EXITED EARLY (see node.log)
+hash_match_block_900: NO (client= sealer=0xbea9414eaa135991f96b7198288991cc0fa3fab8131ee72f2c2c4400cdb3cd4b)
+hash_match_block_1800: NO (client= sealer=0xd92437ee2b7cfb1ddb24920c12a16df8fc6fac32dfa533f18046a268448b635a)
+hash_match_block_2000: NO (client= sealer=0x2a8edb9374b6fb9b4b909b0f4e2a4c9c0b166a97f0ef66d86d1f92188db0b34e)
+end_head: -1
+peak_rss_mb: 2454
+disk_mb: 2
+end: 2026-11-13T22:04:51Z
+cpu_pct_median_sync: 244   (100 = one full core)
+cpu_pct_peak_sync: 660.2
+cpu_pct_median_steady: -
+rss_mb_median_steady: -
+block_time_ms (single-block imports, n=163): p50=3.1 p99=31626.3 max=43824.1
