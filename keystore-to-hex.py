@@ -10,8 +10,14 @@ to ADDRESS_FILE, and prints ONLY the address. The key and password are never pri
 
 erigon's --xdc.v1.signerkey wants a hex key file, not a keystore. The key is
 only ever written to OUT_FILE (created 0600); it is never printed. Needs
-python3 + openssl (AES-CTR); scrypt is in hashlib, the MAC check is a small
-built-in keccak-256 so a wrong password fails here instead of yielding junk.
+python3 + openssl (AES-CTR); the MAC check is a small built-in keccak-256 so
+a wrong password fails here instead of yielding junk.
+
+scrypt comes from hashlib (OpenSSL builds), else the `cryptography` package,
+else pycryptodome. macOS system Python is built on LibreSSL and has no
+hashlib.scrypt: there `new` writes a standard v3 keystore with the pbkdf2 kdf
+(hmac-sha256, c=262144), which geth and xone-rs read, and reading a scrypt
+keystore asks for one of the two packages.
 """
 import glob, hashlib, json, os, subprocess, sys
 
@@ -45,6 +51,30 @@ def keccak256(data):
         A = f(A)
     return b"".join(A[i%5][i//5].to_bytes(8, "little") for i in range(4))
 
+def scrypt(pw, salt, n, r, p, dklen):
+    """scrypt from the first provider that has it; None when none does."""
+    f = getattr(hashlib, "scrypt", None)
+    if f is not None:
+        try:
+            return f(pw, salt=salt, n=n, r=r, p=p, dklen=dklen, maxmem=2**31 - 1)
+        except (ValueError, MemoryError):
+            pass
+    try:
+        from cryptography.hazmat.primitives.kdf.scrypt import Scrypt
+        return Scrypt(salt=salt, length=dklen, n=n, r=r, p=p).derive(pw)
+    except ImportError:
+        pass
+    try:
+        from Crypto.Protocol.KDF import scrypt as cs
+        return cs(pw, salt, key_len=dklen, N=n, r=r, p=p)
+    except ImportError:
+        pass
+    return None
+
+SCRYPT_HINT = ("keystore-to-hex: this Python has no scrypt (macOS system Python uses LibreSSL). "
+               "Install one of: `python3 -m pip install --user cryptography` or `brew install python` "
+               "(Homebrew Python has hashlib.scrypt), then run the command again.")
+
 def main(ks, addr, pwfile, out):
     addr = addr.lower().replace("0x", "").replace("xdc", "")
     pw = open(pwfile, "rb").read().rstrip(b"\r\n")
@@ -60,7 +90,9 @@ def main(ks, addr, pwfile, out):
     c = j.get("crypto") or j.get("Crypto")
     kp = c["kdfparams"]; salt = bytes.fromhex(kp["salt"])
     if c["kdf"] == "scrypt":
-        dk = hashlib.scrypt(pw, salt=salt, n=kp["n"], r=kp["r"], p=kp["p"], dklen=kp["dklen"], maxmem=2**31 - 1)
+        dk = scrypt(pw, salt, kp["n"], kp["r"], kp["p"], kp["dklen"])
+        if dk is None:
+            sys.exit(SCRYPT_HINT)
     elif c["kdf"] == "pbkdf2":
         dk = hashlib.pbkdf2_hmac("sha256", pw, salt, kp["c"], kp["dklen"])
     else:
@@ -103,12 +135,19 @@ def new_key(ks, pwfile, addrfile):
     addr = keccak256(x.to_bytes(32, "big") + y.to_bytes(32, "big"))[12:].hex()
     pw = secrets.token_urlsafe(24).encode()
     salt, iv = secrets.token_bytes(32), secrets.token_bytes(16)
-    dk = hashlib.scrypt(pw, salt=salt, n=262144, r=8, p=1, dklen=32, maxmem=2**31 - 1)
+    dk = scrypt(pw, salt, 262144, 8, 1, 32)
+    if dk is not None:
+        kdf, kdfparams = "scrypt", {"dklen": 32, "n": 262144, "p": 1, "r": 8, "salt": salt.hex()}
+    else:
+        # no scrypt here (LibreSSL Python): pbkdf2 is the other kdf of the v3 keystore format
+        dk = hashlib.pbkdf2_hmac("sha256", pw, salt, 262144, 32)
+        kdf, kdfparams = "pbkdf2", {"c": 262144, "dklen": 32, "prf": "hmac-sha256", "salt": salt.hex()}
+        print("keystore-to-hex: no scrypt in this Python; the keystore uses pbkdf2 (hmac-sha256, c=262144)", file=sys.stderr)
     ct = subprocess.run(["openssl", "enc", "-aes-128-ctr", "-K", dk[:16].hex(), "-iv", iv.hex()],
                         input=d.to_bytes(32, "big"), capture_output=True, check=True).stdout
     j = {"address": addr, "version": 3, "id": str(uuid.uuid4()),
          "crypto": {"cipher": "aes-128-ctr", "ciphertext": ct.hex(), "cipherparams": {"iv": iv.hex()},
-                    "kdf": "scrypt", "kdfparams": {"dklen": 32, "n": 262144, "p": 1, "r": 8, "salt": salt.hex()},
+                    "kdf": kdf, "kdfparams": kdfparams,
                     "mac": keccak256(dk[16:32] + ct).hex()}}
     os.makedirs(ks, mode=0o700, exist_ok=True)
     os.chmod(ks, 0o700)
