@@ -30,9 +30,9 @@
       }
     },
     "geth": {
-      "_comment": "REFRESHED to v1.17.10-xdc.21 (58b2b042b) for linux-amd64/linux-arm64/darwin-arm64; darwin-amd64 (Intel) is unchanged from the earlier build. Older notes below describe xdc.20. geth. All slices are 1.17.10-xdc.20 (release v1.17.10-xdc.20, 08d25cafd425). linux-amd64 is a STATIC build (build/ci.go install -static, 2026-10-28) so it runs on any glibc, including Ubuntu 20.04/22.04 (the dynamic build needed GLIBC_2.38); linux-arm64 is still the dynamic build (GLIBC_2.38, aarch64-linux-gnu-gcc). darwin-arm64 and darwin-amd64 are separate native Mach-O builds (CGO_ENABLED=0, pure-Go secp256k1; no longer one universal lipo binary) replacing 1.17.5-xdc.8. Previous files kept on the mirror as *.prev-xdc20-dynamic (linux-amd64) and *.prev-1.17.5-xdc.8 (darwin).",
-      "version": "1.17.10-xdc.21",
-      "commit": "58b2b042b",
+      "_comment": "HEGOTA PHASE 14 BINARY \u2014 Placeholder PR. Built from XinFinOrg/XDPoSChain PR #3143 (commit 959e0a6dc). sha256s are PLACEHOLDERS \u2014 REPLACE after CI builds and publishes to xdc.network mirror. setup.sh WILL FAIL until real sha256s are updated.",
+      "version": "1.17.10-xdc.22-hegota",
+      "commit": "959e0a6dc",
       "file": "geth-{os}-{arch}",
       "archive": "none",
       "produces": {
@@ -45,10 +45,10 @@
         "linux-arm64"
       ],
       "sha256": {
-        "darwin-amd64": "1bcff4f978ccffdf65f810a5775c50e1bd75a56704ce8d78143f7121c9ba73c9",
-        "darwin-arm64": "964f9caeed4c2f42ccbe51e7f48a90223c21681c0229d37e5dbcf735d4390132",
-        "linux-amd64": "487398c15229866664baa7b3745838c86f6addbdc9537c0e460c505c2ae13fdc",
-        "linux-arm64": "93a05abec825767f961f7ccdb662df4ef73239a43e761c264ef40116d3ed2813"
+        "darwin-amd64": "PLACEHOLDER_REPLACE_AFTER_BINARY_PUBLISHES_TO_XDC_NETWORK",
+        "darwin-arm64": "PLACEHOLDER_REPLACE_AFTER_BINARY_PUBLISHES_TO_XDC_NETWORK",
+        "linux-amd64": "PLACEHOLDER_REPLACE_AFTER_BINARY_PUBLISHES_TO_XDC_NETWORK",
+        "linux-arm64": "PLACEHOLDER_REPLACE_AFTER_BINARY_PUBLISHES_TO_XDC_NETWORK"
       }
     },
     "geth4": {
